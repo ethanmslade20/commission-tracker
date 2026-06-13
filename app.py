@@ -259,7 +259,7 @@ def _running_in_cloud() -> bool:
         return False
 
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=60)
 def load_data():
     if _running_in_cloud():
         return _load_from_sheets()
@@ -384,6 +384,80 @@ if page == "Overview":
         except Exception:
             net_str = "N/A"
         st.markdown(kpi_html("Avg Net Growth / Month", net_str), unsafe_allow_html=True)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # Row 3 — Revenue KPIs
+    _ACTIVE_STS = {"Effectuated", "PendingEffectuation", "PendingFollowups"}
+    _PMPM = 23
+    _active_mask = all_clients["status"].isin(_ACTIVE_STS) if "status" in all_clients.columns else pd.Series(False, index=all_clients.index)
+    _total_members = int(all_clients.loc[_active_mask, "applicant_count"].sum()) if "applicant_count" in all_clients.columns else kpis.get("Total Members", 0)
+    _mrr = _total_members * _PMPM
+    _arr = _mrr * 12
+
+    r1, r2, r3 = st.columns(3)
+    with r1:
+        st.markdown(kpi_html("Expected Monthly Commission", f"${_mrr:,.0f}"), unsafe_allow_html=True)
+    with r2:
+        st.markdown(kpi_html("Expected Annual Commission", f"${_arr:,.0f}"), unsafe_allow_html=True)
+    with r3:
+        st.markdown(kpi_html("Commission per Policy / Mo", f"${_mrr / kpis['Total Active Policies']:.2f}" if kpis.get('Total Active Policies') else "—"), unsafe_allow_html=True)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
+
+    # Book age distribution
+    st.subheader("Book age — months on book")
+    if "months_on_book" in all_clients.columns:
+        _mob = all_clients.loc[_active_mask, "months_on_book"].dropna()
+        _buckets = {
+            "< 3 mo":   int((_mob < 3).sum()),
+            "3–6 mo":   int(((_mob >= 3) & (_mob < 6)).sum()),
+            "6–12 mo":  int(((_mob >= 6) & (_mob < 12)).sum()),
+            "12–18 mo": int(((_mob >= 12) & (_mob < 18)).sum()),
+            "18 mo+":   int((_mob >= 18).sum()),
+        }
+        _total_active_p = sum(_buckets.values())
+        ba1, ba2, ba3, ba4, ba5 = st.columns(5)
+        _bucket_colors = ["#e74c3c", GOLD, BLUE, "#2d5fa6", GREEN]
+        for col, (label, count), color in zip([ba1, ba2, ba3, ba4, ba5], _buckets.items(), _bucket_colors):
+            pct = round(count / _total_active_p * 100) if _total_active_p else 0
+            with col:
+                st.markdown(
+                    f'<div class="kpi-box" style="border-top: 3px solid {color};">'
+                    f'<div class="kpi-value" style="font-size:2rem;">{count:,}</div>'
+                    f'<div class="kpi-label">{label}</div>'
+                    f'<div class="kpi-sub" style="color:{color};font-weight:600;">{pct}%</div>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+
+        # Bar chart of distribution
+        _mob_df = pd.DataFrame({"Bucket": list(_buckets.keys()), "Policies": list(_buckets.values()),
+                                 "Color": _bucket_colors})
+        fig_mob = px.bar(
+            _mob_df, x="Bucket", y="Policies",
+            color="Bucket",
+            color_discrete_sequence=_bucket_colors,
+            text="Policies",
+        )
+        fig_mob.update_traces(textposition="outside")
+        fig_mob.update_layout(**_chart_layout(
+            showlegend=False,
+            xaxis=dict(gridcolor="rgba(0,0,0,0)", showgrid=False, zeroline=False),
+            yaxis=dict(gridcolor="#243664", showgrid=True, zeroline=False),
+            margin=dict(t=20, b=10, l=10, r=10),
+            height=260,
+        ))
+        st.plotly_chart(fig_mob, use_container_width=True)
+
+        # Risk callout
+        _new_pct = round((_buckets["< 3 mo"] + _buckets["3–6 mo"]) / _total_active_p * 100) if _total_active_p else 0
+        _veteran_pct = round(_buckets["18 mo+"] / _total_active_p * 100) if _total_active_p else 0
+        st.caption(
+            f"**{_new_pct}%** of your book is under 6 months old (higher AEP risk) &nbsp;·&nbsp; "
+            f"**{_veteran_pct}%** has been with you 18+ months (most loyal clients)"
+        )
 
     st.markdown("<br>", unsafe_allow_html=True)
     st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
