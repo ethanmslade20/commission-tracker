@@ -16,18 +16,56 @@ _ACTIVE_STS = {"Effectuated", "PendingEffectuation", "PendingFollowups"}
 _STATUS_RANK = {s: 1 for s in _ACTIVE_STS}   # active → rank 1 (sorts last = "last")
 
 
-def _person_key(df: pd.DataFrame) -> pd.Series:
+def _person_key(df: pd.DataFrame, month_col: Optional[str] = None) -> pd.Series:
     """
-    Stable person-level key: name_key (normalized first+last name) with client_key fallback.
+    Stable person-level key.
 
-    ffm_subscriber_id is NOT used — HealthSherpa generates a new subscriber ID for each
-    enrollment, so it changes on every plan switch and is not a stable person identifier.
+    Normally: name_key (normalized first+last name).
+
+    Name-collision fallback: if the same name appears as two or more ACTIVE rows
+    within the same month snapshot (genuine different people with the same name),
+    append ffm_subscriber_id to disambiguate: "john smith|0012345678".
+
+    Plan switches are NOT collisions — a switcher produces one terminated row and one
+    active row in the same month; only the active row survives dedup, so only one
+    active row per name exists and the collision guard never fires.
+
+    month_col: name of the column holding the month key in a multi-month DataFrame.
+               When None the entire df is treated as one snapshot.
     """
     from tracker.ingest import match_client_id
     df = match_client_id(df)
-    nk = df.get("name_key", pd.Series("", index=df.index)).fillna("").astype(str).str.strip()
-    ck = df.get("client_key", pd.Series("", index=df.index)).fillna("").astype(str)
-    return nk.where(nk != "", ck)
+
+    nk  = df.get("name_key",          pd.Series("", index=df.index)).fillna("").astype(str).str.strip()
+    sid = df.get("ffm_subscriber_id", pd.Series("", index=df.index)).fillna("").astype(str).str.strip()
+    ck  = df.get("client_key",        pd.Series("", index=df.index)).fillna("").astype(str)
+
+    # Detect within-snapshot name collisions among active rows
+    active_mask = df["status"].isin(_ACTIVE_STS) if "status" in df.columns else pd.Series(True, index=df.index)
+
+    tmp = pd.DataFrame({"nk": nk, "sid": sid, "active": active_mask}, index=df.index)
+    if month_col and month_col in df.columns:
+        tmp["month"] = df[month_col]
+        group_cols = ["month", "nk"]
+    else:
+        tmp["month"] = "_"
+        group_cols = ["month", "nk"]
+
+    # Names with ≥2 distinct non-empty sub_ids among active rows in the same snapshot
+    active_tmp = tmp[tmp["active"] & (tmp["sid"] != "")]
+    counts = active_tmp.groupby(group_cols)["sid"].nunique()
+    collision_pairs = set(counts[counts > 1].index)   # set of (month, nk) tuples
+
+    # Build key: collision rows get name|sub_id, everyone else gets name
+    key = nk.copy()
+    if collision_pairs:
+        mo_series = tmp["month"]
+        for idx in df.index:
+            pair = (mo_series.at[idx], nk.at[idx])
+            if pair in collision_pairs and sid.at[idx]:
+                key.at[idx] = f"{nk.at[idx]}|{sid.at[idx]}"
+
+    return key.where(key != "", ck)
 
 
 def _dedup_month(df: pd.DataFrame) -> pd.DataFrame:
@@ -96,8 +134,10 @@ def build_all_clients(months: dict) -> pd.DataFrame:
 
     all_df = pd.concat(rows, ignore_index=True)
 
-    # Ensure person key exists on every row
-    all_df["_pkey"] = _person_key(all_df)
+    # Ensure person key exists on every row (pass month_col so collision detection
+    # is scoped per-month, not across all months — prevents plan switches from
+    # being misidentified as name collisions)
+    all_df["_pkey"] = _person_key(all_df, month_col="month")
 
     # Status rank: active rows sort last so "last" aggregation picks them
     all_df["_srank"] = all_df["status"].map(_STATUS_RANK).fillna(0)
