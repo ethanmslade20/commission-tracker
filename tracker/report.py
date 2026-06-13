@@ -94,15 +94,13 @@ def run_report(settings: dict) -> None:
         extra = missing_df[
             ~missing_df.get("name_key", pd.Series(dtype=str)).isin(existing_keys)
         ].copy()
+        # Anyone who dropped off the export is treated as Cancelled regardless of
+        # their last known status (covers Pending clients who never effectuated)
+        if "status" in extra.columns:
+            extra.loc[extra["status"].isin(_active_statuses), "status"] = "Cancelled"
         cancelled_missing = pd.concat([cancelled, extra], ignore_index=True)
     else:
         cancelled_missing = cancelled
-
-    # Strip any rows that are still active (can appear via missing_df)
-    if "status" in cancelled_missing.columns:
-        cancelled_missing = cancelled_missing[
-            ~cancelled_missing["status"].isin(_active_statuses)
-        ].copy()
 
     sheet_url = settings.get("sheet_url", "")
     if not sheet_url:
