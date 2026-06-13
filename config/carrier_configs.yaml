@@ -1,0 +1,156 @@
+# HealthSherpa is the single source of truth.
+# One export contains all carriers — carrier is read from the `issuer` column, not the filename.
+
+# ---------------------------------------------------------------------------
+# Carrier alias table
+# Maps a short canonical name (used in the matrix below) to keyword fragments
+# that appear in the full carrier string from HealthSherpa / Access exports.
+# Order matters: more-specific entries must come before broader ones
+# (e.g. BCBST before BCBS, Anthem/Wellpoint before BCBS).
+# ---------------------------------------------------------------------------
+carrier_aliases:
+  "Anthem/Wellpoint":  ["wellpoint", "anthem"]
+  "Blue Cross Blue Shield": ["bcbst", "blue cross", "blue shield", "bcbs"]
+  "United Healthcare": ["united", "uhc"]
+  Ambetter:            ["ambetter"]
+  Oscar:               ["oscar"]
+  Cigna:               ["cigna"]
+  Allstate:            ["allstate"]
+  "Golden Rule":       ["golden rule"]
+  "Select Health":     ["select health"]
+  "U of U":            ["university of utah", "u of u"]
+
+# ---------------------------------------------------------------------------
+# State + carrier licensing matrix.
+# Keys are 2-letter state abbreviations; values are lists of canonical carrier
+# names (must match keys in carrier_aliases above).
+# Any state/carrier combo NOT listed here is dropped at ingest time.
+# ---------------------------------------------------------------------------
+state_carrier_matrix:
+  UT: ["Cigna", "Select Health", "U of U"]
+  TX: ["Ambetter", "United Healthcare", "Blue Cross Blue Shield", "Anthem/Wellpoint", "Oscar"]
+  OH: ["Oscar", "Anthem/Wellpoint", "United Healthcare", "Ambetter"]
+  FL: ["Ambetter", "Anthem/Wellpoint", "United Healthcare", "Oscar", "Cigna"]
+  SC: ["United Healthcare", "Ambetter", "Golden Rule", "Allstate"]
+  NC: ["Ambetter", "United Healthcare", "Allstate", "Oscar", "Cigna"]
+  TN: ["United Healthcare", "Golden Rule", "Ambetter", "Cigna", "Blue Cross Blue Shield", "Oscar"]
+  AL: ["United Healthcare", "Ambetter", "Golden Rule", "Oscar"]
+  IL: ["Ambetter", "United Healthcare", "Golden Rule", "Oscar", "Blue Cross Blue Shield"]
+  KS: ["United Healthcare", "Oscar", "Ambetter"]
+  LA: ["Allstate", "United Healthcare", "Ambetter"]
+  MI: ["Oscar", "United Healthcare", "Ambetter"]
+  GA: ["United Healthcare", "Ambetter", "Cigna", "Oscar", "Anthem/Wellpoint"]
+  IN: ["Ambetter", "Allstate", "Cigna", "Anthem/Wellpoint"]
+  IA: ["Ambetter", "Allstate", "Oscar", "United Healthcare"]
+  MS: ["Allstate", "Cigna", "Oscar", "United Healthcare", "Ambetter"]
+  MO: ["Ambetter", "Allstate", "Cigna", "Anthem/Wellpoint", "United Healthcare", "Oscar"]
+  OK: ["Ambetter", "Oscar", "Blue Cross Blue Shield", "Cigna", "United Healthcare"]
+  AR: ["Ambetter", "Anthem/Wellpoint"]
+  WI: ["Anthem/Wellpoint", "United Healthcare"]
+
+sources:
+
+  healthsherpa:
+    filename_patterns:
+      - "healthsherpa*"
+      - "hs_export*"
+      - "health_sherpa*"
+
+    # canonical -> source column name (exact match, case-insensitive)
+    column_map:
+      policy_id:      "healthsherpa_id"
+      carrier:        "issuer"
+      plan_name:      "plan_name"
+      effective_date: "effective_date"
+      commission:     "gross_premium"
+      status:         "policy_status"
+
+    # Concatenate these two columns (space-separated) into client_name
+    name_concat: ["first_name", "last_name"]
+
+    # Additional columns to carry through to snapshots (for richer sheet output)
+    extra_columns:
+      ffm_app_id:           "ffm_app_id"
+      ffm_subscriber_id:    "ffm_subscriber_id"
+      state:                "state"
+      metal_level:          "metal_level"
+      net_premium:          "net_premium"
+      subsidy:              "subsidy"
+      # applicant_count = people enrolled on this plan; no per-member active status in HealthSherpa
+      applicant_count:      "applicant_count"
+      submission_date:      "submission_date"
+      date_effectuated:     "date_effectuated"
+      term_date:            "date_cancelled"
+      agent:                "agent"
+
+    # Only keep rows where the writing agent is Ethan Slade.
+    # Matches "Slade, Ethan", "Ethan Slade", or either case variation.
+    require_agent: "Ethan Slade"
+
+    date_columns:   ["effective_date", "submission_date", "date_effectuated", "term_date"]
+    amount_columns: ["commission", "net_premium", "subsidy", "applicant_count"]
+
+  # Illinois / Georgia Access portal exports.
+  # These CSVs have a missing header for column 0 (agent first name), causing a one-column
+  # offset. Handled via index_col=False + usecols in ingest. State is extracted from address.
+  # Prospects (Shop for Plans, Start New Application) are filtered out at ingest time.
+  access:
+    filename_patterns:
+      - "il_access*"
+      - "ga_access*"
+      - "*_access*"
+
+    # The CSV header is offset by one column; ingest reads with header=None + true_columns.
+    true_columns:
+      - agent_first_name
+      - agent_last_name
+      - license_number
+      - first_name
+      - last_name
+      - phone
+      - email
+      - address
+      - application_date
+      - carrier
+      - plan_name
+      - premium
+      - aptc
+      - net_premium
+      - office_visits
+      - generic_drugs
+      - deductible
+      - application_year
+      - status
+      - approaching_medicare_age
+      - binder_payment_due
+
+    column_map:
+      effective_date: "application_date"
+      commission:     "premium"
+      status:         "status"
+      # carrier, plan_name, first_name, last_name, net_premium match canonical names directly
+
+    name_concat: ["first_name", "last_name"]
+
+    # State is embedded in the address field (e.g. "123 Main St Chicago IL 60601")
+    state_from_address: true
+
+    # Skip unenrolled prospects and any row with no carrier assigned
+    skip_statuses: ["Shop for Plans", "Start New Application"]
+    require_carrier: true   # drops rows where Carrier Name is blank or "NA"
+
+    # Map portal status strings to canonical HealthSherpa-style values
+    status_map:
+      "Report a Change":                "Effectuated"
+      "Complete and Submit Application": "PendingEffectuation"
+      "Finish Enrolling Household":      "PendingFollowups"
+
+    extra_columns:
+      subsidy:    "aptc"
+
+    date_columns:   ["effective_date"]
+    amount_columns: ["commission", "net_premium", "subsidy", "applicant_count"]
+
+    # New clients from this source get applicant_count=1 with a flag for manual review
+    default_applicant_count: 1
+    flag_missing_applicant_count: true

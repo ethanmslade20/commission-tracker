@@ -1,0 +1,21 @@
+# Commission Tracker Settings
+
+sheet_url: "https://docs.google.com/spreadsheets/d/1vezg60VBcsZRrQDmVAWJwb3MUiRp9EYBiAzwALCryv8/edit?gid=0"
+
+# ADC impersonation - no JSON key needed.
+# Your personal gcloud login (Owner) mints short-lived tokens for this SA.
+impersonation_target: "commission-tracker-bot@project-80de9266-031e-4099-826.iam.gserviceaccount.com"
+
+# GCP project (used for gcloud commands and IAM context)
+gcp_project: "project-80de9266-031e-4099-826"
+
+snapshot_dir: "snapshots"
+input_dir: "input"
+carrier_config_path: "config/carrier_configs.yaml"
+
+# Sheet tab names
+tabs:
+  dashboard:         "Dashboard"
+  all_clients:       "All Clients"
+  active_pending:    "All Active"
+  cancelled_missing: "All Missing/Cancelled"
