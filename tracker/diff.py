@@ -18,7 +18,10 @@ _STATUS_RANK = {s: 1 for s in _ACTIVE_STS}   # active → rank 1 (sorts last = "
 
 def _person_key(df: pd.DataFrame) -> pd.Series:
     """
-    Return a stable person-level key: name_key if non-empty, else client_key fallback.
+    Stable person-level key: name_key (normalized first+last name) with client_key fallback.
+
+    ffm_subscriber_id is NOT used — HealthSherpa generates a new subscriber ID for each
+    enrollment, so it changes on every plan switch and is not a stable person identifier.
     """
     from tracker.ingest import match_client_id
     df = match_client_id(df)
