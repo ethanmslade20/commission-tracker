@@ -7,10 +7,56 @@ Usage:
   track diff <month1> <month2>
 """
 
+import re
 import sys
 from datetime import date, datetime
 from pathlib import Path
 from typing import Optional
+
+_MONTH_ABBR = {
+    "jan": 1, "feb": 2, "mar": 3, "apr": 4,  "may": 5,  "jun": 6,
+    "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12,
+}
+
+def _month_from_filename(stem: str) -> Optional[date]:
+    """
+    Try to extract a YYYY-MM month from a filename stem.
+    Recognises patterns like:
+      healthsherpa_2025-06  healthsherpa_202506  healthsherpa_jun2025
+      healthsherpa_june2025  2025_06_healthsherpa
+    Returns None if no date found.
+    """
+    s = stem.lower()
+    # YYYY-MM or YYYY_MM
+    m = re.search(r'(20\d{2})[-_](0[1-9]|1[0-2])', s)
+    if m:
+        return datetime(int(m.group(1)), int(m.group(2)), 1).date()
+    # YYYYMM (6 consecutive digits starting with 20)
+    m = re.search(r'(20\d{2})(0[1-9]|1[0-2])', s)
+    if m:
+        return datetime(int(m.group(1)), int(m.group(2)), 1).date()
+    # MonYYYY or MonthYYYY  e.g. jun2025, june2025
+    m = re.search(r'([a-z]{3,9})(20\d{2})', s)
+    if m:
+        abbr = m.group(1)[:3]
+        mo = _MONTH_ABBR.get(abbr)
+        if mo:
+            return datetime(int(m.group(2)), mo, 1).date()
+    # YYYY + Mon  e.g. 2025jun, 2025june
+    m = re.search(r'(20\d{2})([a-z]{3,9})', s)
+    if m:
+        abbr = m.group(2)[:3]
+        mo = _MONTH_ABBR.get(abbr)
+        if mo:
+            return datetime(int(m.group(1)), mo, 1).date()
+    # Mon_YYYY  e.g. aug_2025
+    m = re.search(r'([a-z]{3,9})_?(20\d{2})', s)
+    if m:
+        abbr = m.group(1)[:3]
+        mo = _MONTH_ABBR.get(abbr)
+        if mo:
+            return datetime(int(m.group(2)), mo, 1).date()
+    return None
 
 import click
 
@@ -63,16 +109,19 @@ def ingest(month: Optional[str], dry_run: bool):
     ingested_frames = {}
 
     for csv_path in csv_files:
+        # Use --month if given, otherwise try to parse from filename, else today
+        file_month = month_date if month else (_month_from_filename(csv_path.stem) or month_date)
         try:
             snapshot_path, df = ingest_file(
-                csv_path, source_configs, snapshot_dir, month_date,
+                csv_path, source_configs, snapshot_dir, file_month,
                 dry_run=dry_run, full_config=full_config
             )
             ingested_frames[csv_path.name] = df
             if dry_run:
                 click.echo(f"  {csv_path.name}: {len(df)} rows, {df['carrier'].nunique()} carriers")
             else:
-                click.echo(f"  ✓ {csv_path.name} → {snapshot_path.name} ({len(df)} rows)")
+                tag = f" [month detected: {file_month.strftime('%Y-%m')}]" if not month and file_month != month_date else ""
+                click.echo(f"  ✓ {csv_path.name} → {snapshot_path.name} ({len(df)} rows){tag}")
         except Exception as e:
             click.echo(f"  ✗ {csv_path.name}: {e}", err=True)
             errors.append(csv_path.name)
