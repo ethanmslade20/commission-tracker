@@ -79,7 +79,7 @@ if _day_mode:
         kpi_bg       = "#ffffff",
         kpi_border   = "#e2e6ed",
         kpi_val      = "#1a2744",
-        kpi_lbl      = "#64748b",
+        kpi_lbl      = "#1e293b",
         kpi_sub      = "#94a3b8",
         divider      = "#e2e6ed",
         progress_bg  = "#e2e6ed",
