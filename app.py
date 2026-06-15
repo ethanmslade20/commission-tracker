@@ -353,6 +353,17 @@ def _load_from_sheets():
     spreadsheet  = client.open_by_url(st.secrets["sheet_url"])
 
     all_clients  = _read_all_clients_from_sheet(spreadsheet)
+
+    # Build carrier map from RAW data (before any filtering) for the Settings page
+    _raw_state_carrier_map: dict = {}
+    if "state" in all_clients.columns and "carrier" in all_clients.columns:
+        for _, _row in all_clients.iterrows():
+            _s = str(_row.get("state", "")).strip().upper()
+            _c = str(_row.get("carrier", "")).strip()
+            if _s and _c and _c.lower() not in ("none", "nan", ""):
+                _raw_state_carrier_map.setdefault(_s, set()).add(_c)
+    _raw_state_carrier_map = {s: sorted(c) for s, c in sorted(_raw_state_carrier_map.items())}
+
     all_clients  = _filter_by_appointments(all_clients, _load_appointments())
     # Deduplicate — use FFM App ID where available, fall back to name
     if not all_clients.empty:
@@ -416,7 +427,8 @@ def _load_from_sheets():
         .sort_values("Policies", ascending=False)
     ) if "state" in active_df.columns else pd.DataFrame(columns=["State", "Policies"])
 
-    dashboard_data = {"kpis": kpis, "carrier_df": carrier_df, "state_df": state_df, "mom_df": mom_df}
+    dashboard_data = {"kpis": kpis, "carrier_df": carrier_df, "state_df": state_df, "mom_df": mom_df,
+                      "raw_state_carrier_map": _raw_state_carrier_map}
 
     # Read all Daily Tracker tabs dynamically
     daily_months: dict = {}
@@ -531,15 +543,18 @@ if not all_clients.empty:
     )
 
 # Build full state→carrier map from raw snapshots (unfiltered) for Settings page
-_state_carrier_map: dict = {}
-for _snap_df in months.values():
-    if "state" in _snap_df.columns and "carrier" in _snap_df.columns:
-        for _, _row in _snap_df.iterrows():
-            _s = str(_row.get("state", "")).strip().upper()
-            _c = str(_row.get("carrier", "")).strip()
-            if _s and _c and _c.lower() != "none":
-                _state_carrier_map.setdefault(_s, set()).add(_c)
-_state_carrier_map = {s: sorted(c) for s, c in sorted(_state_carrier_map.items())}
+# Cloud mode: dd["raw_state_carrier_map"] was built before filtering inside _load_from_sheets()
+# Local mode: build from months (parquet snapshots which have state/carrier columns)
+_state_carrier_map: dict = dd.get("raw_state_carrier_map", {})
+if not _state_carrier_map:
+    for _snap_df in months.values():
+        if "state" in _snap_df.columns and "carrier" in _snap_df.columns:
+            for _, _row in _snap_df.iterrows():
+                _s = str(_row.get("state", "")).strip().upper()
+                _c = str(_row.get("carrier", "")).strip()
+                if _s and _c and _c.lower() not in ("none", "nan", ""):
+                    _state_carrier_map.setdefault(_s, set()).add(_c)
+    _state_carrier_map = {s: sorted(c) for s, c in sorted(_state_carrier_map.items())}
 
 # Initialize session_state appointments from yaml (exact carrier name matching)
 if "settings_appointments" not in st.session_state:
