@@ -30,6 +30,37 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# ── PIN gate ──────────────────────────────────────────────────────────────────
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
+
+if not st.session_state.authenticated:
+    st.markdown("""
+    <style>
+    #MainMenu, header, footer {visibility: hidden;}
+    .pin-wrap {
+        display: flex; flex-direction: column; align-items: center;
+        justify-content: center; height: 80vh; gap: 1rem;
+    }
+    .pin-title { font-size: 1.8rem; font-weight: 700; }
+    .pin-sub   { font-size: 0.95rem; opacity: 0.6; }
+    </style>
+    <div class="pin-wrap">
+        <div class="pin-title">🔒 Commission Tracker</div>
+        <div class="pin-sub">Enter your 4-digit PIN to continue</div>
+    </div>
+    """, unsafe_allow_html=True)
+    col = st.columns([1, 1, 1])[1]
+    with col:
+        pin = st.text_input("PIN", type="password", max_chars=4, placeholder="••••", label_visibility="collapsed")
+        if st.button("Unlock", use_container_width=True):
+            if pin == "2020":
+                st.session_state.authenticated = True
+                st.rerun()
+            else:
+                st.error("Incorrect PIN")
+    st.stop()
+
 # ── Time-based theme ──────────────────────────────────────────────────────────
 _hour = dt.datetime.now().hour
 _day_mode = 9 <= _hour < 18   # Clean Light 9am–6pm, Deep Navy otherwise
