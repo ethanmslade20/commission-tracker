@@ -212,6 +212,139 @@ def report():
     run_report(settings)
 
 
+@cli.command("aep-init")
+@click.option("--year", default=None, type=int, help="AEP year (e.g. 2027). Defaults to next calendar year.")
+def aep_init(year: Optional[int]):
+    """Create or refresh the AEP Tracker tab in Google Sheets.
+
+    Pulls all currently active clients and adds them to the tab.
+    Existing rows keep their Status and Notes — new clients are added
+    as 'Not Started'. Safe to re-run anytime to pick up new clients.
+    """
+    import math
+    from datetime import date as _date
+
+    import gspread
+    import pandas as pd
+    from google.oauth2 import service_account
+
+    from tracker.diff import build_all_clients
+    from tracker.ingest import load_all_snapshots
+    from tracker.report import _filter_by_appointments, _load_appointments
+
+    settings   = load_settings()
+    aep_year   = year or (_date.today().year + 1)
+    tab_name   = f"AEP {aep_year}"
+
+    click.echo(f"Building AEP Tracker for {aep_year}...")
+
+    snapshot_dir = Path(settings["snapshot_dir"])
+    months       = load_all_snapshots(snapshot_dir)
+    if not months:
+        click.echo("No snapshots found. Run `track ingest` first.", err=True)
+        return
+
+    all_clients = build_all_clients(months)
+    appts       = _load_appointments()
+    all_clients = _filter_by_appointments(all_clients, appts)
+
+    _ACTIVE = {"Effectuated", "PendingEffectuation", "PendingFollowups"}
+    active  = all_clients[all_clients["status"].isin(_ACTIVE)].copy() if "status" in all_clients.columns else all_clients.copy()
+
+    # Build key for matching existing rows (first+last name)
+    active["_key"] = (
+        active.get("first_name", pd.Series("", index=active.index)).fillna("").str.strip().str.lower()
+        + "|"
+        + active.get("last_name",  pd.Series("", index=active.index)).fillna("").str.strip().str.lower()
+    )
+
+    click.echo(f"  {len(active)} active clients found")
+
+    # Connect to Sheets
+    sheet_url  = settings.get("sheet_url", "")
+    imp_target = settings.get("impersonation_target", "")
+    if not sheet_url or not imp_target:
+        click.echo("sheet_url / impersonation_target missing from settings.yaml", err=True)
+        return
+
+    import google.auth
+    from google.auth import impersonated_credentials
+    from google.auth.transport.requests import Request as _Req
+
+    src_creds, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
+    creds = impersonated_credentials.Credentials(
+        source_credentials=src_creds,
+        target_principal=imp_target,
+        target_scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"],
+        lifetime=3600,
+    )
+    client      = gspread.authorize(creds)
+    spreadsheet = client.open_by_url(sheet_url)
+
+    # Load existing tab to preserve Status / Notes
+    existing: dict = {}  # key → {status, notes}
+    try:
+        ws      = spreadsheet.worksheet(tab_name)
+        rows    = ws.get_all_records()
+        for r in rows:
+            k = (str(r.get("First Name","")).strip().lower()
+                 + "|"
+                 + str(r.get("Last Name","")).strip().lower())
+            existing[k] = {
+                "status": r.get("Status", "Not Started") or "Not Started",
+                "notes":  r.get("Notes", "") or "",
+            }
+        click.echo(f"  Found existing tab '{tab_name}' with {len(existing)} rows — preserving statuses")
+    except gspread.WorksheetNotFound:
+        ws = spreadsheet.add_worksheet(title=tab_name, rows=max(len(active) + 10, 500), cols=15)
+        click.echo(f"  Created new tab '{tab_name}'")
+
+    _STATUSES = ["Not Started", "Contacted", "Renewed", "Lost"]
+
+    def _clean(v):
+        if v is None:
+            return ""
+        if isinstance(v, float) and (math.isnan(v) or math.isinf(v)):
+            return ""
+        try:
+            if pd.isna(v):
+                return ""
+        except Exception:
+            pass
+        return str(v)
+
+    headers = ["First Name", "Last Name", "State", "Carrier", "Members", "Effective Date", "Status", "Notes"]
+    data_rows = [headers]
+    for _, row in active.sort_values(["state", "last_name", "first_name"], na_position="last").iterrows():
+        key   = row.get("_key", "")
+        prev  = existing.get(key, {})
+        status = prev.get("status", "Not Started")
+        if status not in _STATUSES:
+            status = "Not Started"
+        eff = row.get("effective_date", "")
+        if hasattr(eff, "strftime"):
+            eff = eff.strftime("%Y-%m-%d")
+        data_rows.append([
+            _clean(row.get("first_name", "")),
+            _clean(row.get("last_name",  "")),
+            _clean(row.get("state",      "")),
+            _clean(row.get("carrier",    "")),
+            _clean(row.get("applicant_count", 1)),
+            _clean(eff),
+            status,
+            prev.get("notes", ""),
+        ])
+
+    ws.clear()
+    ws.update(data_rows, value_input_option="USER_ENTERED")
+
+    # Bold header row
+    ws.format("A1:H1", {"textFormat": {"bold": True}})
+
+    click.echo(f"  Wrote {len(data_rows)-1} clients to '{tab_name}'")
+    click.echo(f"Done. Open Google Sheets to view or update statuses, then hit 'Refresh data' in the app.")
+
+
 @cli.command()
 @click.argument("month1")
 @click.argument("month2")

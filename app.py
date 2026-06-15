@@ -455,6 +455,89 @@ def _running_in_cloud() -> bool:
         return False
 
 
+def _gspread_client():
+    """Return an authenticated gspread client using st.secrets (cloud mode)."""
+    import gspread
+    from google.oauth2 import service_account
+    creds = service_account.Credentials.from_service_account_info(
+        dict(st.secrets["gcp_service_account"]),
+        scopes=["https://www.googleapis.com/auth/spreadsheets",
+                "https://www.googleapis.com/auth/drive.readonly"],
+    )
+    return gspread.authorize(creds)
+
+
+_AEP_STATUSES   = ["Not Started", "Contacted", "Renewed", "Lost"]
+_AEP_COLS       = ["First Name", "Last Name", "State", "Carrier", "Members", "Effective Date", "Status", "Notes"]
+_AEP_TAB_PREFIX = "AEP "
+
+
+def _aep_tab_name(year: int | None = None) -> str:
+    import datetime as _dt
+    y = year or (_dt.date.today().year + 1)
+    return f"{_AEP_TAB_PREFIX}{y}"
+
+
+@st.cache_data(ttl=30)
+def _read_aep_tab(tab_name: str) -> pd.DataFrame:
+    """Read the AEP Tracker tab from Google Sheets. Returns empty DF if tab missing."""
+    if not _running_in_cloud():
+        return pd.DataFrame(columns=_AEP_COLS)
+    try:
+        client = _gspread_client()
+        sheet  = client.open_by_url(st.secrets["sheet_url"])
+        ws     = sheet.worksheet(tab_name)
+        rows   = ws.get_all_records()
+        if not rows:
+            return pd.DataFrame(columns=_AEP_COLS)
+        df = pd.DataFrame(rows)
+        for c in _AEP_COLS:
+            if c not in df.columns:
+                df[c] = ""
+        df["Status"] = df["Status"].where(df["Status"].isin(_AEP_STATUSES), "Not Started")
+        return df[_AEP_COLS].reset_index(drop=True)
+    except Exception:
+        return pd.DataFrame(columns=_AEP_COLS)
+
+
+def _save_aep_tab(tab_name: str, df: pd.DataFrame) -> bool:
+    """Write the edited AEP DataFrame back to Google Sheets. Returns True on success."""
+    if not _running_in_cloud():
+        return False
+    try:
+        import math
+        client = _gspread_client()
+        sheet  = client.open_by_url(st.secrets["sheet_url"])
+        try:
+            ws = sheet.worksheet(tab_name)
+        except Exception:
+            ws = sheet.add_worksheet(title=tab_name, rows=max(len(df) + 10, 500), cols=15)
+
+        def _clean(v):
+            if v is None:
+                return ""
+            if isinstance(v, float) and (math.isnan(v) or math.isinf(v)):
+                return ""
+            try:
+                if pd.isna(v):
+                    return ""
+            except Exception:
+                pass
+            return str(v)
+
+        rows = [_AEP_COLS]
+        for _, row in df.iterrows():
+            rows.append([_clean(row.get(c, "")) for c in _AEP_COLS])
+        ws.clear()
+        ws.update(rows, value_input_option="USER_ENTERED")
+        ws.format("A1:H1", {"textFormat": {"bold": True}})
+        _read_aep_tab.clear()
+        return True
+    except Exception as e:
+        st.error(f"Save failed: {e}")
+        return False
+
+
 @st.cache_data(ttl=60)
 def load_data():
     if _running_in_cloud():
@@ -600,7 +683,7 @@ with st.sidebar:
 
     page = st.radio(
         "Navigation",
-        ["Dashboard", "Month-over-Month", "Daily Tracker", "Book of Business", "Goals", "Re-Engage", "Settings"],
+        ["Dashboard", "Month-over-Month", "Daily Tracker", "Book of Business", "Goals", "Re-Engage", "AEP Tracker", "Settings"],
         label_visibility="collapsed",
     )
 
@@ -1541,6 +1624,125 @@ elif page == "Re-Engage":
 
                 wb_df = pd.DataFrame(wb_rows)
                 st.dataframe(wb_df, use_container_width=True, hide_index=True, height=min(80 + len(wb_rows) * 35, 480))
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# AEP TRACKER
+# ══════════════════════════════════════════════════════════════════════════════
+elif page == "AEP Tracker":
+    import datetime as _dt
+
+    _aep_year     = _dt.date.today().year + 1
+    _aep_tab      = _aep_tab_name(_aep_year)
+
+    st.title(f"🔄 Open Enrollment Tracker — {_aep_year}")
+    st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
+
+    if not _running_in_cloud():
+        st.info("AEP Tracker is only available in the deployed app. Run `track aep-init` to populate the sheet, then open the live site.")
+    else:
+        # Load data
+        if "aep_df" not in st.session_state or st.session_state.get("aep_tab") != _aep_tab:
+            _raw = _read_aep_tab(_aep_tab)
+            st.session_state.aep_df  = _raw.copy()
+            st.session_state.aep_tab = _aep_tab
+
+        aep_df = st.session_state.aep_df
+
+        if aep_df.empty:
+            st.warning(f"No AEP Tracker data found for {_aep_year}.")
+            st.markdown(
+                "To set it up, run this command on your Mac:\n"
+                "```\ntrack aep-init\n```\n"
+                "This will create the **AEP Tracker** tab in your Google Sheet with all active clients ready to track."
+            )
+        else:
+            # ── Progress stats ─────────────────────────────────────────────
+            _total     = len(aep_df)
+            _counts    = aep_df["Status"].value_counts()
+            _not_start = int(_counts.get("Not Started", 0))
+            _contacted = int(_counts.get("Contacted",   0))
+            _renewed   = int(_counts.get("Renewed",     0))
+            _lost      = int(_counts.get("Lost",        0))
+            _done_pct  = round((_renewed + _lost) / max(_total, 1) * 100)
+
+            c1, c2, c3, c4 = st.columns(4)
+            _kpi_style = f'background:{NAVY};border-radius:10px;padding:14px 18px;text-align:center;'
+            c1.markdown(f'<div style="{_kpi_style}"><div style="font-size:1.6rem;font-weight:700;color:{GREEN}">{_renewed}</div><div style="font-size:0.75rem;color:#aaa">Renewed</div></div>', unsafe_allow_html=True)
+            c2.markdown(f'<div style="{_kpi_style}"><div style="font-size:1.6rem;font-weight:700;color:{BLUE}">{_contacted}</div><div style="font-size:0.75rem;color:#aaa">Contacted</div></div>', unsafe_allow_html=True)
+            c3.markdown(f'<div style="{_kpi_style}"><div style="font-size:1.6rem;font-weight:700;color:{GOLD}">{_not_start}</div><div style="font-size:0.75rem;color:#aaa">Not Started</div></div>', unsafe_allow_html=True)
+            c4.markdown(f'<div style="{_kpi_style}"><div style="font-size:1.6rem;font-weight:700;color:{RED}">{_lost}</div><div style="font-size:0.75rem;color:#aaa">Lost</div></div>', unsafe_allow_html=True)
+
+            st.markdown("<br>", unsafe_allow_html=True)
+
+            # Progress bar
+            st.markdown(f"**Overall progress: {_renewed + _contacted} of {_total} clients touched ({_done_pct}% fully resolved)**")
+            _prog_val = (_renewed + _lost) / max(_total, 1)
+            st.progress(min(_prog_val, 1.0))
+            st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
+
+            # ── Filters ────────────────────────────────────────────────────
+            fc1, fc2, fc3 = st.columns(3)
+            with fc1:
+                _state_opts = ["All States"] + sorted(aep_df["State"].dropna().unique().tolist())
+                _f_state    = st.selectbox("State", _state_opts, key="aep_f_state")
+            with fc2:
+                _carrier_opts = ["All Carriers"] + sorted(aep_df["Carrier"].dropna().unique().tolist())
+                _f_carrier    = st.selectbox("Carrier", _carrier_opts, key="aep_f_carrier")
+            with fc3:
+                _status_opts = ["All Statuses"] + _AEP_STATUSES
+                _f_status    = st.selectbox("Status", _status_opts, key="aep_f_status")
+
+            _view = aep_df.copy()
+            if _f_state   != "All States":    _view = _view[_view["State"]   == _f_state]
+            if _f_carrier != "All Carriers":  _view = _view[_view["Carrier"] == _f_carrier]
+            if _f_status  != "All Statuses":  _view = _view[_view["Status"]  == _f_status]
+
+            st.caption(f"Showing {len(_view)} of {_total} clients")
+            st.markdown("<br>", unsafe_allow_html=True)
+
+            # ── Editable table ─────────────────────────────────────────────
+            st.markdown("**Update status and notes directly in the table, then hit Save.**")
+            _edited = st.data_editor(
+                _view.reset_index(drop=True),
+                use_container_width=True,
+                hide_index=True,
+                height=min(80 + len(_view) * 35, 600),
+                column_config={
+                    "Status": st.column_config.SelectboxColumn(
+                        "Status",
+                        options=_AEP_STATUSES,
+                        required=True,
+                        width="medium",
+                    ),
+                    "Notes": st.column_config.TextColumn("Notes", width="large"),
+                    "First Name":     st.column_config.TextColumn("First Name",     disabled=True),
+                    "Last Name":      st.column_config.TextColumn("Last Name",      disabled=True),
+                    "State":          st.column_config.TextColumn("State",          disabled=True, width="small"),
+                    "Carrier":        st.column_config.TextColumn("Carrier",        disabled=True),
+                    "Members":        st.column_config.NumberColumn("Members",      disabled=True, width="small"),
+                    "Effective Date": st.column_config.TextColumn("Effective Date", disabled=True),
+                },
+                key="aep_editor",
+            )
+
+            st.markdown("<br>", unsafe_allow_html=True)
+            _sc1, _sc2 = st.columns([1, 4])
+            with _sc1:
+                if st.button("💾 Save changes", use_container_width=True, type="primary"):
+                    # Merge edits back into the full dataframe (filtered view may be a subset)
+                    _merged = st.session_state.aep_df.copy()
+                    _edited_indexed = _edited.set_index(["First Name", "Last Name"])
+                    for idx, row in _merged.iterrows():
+                        _k = (row["First Name"], row["Last Name"])
+                        if _k in _edited_indexed.index:
+                            _merged.at[idx, "Status"] = _edited_indexed.loc[_k, "Status"]
+                            _merged.at[idx, "Notes"]  = _edited_indexed.loc[_k, "Notes"]
+                    if _save_aep_tab(_aep_tab, _merged):
+                        st.session_state.aep_df = _merged
+                        st.success("Saved!")
+                    else:
+                        st.error("Save failed — check connection.")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
