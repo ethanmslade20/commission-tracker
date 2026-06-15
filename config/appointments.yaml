@@ -1,0 +1,151 @@
+# Carrier appointments by state.
+# Only clients whose carrier matches one of these keywords (case-insensitive)
+# for their state will be included in the dashboard.
+# Allstate and Golden Rule are excluded everywhere per agent preference.
+
+appointments:
+  UT:
+    - Cigna
+    - SelectHealth
+    - Select Health
+    - University of Utah
+    - U of U
+
+  TX:
+    - Ambetter
+    - United Healthcare
+    - UnitedHealthcare
+    - Anthem
+    - Wellpoint
+    - Oscar
+    - BCBS
+    - BlueCross
+    - Blue Cross
+
+  OH:
+    - Oscar
+    - Anthem
+    - Wellpoint
+    - United Healthcare
+    - UnitedHealthcare
+    - Cigna
+
+  FL:
+    - Ambetter
+    - Anthem
+    - Wellpoint
+    - United Healthcare
+    - UnitedHealthcare
+    - Oscar
+
+  SC:
+    - United Healthcare
+    - UnitedHealthcare
+    - Ambetter
+
+  NC:
+    - Ambetter
+    - United Healthcare
+    - UnitedHealthcare
+    - Oscar
+
+  TN:
+    - United Healthcare
+    - UnitedHealthcare
+    - Ambetter
+    - Oscar
+    - Cigna
+    - BCBS
+    - BlueCross
+    - Blue Cross
+
+  AL:
+    - United Healthcare
+    - UnitedHealthcare
+    - Ambetter
+    - Oscar
+
+  IL:
+    - Ambetter
+    - United Healthcare
+    - UnitedHealthcare
+    - Oscar
+    - BCBS
+    - BlueCross
+    - Blue Cross
+
+  KS:
+    - United Healthcare
+    - UnitedHealthcare
+    - Oscar
+    - Ambetter
+
+  LA:
+    - Oscar
+    - Ambetter
+
+  MI:
+    - Oscar
+    - United Healthcare
+    - UnitedHealthcare
+    - Ambetter
+
+  GA:
+    - Oscar
+    - United Healthcare
+    - UnitedHealthcare
+    - Ambetter
+    - Anthem
+    - Wellpoint
+    - BlueCross
+    - Blue Cross
+
+
+  IN:
+    - Ambetter
+    - Cigna
+    - Oscar
+    - Anthem
+    - Wellpoint
+
+  IA:
+    - Ambetter
+    - Cigna
+    - Oscar
+    - United Healthcare
+    - UnitedHealthcare
+
+  MS:
+    - Ambetter
+    - Cigna
+    - Oscar
+    - United Healthcare
+    - UnitedHealthcare
+    - Anthem
+
+  MO:
+    - Ambetter
+    - Cigna
+    - Oscar
+    - United Healthcare
+    - UnitedHealthcare
+    - Anthem
+
+  OK:
+    - Oscar
+    - BCBS
+    - BlueCross
+    - Blue Cross
+    - Cigna
+    - United Healthcare
+    - UnitedHealthcare
+
+  AR:
+    - Ambetter
+    - United Healthcare
+    - UnitedHealthcare
+
+  WI:
+    - Anthem
+    - United Healthcare
+    - UnitedHealthcare

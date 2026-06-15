@@ -48,7 +48,11 @@ def build_dashboard_data(
     sorted_months = sorted(months.keys())
 
     # ── MoM table first (needed for KPI averages) ────────────────────────────
-    mom_df = _build_mom_from_all_clients(all_clients)
+    # Start from the earliest real snapshot month, not earliest effective_date.
+    # Months before the first snapshot are reconstructed guesses — no cancellation
+    # data exists for them, so they'd show false 0% churn.
+    first_snapshot_month = sorted_months[0] if sorted_months else None
+    mom_df = _build_mom_from_all_clients(all_clients, start_month=first_snapshot_month)
 
     # ── KPIs ──────────────────────────────────────────────────────────────────
     active_df = all_clients[
@@ -58,11 +62,15 @@ def build_dashboard_data(
     total_active_policies = len(active_df)
     total_members = int(active_df["applicant_count"].sum()) if "applicant_count" in active_df.columns else 0
 
-    # Averages across all MoM months (auto-expands as new months are added)
+    # Averages from Jan 1 of the current year forward (reflects current-year pace)
     if not mom_df.empty and "New Policies" in mom_df.columns:
-        avg_added          = round(mom_df["New Policies"].mean(), 1)
+        import datetime as _dt
+        _ytd_start = f"{_dt.date.today().year}-02"
+        _ytd = mom_df[mom_df["Month"] >= _ytd_start] if "Month" in mom_df.columns else mom_df
+        _base = _ytd if not _ytd.empty else mom_df
+        avg_added          = round(_base["New Policies"].mean(), 1)
         avg_lost           = round(mom_df["Policies Lost"].mean(), 1)
-        avg_members_added  = round(mom_df["New Members"].mean(), 1)
+        avg_members_added  = round(_base["New Members"].mean(), 1)
         avg_members_lost   = round(mom_df["Members Lost"].mean(), 1)
     else:
         avg_added = avg_lost = avg_members_added = avg_members_lost = "N/A"
@@ -182,8 +190,7 @@ def _build_mom_from_all_clients(
     else:
         min_eff = eff.dropna().min()
         detected = min_eff.to_period("M").to_timestamp() if pd.notna(min_eff) else end_month
-        # Never start before February 2026
-        first_month = max(detected, pd.Timestamp("2026-02-01"))
+        first_month = detected
 
     months_idx = pd.date_range(start=first_month, end=end_month, freq="MS")
 

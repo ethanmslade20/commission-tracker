@@ -50,6 +50,38 @@ def _sort(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def _load_appointments() -> dict:
+    """Load state→carrier appointments from config/appointments.yaml."""
+    import yaml
+    appt_path = Path(__file__).parent.parent / "config" / "appointments.yaml"
+    if not appt_path.exists():
+        return {}
+    try:
+        with open(appt_path) as f:
+            data = yaml.safe_load(f)
+        return data.get("appointments", {})
+    except Exception:
+        return {}
+
+
+def _filter_by_appointments(df: pd.DataFrame, appointments: dict) -> pd.DataFrame:
+    """Remove rows whose carrier is not in the agent's appointments for their state."""
+    if not appointments or df.empty:
+        return df
+    if "state" not in df.columns or "carrier" not in df.columns:
+        return df
+    def _is_appointed(row):
+        state   = str(row.get("state", "")).strip().upper()
+        carrier = str(row.get("carrier", "")).strip().lower()
+        if not state or not carrier:
+            return True
+        keywords = appointments.get(state, [])
+        if not keywords:
+            return True
+        return any(kw.lower() in carrier for kw in keywords)
+    return df[df.apply(_is_appointed, axis=1)].copy()
+
+
 def run_report(settings: dict) -> None:
     snapshot_dir = Path(settings["snapshot_dir"])
     months = load_all_snapshots(snapshot_dir)
@@ -64,7 +96,13 @@ def run_report(settings: dict) -> None:
 
     print(f"Building report. Latest month: {latest_month}")
 
-    all_clients = build_all_clients(months)
+    appointments = _load_appointments()
+    all_clients  = build_all_clients(months)
+    before_ct    = len(all_clients)
+    all_clients  = _filter_by_appointments(all_clients, appointments)
+    filtered_ct  = before_ct - len(all_clients)
+    if filtered_ct:
+        print(f"  Appointment filter: removed {filtered_ct} non-appointed carrier/state rows")
 
     # Compute diff to identify missing clients (those who dropped off last month)
     if prior_month:
@@ -90,6 +128,7 @@ def run_report(settings: dict) -> None:
     _active_statuses = {"Effectuated", "PendingEffectuation", "PendingFollowups"}
 
     if not missing_df.empty:
+        missing_df = _filter_by_appointments(missing_df, appointments)
         existing_keys = set(cancelled["name_key"].dropna()) if "name_key" in cancelled.columns else set()
         extra = missing_df[
             ~missing_df.get("name_key", pd.Series(dtype=str)).isin(existing_keys)

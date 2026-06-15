@@ -650,12 +650,10 @@ def update_sheet(
 
     dashboard_title = tab_names.get("dashboard", "Dashboard")
 
-    # Daily tracker tabs — only the two most recent ingested months
-    # (e.g. May 2026 + Jun 2026).  Old snapshots like May 2025 are excluded.
+    # Daily tracker tabs — one per ingested month, all history included.
     daily_tracker_tabs: Dict[str, str] = {}   # month_str → tab title
     if months:
-        recent = sorted(months.keys())[-2:]
-        for m in recent:
+        for m in sorted(months.keys()):
             m_label = pd.Timestamp(m + "-01").strftime("%b %Y")
             daily_tracker_tabs[m] = f"Daily Tracker - {m_label}"
 

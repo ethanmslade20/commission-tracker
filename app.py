@@ -21,92 +21,233 @@ st.set_page_config(
     page_title="Commission Tracker",
     page_icon="📊",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",  # collapsed by default on mobile
 )
 
-# ── Color palette ─────────────────────────────────────────────────────────────
-NAVY  = "#1a2744"
-LNAV  = "#243664"
-BLUE  = "#4285F4"
-GREEN = "#2ecc71"
-RED   = "#e74c3c"
-GOLD  = "#f39c12"
+# Proper mobile viewport so iPhone doesn't zoom out
+st.markdown(
+    '<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">',
+    unsafe_allow_html=True,
+)
 
-# ── CSS: custom KPI boxes ─────────────────────────────────────────────────────
-st.markdown("""
+# ── Time-based theme ──────────────────────────────────────────────────────────
+_hour = dt.datetime.now().hour
+_day_mode = 9 <= _hour < 18   # Clean Light 9am–6pm, Deep Navy otherwise
+
+if _day_mode:
+    # Clean Light
+    NAVY  = "#1a2744"
+    LNAV  = "#e2e6ed"
+    BLUE  = "#185FA5"
+    GREEN = "#0F6E56"
+    RED   = "#e74c3c"
+    GOLD  = "#BA7517"
+    _theme = dict(
+        page_bg      = "#f5f7fa",
+        sidebar_bg   = "#ffffff",
+        kpi_bg       = "#ffffff",
+        kpi_border   = "#e2e6ed",
+        kpi_val      = "#1a2744",
+        kpi_lbl      = "#64748b",
+        kpi_sub      = "#94a3b8",
+        divider      = "#e2e6ed",
+        progress_bg  = "#e2e6ed",
+        goal_val     = "#185FA5",
+        goal_green   = "#0F6E56",
+        goal_gold    = "#BA7517",
+        goal_red     = "#e74c3c",
+        text_primary = "#1a2744",
+    )
+else:
+    # Deep Navy
+    NAVY  = "#1a2744"
+    LNAV  = "#243664"
+    BLUE  = "#4285F4"
+    GREEN = "#2ecc71"
+    RED   = "#e74c3c"
+    GOLD  = "#f39c12"
+    _theme = dict(
+        page_bg      = "#0f1a2e",
+        sidebar_bg   = "#0f1a2e",
+        kpi_bg       = "#1a2744",
+        kpi_border   = "#243664",
+        kpi_val      = "#ffffff",
+        kpi_lbl      = "#8aacd6",
+        kpi_sub      = "#5a7ab5",
+        divider      = "#243664",
+        progress_bg  = "#0d1321",
+        goal_val     = "#4285F4",
+        goal_green   = "#2ecc71",
+        goal_gold    = "#f39c12",
+        goal_red     = "#e74c3c",
+        text_primary = "#e8edf5",
+    )
+
+T = _theme
+
+# ── CSS: custom KPI boxes + page theming ──────────────────────────────────────
+st.markdown(f"""
 <style>
-  .kpi-box {
-    background: #1a2744;
+  [data-testid="stAppViewContainer"] {{
+    background-color: {T['page_bg']};
+  }}
+  [data-testid="stSidebar"] {{
+    background-color: {T['sidebar_bg']};
+  }}
+  [data-testid="stSidebar"] * {{
+    color: {T['text_primary']} !important;
+  }}
+  .main .block-container {{
+    background-color: {T['page_bg']};
+  }}
+  h1, h2, h3, p, label, .stMarkdown {{
+    color: {T['text_primary']};
+  }}
+  .kpi-box {{
+    background: {T['kpi_bg']};
     border-radius: 10px;
     padding: 22px 16px 18px;
     text-align: center;
-    border: 1px solid #243664;
-  }
-  .kpi-value {
+    border: 1px solid {T['kpi_border']};
+  }}
+  .kpi-value {{
     font-size: 2.2rem;
     font-weight: 700;
-    color: #ffffff;
+    color: {T['kpi_val']};
     line-height: 1.1;
-  }
-  .kpi-label {
+  }}
+  .kpi-label {{
     font-size: 0.72rem;
-    color: #8aacd6;
+    color: {T['kpi_lbl']};
     margin-top: 6px;
     text-transform: uppercase;
     letter-spacing: 0.06em;
-  }
-  .section-divider { margin: 8px 0 20px; border-top: 1px solid #243664; }
-  .goal-kpi-box {
-    background: #1a2744;
+  }}
+  .section-divider {{ margin: 8px 0 20px; border-top: 1px solid {T['divider']}; }}
+  .goal-kpi-box {{
+    background: {T['kpi_bg']};
     border-radius: 12px;
     padding: 24px 16px 20px;
     text-align: center;
-    border: 1px solid #243664;
+    border: 1px solid {T['kpi_border']};
     position: relative;
-  }
-  .goal-kpi-value {
+  }}
+  .goal-kpi-value {{
     font-size: 2.6rem;
     font-weight: 800;
-    color: #4285F4;
+    color: {T['goal_val']};
     line-height: 1.1;
-  }
-  .goal-kpi-value.green  { color: #2ecc71; }
-  .goal-kpi-value.gold   { color: #f39c12; }
-  .goal-kpi-value.red    { color: #e74c3c; }
-  .goal-kpi-label {
+  }}
+  .goal-kpi-value.green  {{ color: {T['goal_green']}; }}
+  .goal-kpi-value.gold   {{ color: {T['goal_gold']}; }}
+  .goal-kpi-value.red    {{ color: {T['goal_red']}; }}
+  .goal-kpi-label {{
     font-size: 0.72rem;
-    color: #8aacd6;
+    color: {T['kpi_lbl']};
     margin-top: 6px;
     text-transform: uppercase;
     letter-spacing: 0.06em;
-  }
-  .goal-kpi-sub {
+  }}
+  .goal-kpi-sub {{
     font-size: 0.82rem;
-    color: #8aacd6;
+    color: {T['kpi_lbl']};
     margin-top: 4px;
-  }
-  .progress-wrap {
-    background: #0d1321;
+  }}
+  .progress-wrap {{
+    background: {T['progress_bg']};
     border-radius: 999px;
     height: 22px;
     overflow: hidden;
     margin: 10px 0 6px;
-  }
-  .progress-bar {
+  }}
+  .progress-bar {{
     height: 100%;
     border-radius: 999px;
-    background: linear-gradient(90deg, #4285F4, #2ecc71);
+    background: linear-gradient(90deg, {BLUE}, {GREEN});
     transition: width 0.6s ease;
-  }
+  }}
+
+  /* ── Mobile optimizations ── */
+  @media (max-width: 768px) {{
+    /* Bigger tap targets on KPI boxes */
+    .kpi-box {{
+      padding: 18px 12px 14px;
+      margin-bottom: 8px;
+    }}
+    .kpi-value {{
+      font-size: 1.8rem;
+    }}
+    .kpi-label {{
+      font-size: 0.65rem;
+    }}
+    .goal-kpi-box {{
+      padding: 18px 12px 14px;
+      margin-bottom: 8px;
+    }}
+    .goal-kpi-value {{
+      font-size: 2rem;
+    }}
+    /* Make block container use full width with less padding */
+    .block-container {{
+      padding-left: 1rem !important;
+      padding-right: 1rem !important;
+      padding-top: 1rem !important;
+    }}
+    /* Streamlit dataframes scroll horizontally */
+    [data-testid="stDataFrame"] {{
+      overflow-x: auto;
+    }}
+    /* Tighten up headers */
+    h1 {{ font-size: 1.6rem !important; }}
+    h2 {{ font-size: 1.2rem !important; }}
+    h3 {{ font-size: 1rem !important; }}
+    /* Progress bar thicker for easier reading */
+    .progress-wrap {{
+      height: 26px;
+    }}
+  }}
 </style>
 """, unsafe_allow_html=True)
 
 
-def kpi_html(label: str, value) -> str:
+def _load_appointments() -> dict:
+    """Load state→carrier appointments from config. Returns {state: [keywords]}."""
+    import yaml
+    appt_path = Path("config/appointments.yaml")
+    if not appt_path.exists():
+        return {}
+    try:
+        with open(appt_path) as f:
+            data = yaml.safe_load(f)
+        return data.get("appointments", {})
+    except Exception:
+        return {}
+
+def _filter_by_appointments(df: pd.DataFrame, appointments: dict) -> pd.DataFrame:
+    """Remove rows where the carrier is not in the agent's appointments for that state."""
+    if not appointments or df.empty:
+        return df
+    if "state" not in df.columns or "carrier" not in df.columns:
+        return df
+    def _is_appointed(row):
+        state   = str(row.get("state", "")).strip().upper()
+        carrier = str(row.get("carrier", "")).strip().lower()
+        if not state or not carrier:
+            return True  # no state/carrier info — keep
+        keywords = appointments.get(state, [])
+        if not keywords:
+            return True  # no appointments defined for this state — keep
+        return any(kw.lower() in carrier for kw in keywords)
+    return df[df.apply(_is_appointed, axis=1)].copy()
+
+
+def kpi_html(label: str, value, sub: str = "") -> str:
+    sub_html = f'<div class="kpi-sub" style="font-size:0.7rem;color:#5a7ab5;margin-top:2px;">{sub}</div>' if sub else ""
     return (
         f'<div class="kpi-box">'
         f'<div class="kpi-value">{value}</div>'
         f'<div class="kpi-label">{label}</div>'
+        f'{sub_html}'
         f'</div>'
     )
 
@@ -240,13 +381,19 @@ def _load_from_sheets():
 
     dashboard_data = {"kpis": kpis, "carrier_df": carrier_df, "state_df": state_df, "mom_df": mom_df}
 
-    # Read daily tracker tabs — return as pre-built DataFrames keyed by month string
+    # Read all Daily Tracker tabs dynamically
     daily_months: dict = {}
-    for tab in ["Daily Tracker - May 2026", "Daily Tracker - Jun 2026"]:
-        m_str = "2026-05" if "May" in tab else "2026-06"
-        ddf   = _read_daily_tab_from_sheet(spreadsheet, tab)
-        if not ddf.empty:
-            daily_months[m_str] = ddf
+    for ws in spreadsheet.worksheets():
+        if ws.title.startswith("Daily Tracker - "):
+            try:
+                label = ws.title.replace("Daily Tracker - ", "")
+                ts    = pd.Timestamp(label)
+                m_str = ts.strftime("%Y-%m")
+                ddf   = _read_daily_tab_from_sheet(spreadsheet, ws.title)
+                if not ddf.empty:
+                    daily_months[m_str] = ddf
+            except Exception:
+                continue
 
     return daily_months, all_clients, dashboard_data
 
@@ -322,6 +469,11 @@ def _chart_layout(**extra) -> dict:
 
 # ── Load ──────────────────────────────────────────────────────────────────────
 months, all_clients, dd = load_data()
+
+# Filter all_clients to only appointed carrier/state combos
+_appointments = _load_appointments()
+all_clients   = _filter_by_appointments(all_clients, _appointments)
+
 kpis        = dd["kpis"]
 mom_df      = dd["mom_df"]
 carrier_df  = dd["carrier_df"]
@@ -336,7 +488,7 @@ with st.sidebar:
 
     page = st.radio(
         "Navigation",
-        ["Overview", "Month-over-Month", "Daily Tracker", "Client Roster", "Goals"],
+        ["Overview", "Month-over-Month", "Daily Tracker", "Book of Business", "Goals", "Re-Engage"],
         label_visibility="collapsed",
     )
 
@@ -374,16 +526,16 @@ if page == "Overview":
     # Row 2 KPIs
     c4, c5, c6 = st.columns(3)
     with c4:
-        st.markdown(kpi_html("Avg Policies Added / Month", kpis["Avg Policies Added/Month"]), unsafe_allow_html=True)
+        st.markdown(kpi_html("Avg Policies Added / Month", kpis["Avg Policies Added/Month"], sub="Feb 2026 – present"), unsafe_allow_html=True)
     with c5:
-        st.markdown(kpi_html("Avg Policies Lost / Month", kpis["Avg Policies Lost/Month"]), unsafe_allow_html=True)
+        st.markdown(kpi_html("Avg Policies Lost / Month", kpis["Avg Policies Lost/Month"], sub="All history"), unsafe_allow_html=True)
     with c6:
         try:
             net = round(float(kpis["Avg Policies Added/Month"]) - float(kpis["Avg Policies Lost/Month"]), 1)
             net_str = f"+{net}" if net >= 0 else str(net)
         except Exception:
             net_str = "N/A"
-        st.markdown(kpi_html("Avg Net Growth / Month", net_str), unsafe_allow_html=True)
+        st.markdown(kpi_html("Avg Net Growth / Month", net_str, sub="Added (Feb+) minus Lost (all-time)"), unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
 
@@ -442,10 +594,12 @@ if page == "Overview":
             text="Policies",
         )
         fig_mob.update_traces(textposition="outside")
+        _mob_max = max(_buckets.values()) if _buckets else 1
         fig_mob.update_layout(**_chart_layout(
             showlegend=False,
             xaxis=dict(gridcolor="rgba(0,0,0,0)", showgrid=False, zeroline=False),
-            yaxis=dict(gridcolor="#243664", showgrid=True, zeroline=False),
+            yaxis=dict(gridcolor="#243664", showgrid=True, zeroline=False,
+                       range=[0, _mob_max * 1.18]),
             margin=dict(t=20, b=10, l=10, r=10),
             height=260,
         ))
@@ -605,10 +759,9 @@ elif page == "Daily Tracker":
     st.title("Daily Tracker")
     st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 
-    recent_months = sorted(months.keys())[-2:]
     month_options = {
         pd.Timestamp(m + "-01").strftime("%B %Y"): m
-        for m in reversed(recent_months)
+        for m in reversed(sorted(months.keys()))
     }
     selected_label = st.selectbox("Select month", list(month_options.keys()))
     selected_m = month_options[selected_label]
@@ -709,8 +862,8 @@ elif page == "Daily Tracker":
 # ══════════════════════════════════════════════════════════════════════════════
 # CLIENT ROSTER
 # ══════════════════════════════════════════════════════════════════════════════
-elif page == "Client Roster":
-    st.title("Client Roster")
+elif page == "Book of Business":
+    st.title("Book of Business")
     st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 
     # Normalise PendingEffectuation → Effectuated for display/filtering
@@ -753,11 +906,11 @@ elif page == "Client Roster":
     inactive_ct = int((~df["status"].isin(active_sts)).sum())
     total_mem  = int(df.loc[df["status"].isin(active_sts), "applicant_count"].sum())
     with m1:
-        st.metric("Showing", f"{len(df):,} clients")
+        st.metric("Total Policies", f"{len(df):,}")
     with m2:
-        st.metric("Active", f"{active_ct:,}")
+        st.metric("Active Policies", f"{active_ct:,}")
     with m3:
-        st.metric("Inactive", f"{inactive_ct:,}")
+        st.metric("Inactive Policies", f"{inactive_ct:,}")
     with m4:
         st.metric("Active Members", f"{total_mem:,}")
 
@@ -766,7 +919,7 @@ elif page == "Client Roster":
     # Table
     display_cols = [
         "first_name", "last_name", "carrier", "state", "status_display",
-        "effective_date", "term_date", "applicant_count", "net_premium",
+        "effective_date", "term_date", "months_on_book", "applicant_count", "net_premium",
     ]
     disp = df[[c for c in display_cols if c in df.columns]].copy()
     disp = disp.rename(columns={"status_display": "status"})
@@ -778,10 +931,11 @@ elif page == "Client Roster":
         hide_index=True,
         height=600,
         column_config={
-            "Effective Date": st.column_config.DateColumn("Effective Date", format="MMM D, YYYY"),
-            "Term Date":      st.column_config.DateColumn("Term Date",      format="MMM D, YYYY"),
-            "Net Premium":    st.column_config.NumberColumn("Net Premium", format="$%.2f"),
+            "Effective Date":  st.column_config.DateColumn("Effective Date", format="MMM D, YYYY"),
+            "Term Date":       st.column_config.DateColumn("Term Date",      format="MMM D, YYYY"),
+            "Net Premium":     st.column_config.NumberColumn("Net Premium", format="$%.2f"),
             "Applicant Count": st.column_config.NumberColumn("Members"),
+            "Months On Book":  st.column_config.NumberColumn("Mo. on Book"),
         },
     )
 
@@ -794,7 +948,7 @@ elif page == "Goals":
     GOAL_DATE        = dt.date(2027, 2, 1)
     TODAY            = dt.date.today()
     COMMISSION_PMPM  = 23          # $23 per member per month
-    MAX_TENURE_MONTHS = 48         # cap LTV calc at 4 years (conservative ceiling)
+    MAX_TENURE_MONTHS = 60         # cap LTV calc at 5 years (conservative ceiling)
     _ACTIVE_STS      = {"Effectuated", "PendingEffectuation", "PendingFollowups"}
     _CHURN_STS       = {"Cancelled", "Terminated"}
 
@@ -805,13 +959,20 @@ elif page == "Goals":
     gap          = max(GOAL - current, 0)
     pct_done     = min(current / GOAL * 100, 100)
 
-    # ── LTV — calculated live from actual churn rate ──────────────────────────
-    # Monthly churn rate = churned policies / total-ever-active / data span in months
-    total_ever_active = int(_active_mask.sum()) + int(_churn_mask.sum())
-    total_churned_ct  = int(_churn_mask.sum())
-    # Data span = number of months we have snapshots for
-    data_span_months = max(len(months), 1)
-    monthly_churn_rate = (total_churned_ct / max(total_ever_active, 1)) / data_span_months
+    # ── LTV — trailing 3-month churn rate (more accurate than all-time cumulative) ──
+    # Uses avg members lost / avg active members over the last 3 snapshot months.
+    # Falls back to all-time if MoM data is unavailable.
+    if not mom_df.empty and "Members Lost" in mom_df.columns and "Total Members" in mom_df.columns:
+        _trailing = mom_df.tail(3)
+        _avg_lost   = _trailing["Members Lost"].mean()
+        _avg_active = _trailing["Total Members"].mean()
+        monthly_churn_rate = _avg_lost / max(_avg_active, 1)
+        _churn_label = "trailing 3-mo avg"
+    else:
+        _total_ever  = int(_active_mask.sum()) + int(_churn_mask.sum())
+        _total_churned = int(_churn_mask.sum())
+        monthly_churn_rate = (_total_churned / max(_total_ever, 1)) / max(len(months), 1)
+        _churn_label = "all-time avg"
     implied_tenure_mo  = min(1 / monthly_churn_rate if monthly_churn_rate > 0 else MAX_TENURE_MONTHS, MAX_TENURE_MONTHS)
     ltv_per_member     = round(COMMISSION_PMPM * implied_tenure_mo)
 
@@ -859,7 +1020,7 @@ elif page == "Goals":
         f'<p style="color:#8aacd6;font-size:1rem;">Target: <b style="color:#e8edf5">'
         f'{GOAL:,} active members</b> by <b style="color:#e8edf5">'
         f'{GOAL_DATE.strftime("%B %d, %Y")}</b> &nbsp;·&nbsp; '
-        f'LTV source: your live churn rate ({monthly_churn_rate*100:.2f}%/mo → '
+        f'LTV source: {_churn_label} churn rate ({monthly_churn_rate*100:.2f}%/mo → '
         f'{implied_tenure_mo:.0f}-mo avg tenure → <b style="color:#2ecc71">'
         f'${ltv_per_member:,}/member</b>)</p>',
         unsafe_allow_html=True,
@@ -1003,3 +1164,197 @@ elif page == "Goals":
 
     breakdown_df = pd.DataFrame(breakdown_rows)
     st.dataframe(breakdown_df, use_container_width=True, hide_index=True, height=340)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# RE-ENGAGE
+# ══════════════════════════════════════════════════════════════════════════════
+elif page == "Re-Engage":
+    import json
+    from tracker.diff import compute_diff, _dedup_month
+
+    WINBACK_FILE = Path("data/winbacks.json")
+    WINBACK_FILE.parent.mkdir(exist_ok=True)
+
+    def _load_winbacks() -> dict:
+        if WINBACK_FILE.exists():
+            try:
+                return json.loads(WINBACK_FILE.read_text())
+            except Exception:
+                return {}
+        return {}
+
+    def _save_winbacks(data: dict):
+        WINBACK_FILE.write_text(json.dumps(data, indent=2))
+
+    winbacks = _load_winbacks()  # {name_key: {name, carrier, state, winback_month, detected_date}}
+
+    # ── Auto-detect win-backs from snapshot history ───────────────────────────
+    # A win-back = someone who appears as NEW in month M but whose first_seen
+    # predates month M-1 (i.e. they were with us before, went missing, came back).
+    sorted_month_keys = sorted(months.keys())
+    if len(sorted_month_keys) >= 2:
+        latest_m = sorted_month_keys[-1]
+        prior_m  = sorted_month_keys[-2]
+        try:
+            _diff = compute_diff(months[prior_m], months[latest_m])
+            _new_keys = set(_diff["new"]["name_key"].dropna().tolist()) if "name_key" in _diff["new"].columns else set()
+            _new_names = set(_diff["new"].apply(
+                lambda r: (str(r.get("first_name","")).strip().lower() + " " + str(r.get("last_name","")).strip().lower()).strip(),
+                axis=1
+            ).tolist())
+
+            # Cross-reference with all_clients to find those who existed before prior_m
+            if "first_seen" in all_clients.columns and "name_key" in all_clients.columns:
+                _wb_candidates = all_clients[
+                    all_clients["name_key"].isin(_new_keys) &
+                    (all_clients["first_seen"] < prior_m)
+                ]
+                for _, row in _wb_candidates.iterrows():
+                    nk = str(row.get("name_key", ""))
+                    if nk and nk not in winbacks:
+                        fn = str(row.get("first_name","")).strip()
+                        ln = str(row.get("last_name","")).strip()
+                        winbacks[nk] = {
+                            "name":          f"{fn} {ln}".strip(),
+                            "carrier":       str(row.get("carrier","")),
+                            "state":         str(row.get("state","")),
+                            "winback_month": latest_m,
+                            "detected_date": dt.date.today().isoformat(),
+                            "members":       int(row.get("applicant_count", 1)) if pd.notna(row.get("applicant_count")) else 1,
+                        }
+                _save_winbacks(winbacks)
+        except Exception:
+            pass
+
+    st.title("Re-Engage")
+    st.caption("Clients who cancelled or went missing — sorted by most recently lost. Reach out while the relationship is fresh.")
+    st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
+
+    _CHURN_STS = {"Cancelled", "Terminated"}
+    today_ts   = pd.Timestamp(dt.date.today())
+
+    if "status" in all_clients.columns:
+        lost_df = all_clients[all_clients["status"].isin(_CHURN_STS)].copy()
+    else:
+        lost_df = pd.DataFrame()
+
+    tab_outreach, tab_saved = st.tabs([
+        f"Need Outreach ({max(len(lost_df) - len(winbacks), 0)})",
+        f"Won Back ✅ ({len(winbacks)})"
+    ])
+
+    if lost_df.empty:
+        with tab_outreach:
+            st.info("No cancelled or terminated clients found.")
+    else:
+        lost_df["term_date"]       = pd.to_datetime(lost_df.get("term_date"), errors="coerce")
+        lost_df["days_since_lost"] = (today_ts - lost_df["term_date"]).dt.days.clip(lower=0)
+        lost_df["months_on_book"]  = pd.to_numeric(lost_df.get("months_on_book"), errors="coerce")
+
+        def _nk(row):
+            if "name_key" in row and pd.notna(row.get("name_key")):
+                return str(row["name_key"])
+            return (str(row.get("first_name","")).strip().lower() + " " + str(row.get("last_name","")).strip().lower()).strip()
+
+        def _dname(row):
+            if "first_name" in row:
+                return (str(row.get("first_name","")) + " " + str(row.get("last_name",""))).strip()
+            return str(row.get("client_name",""))
+
+        lost_df["_nk"]   = lost_df.apply(_nk, axis=1)
+        lost_df["_name"] = lost_df.apply(_dname, axis=1)
+
+        def _urgency(days):
+            if pd.isna(days): return "Unknown"
+            if days <= 30:    return "🔴 <30 days"
+            if days <= 60:    return "🟡 30-60 days"
+            if days <= 90:    return "🟠 60-90 days"
+            return "⚪ 90+ days"
+
+        lost_df["Urgency"] = lost_df["days_since_lost"].apply(_urgency)
+        outreach_df = lost_df[~lost_df["_nk"].isin(winbacks.keys())].copy()
+
+        # ── TAB 1: Need Outreach ──────────────────────────────────────────────
+        with tab_outreach:
+            last_30 = int((outreach_df["days_since_lost"] <= 30).sum())
+            last_60 = int((outreach_df["days_since_lost"] <= 60).sum())
+            last_90 = int((outreach_df["days_since_lost"] <= 90).sum())
+
+            k1, k2, k3, k4 = st.columns(4)
+            with k1:
+                st.markdown(kpi_html("Need Outreach", f"{len(outreach_df):,}", sub="Not yet won back"), unsafe_allow_html=True)
+            with k2:
+                st.markdown(kpi_html("Lost < 30 Days", f"{last_30:,}", sub="Hottest leads"), unsafe_allow_html=True)
+            with k3:
+                st.markdown(kpi_html("Lost < 60 Days", f"{last_60:,}", sub="Still warm"), unsafe_allow_html=True)
+            with k4:
+                st.markdown(kpi_html("Won Back", f"{len(winbacks):,}", sub="Auto-detected saves"), unsafe_allow_html=True)
+
+            st.markdown("<br>", unsafe_allow_html=True)
+
+            f1, f2, f3 = st.columns(3)
+            with f1:
+                window_opts  = {"Last 30 days": 30, "Last 60 days": 60, "Last 90 days": 90, "All time": 99999}
+                window_label = st.selectbox("Show lost in", list(window_opts.keys()), index=2)
+                window_days  = window_opts[window_label]
+            with f2:
+                carriers = ["All"] + sorted(outreach_df["carrier"].dropna().unique().tolist()) if "carrier" in outreach_df.columns else ["All"]
+                carrier_filter = st.selectbox("Carrier", carriers)
+            with f3:
+                states = ["All"] + sorted(outreach_df["state"].dropna().unique().tolist()) if "state" in outreach_df.columns else ["All"]
+                state_filter = st.selectbox("State", states)
+
+            view = outreach_df[outreach_df["days_since_lost"] <= window_days].copy()
+            if carrier_filter != "All" and "carrier" in view.columns:
+                view = view[view["carrier"] == carrier_filter]
+            if state_filter != "All" and "state" in view.columns:
+                view = view[view["state"] == state_filter]
+            view = view.sort_values("days_since_lost", ascending=True, na_position="last").reset_index(drop=True)
+
+            st.caption(f"Showing **{len(view)}** clients · {window_label.lower()}"
+                       + (f" · {carrier_filter}" if carrier_filter != "All" else "")
+                       + (f" · {state_filter}" if state_filter != "All" else ""))
+
+            if view.empty:
+                st.info("No clients match the current filters.")
+            else:
+                disp = pd.DataFrame()
+                disp["Name"]           = view["_name"]
+                disp["Carrier"]        = view["carrier"] if "carrier" in view.columns else ""
+                disp["State"]          = view["state"]   if "state"   in view.columns else ""
+                disp["Term Date"]      = view["term_date"].dt.strftime("%b %d, %Y").where(view["term_date"].notna(), "Unknown")
+                disp["Days Since Lost"]= view["days_since_lost"].fillna(0).astype(int)
+                disp["Mo. on Book"]    = view["months_on_book"].fillna("?").astype(str).str.replace(r"\.0$", "", regex=True)
+                disp["Members"]        = view["applicant_count"].fillna(1).astype(int) if "applicant_count" in view.columns else 1
+                disp["Urgency"]        = view["Urgency"]
+
+                def _row_color(row):
+                    u = str(row.get("Urgency",""))
+                    if "🔴" in u: return ["background-color: rgba(231,76,60,0.15)"] * len(row)
+                    if "🟡" in u: return ["background-color: rgba(243,156,18,0.15)"] * len(row)
+                    if "🟠" in u: return ["background-color: rgba(230,126,34,0.10)"] * len(row)
+                    return [""] * len(row)
+
+                st.dataframe(disp.style.apply(_row_color, axis=1), use_container_width=True, hide_index=True, height=520)
+
+        # ── TAB 2: Won Back ───────────────────────────────────────────────────
+        with tab_saved:
+            if not winbacks:
+                st.info("No win-backs detected yet. When you upload a new CSV and a previously lost client reappears as active, they'll automatically show up here.")
+            else:
+                st.caption("Automatically detected when a lost client reappears as active in a new upload.")
+                st.markdown("<br>", unsafe_allow_html=True)
+
+                wb_rows = []
+                for nk, info in sorted(winbacks.items(), key=lambda x: x[1].get("winback_month",""), reverse=True):
+                    wb_rows.append({
+                        "Name":           info.get("name", nk),
+                        "Carrier":        info.get("carrier", ""),
+                        "State":          info.get("state", ""),
+                        "Won Back Month": info.get("winback_month", ""),
+                        "Members":        info.get("members", 1),
+                    })
+
+                wb_df = pd.DataFrame(wb_rows)
+                st.dataframe(wb_df, use_container_width=True, hide_index=True, height=min(80 + len(wb_rows) * 35, 480))
