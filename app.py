@@ -530,6 +530,45 @@ if not all_clients.empty:
         .reset_index(drop=True)
     )
 
+# Build full state→carrier map from raw data (before filtering) for Settings page
+_raw_months, _raw_clients, _ = load_data()
+_state_carrier_map: dict = {}
+if "state" in _raw_clients.columns and "carrier" in _raw_clients.columns:
+    for (state, carrier), grp in _raw_clients.groupby(["state", "carrier"]):
+        if state and carrier and str(carrier).lower() != "none":
+            _state_carrier_map.setdefault(str(state).upper(), set()).add(str(carrier))
+    _state_carrier_map = {s: sorted(c) for s, c in sorted(_state_carrier_map.items())}
+
+# Initialize session_state appointments from yaml (exact carrier name matching)
+if "settings_appointments" not in st.session_state:
+    _appt_yaml = _load_appointments()
+    _selected: dict = {}
+    for state, carriers in _state_carrier_map.items():
+        keywords = _appt_yaml.get(state, [])
+        _selected[state] = {
+            c: any(kw.lower() in c.lower() for kw in keywords)
+            for c in carriers
+        }
+    st.session_state.settings_appointments = _selected
+
+# Override appointment filter with session_state settings
+def _filter_by_settings(df: pd.DataFrame) -> pd.DataFrame:
+    sel = st.session_state.get("settings_appointments", {})
+    if not sel or df.empty:
+        return df
+    if "state" not in df.columns or "carrier" not in df.columns:
+        return df
+    def _keep(row):
+        state   = str(row.get("state", "")).strip().upper()
+        carrier = str(row.get("carrier", "")).strip()
+        state_sel = sel.get(state)
+        if not state_sel:
+            return False
+        return state_sel.get(carrier, False)
+    return df[df.apply(_keep, axis=1)].copy()
+
+all_clients = _filter_by_settings(all_clients)
+
 kpis        = dd["kpis"]
 mom_df      = dd["mom_df"]
 carrier_df  = dd["carrier_df"]
@@ -544,7 +583,7 @@ with st.sidebar:
 
     page = st.radio(
         "Navigation",
-        ["Dashboard", "Month-over-Month", "Daily Tracker", "Book of Business", "Goals", "Re-Engage"],
+        ["Dashboard", "Month-over-Month", "Daily Tracker", "Book of Business", "Goals", "Re-Engage", "Settings"],
         label_visibility="collapsed",
     )
 
@@ -1451,3 +1490,33 @@ elif page == "Re-Engage":
 
                 wb_df = pd.DataFrame(wb_rows)
                 st.dataframe(wb_df, use_container_width=True, hide_index=True, height=min(80 + len(wb_rows) * 35, 480))
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SETTINGS
+# ══════════════════════════════════════════════════════════════════════════════
+elif page == "Settings":
+    st.title("Settings")
+    st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
+    st.markdown("Toggle the carriers you are appointed with in each state. Changes apply immediately to the dashboard.")
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    sel = st.session_state.settings_appointments
+    total_on  = sum(v for state_d in sel.values() for v in state_d.values())
+    total_all = sum(len(d) for d in sel.values())
+    st.caption(f"{total_on} of {total_all} carrier/state combos active")
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    for state in sorted(sel.keys()):
+        carriers = sel[state]
+        active_count = sum(carriers.values())
+        with st.expander(f"**{state}** — {active_count}/{len(carriers)} carriers active"):
+            cols = st.columns(2)
+            for i, carrier in enumerate(sorted(carriers.keys())):
+                with cols[i % 2]:
+                    new_val = st.checkbox(
+                        carrier,
+                        value=carriers[carrier],
+                        key=f"appt_{state}_{carrier}"
+                    )
+                    st.session_state.settings_appointments[state][carrier] = new_val
