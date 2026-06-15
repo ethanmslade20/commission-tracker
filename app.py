@@ -472,7 +472,7 @@ _AEP_COLS       = ["First Name", "Last Name", "State", "Carrier", "Members", "Mo
 _AEP_TAB_PREFIX = "AEP "
 
 
-def _aep_tab_name(year: int | None = None) -> str:
+def _aep_tab_name(year=None) -> str:
     import datetime as _dt
     y = year or (_dt.date.today().year + 1)
     return f"{_AEP_TAB_PREFIX}{y}"
@@ -502,7 +502,8 @@ def _read_aep_tab(tab_name: str) -> pd.DataFrame:
                 .pipe(pd.to_numeric, errors="coerce").fillna(0.0)
             )
         return df[_AEP_COLS].reset_index(drop=True)
-    except Exception:
+    except Exception as _e:
+        st.error(f"AEP read error: {_e}")
         return pd.DataFrame(columns=_AEP_COLS)
 
 
