@@ -530,14 +530,16 @@ if not all_clients.empty:
         .reset_index(drop=True)
     )
 
-# Build full state→carrier map from raw data (before filtering) for Settings page
-_raw_months, _raw_clients, _ = load_data()
+# Build full state→carrier map from raw snapshots (unfiltered) for Settings page
 _state_carrier_map: dict = {}
-if "state" in _raw_clients.columns and "carrier" in _raw_clients.columns:
-    for (state, carrier), grp in _raw_clients.groupby(["state", "carrier"]):
-        if state and carrier and str(carrier).lower() != "none":
-            _state_carrier_map.setdefault(str(state).upper(), set()).add(str(carrier))
-    _state_carrier_map = {s: sorted(c) for s, c in sorted(_state_carrier_map.items())}
+for _snap_df in months.values():
+    if "state" in _snap_df.columns and "carrier" in _snap_df.columns:
+        for _, _row in _snap_df.iterrows():
+            _s = str(_row.get("state", "")).strip().upper()
+            _c = str(_row.get("carrier", "")).strip()
+            if _s and _c and _c.lower() != "none":
+                _state_carrier_map.setdefault(_s, set()).add(_c)
+_state_carrier_map = {s: sorted(c) for s, c in sorted(_state_carrier_map.items())}
 
 # Initialize session_state appointments from yaml (exact carrier name matching)
 if "settings_appointments" not in st.session_state:
