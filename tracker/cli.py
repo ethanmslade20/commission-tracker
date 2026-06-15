@@ -313,7 +313,7 @@ def aep_init(year: Optional[int]):
             pass
         return str(v)
 
-    headers = ["First Name", "Last Name", "State", "Carrier", "Members", "Effective Date", "Status", "Notes"]
+    headers = ["First Name", "Last Name", "State", "Carrier", "Members", "Monthly Premium", "Effective Date", "Status", "Notes"]
     data_rows = [headers]
     for _, row in active.sort_values(["state", "last_name", "first_name"], na_position="last").iterrows():
         key   = row.get("_key", "")
@@ -324,12 +324,17 @@ def aep_init(year: Optional[int]):
         eff = row.get("effective_date", "")
         if hasattr(eff, "strftime"):
             eff = eff.strftime("%Y-%m-%d")
+        try:
+            premium = float(row.get("net_premium", 0) or 0)
+        except (ValueError, TypeError):
+            premium = 0.0
         data_rows.append([
             _clean(row.get("first_name", "")),
             _clean(row.get("last_name",  "")),
             _clean(row.get("state",      "")),
             _clean(row.get("carrier",    "")),
             _clean(row.get("applicant_count", 1)),
+            round(premium, 2),
             _clean(eff),
             status,
             prev.get("notes", ""),
@@ -339,7 +344,7 @@ def aep_init(year: Optional[int]):
     ws.update(data_rows, value_input_option="USER_ENTERED")
 
     # Bold header row
-    ws.format("A1:H1", {"textFormat": {"bold": True}})
+    ws.format("A1:I1", {"textFormat": {"bold": True}})
 
     click.echo(f"  Wrote {len(data_rows)-1} clients to '{tab_name}'")
     click.echo(f"Done. Open Google Sheets to view or update statuses, then hit 'Refresh data' in the app.")

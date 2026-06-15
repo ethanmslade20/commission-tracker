@@ -468,7 +468,7 @@ def _gspread_client():
 
 
 _AEP_STATUSES   = ["Not Started", "Contacted", "Renewed", "Lost"]
-_AEP_COLS       = ["First Name", "Last Name", "State", "Carrier", "Members", "Effective Date", "Status", "Notes"]
+_AEP_COLS       = ["First Name", "Last Name", "State", "Carrier", "Members", "Monthly Premium", "Effective Date", "Status", "Notes"]
 _AEP_TAB_PREFIX = "AEP "
 
 
@@ -1716,12 +1716,13 @@ elif page == "AEP Tracker":
                         width="medium",
                     ),
                     "Notes": st.column_config.TextColumn("Notes", width="large"),
-                    "First Name":     st.column_config.TextColumn("First Name",     disabled=True),
-                    "Last Name":      st.column_config.TextColumn("Last Name",      disabled=True),
-                    "State":          st.column_config.TextColumn("State",          disabled=True, width="small"),
-                    "Carrier":        st.column_config.TextColumn("Carrier",        disabled=True),
-                    "Members":        st.column_config.NumberColumn("Members",      disabled=True, width="small"),
-                    "Effective Date": st.column_config.TextColumn("Effective Date", disabled=True),
+                    "First Name":      st.column_config.TextColumn("First Name",      disabled=True),
+                    "Last Name":       st.column_config.TextColumn("Last Name",       disabled=True),
+                    "State":           st.column_config.TextColumn("State",           disabled=True, width="small"),
+                    "Carrier":         st.column_config.TextColumn("Carrier",         disabled=True),
+                    "Members":         st.column_config.NumberColumn("Members",       disabled=True, width="small"),
+                    "Monthly Premium": st.column_config.NumberColumn("Monthly Premium", disabled=True, format="$%.2f", width="medium"),
+                    "Effective Date":  st.column_config.TextColumn("Effective Date",  disabled=True),
                 },
                 key="aep_editor",
             )
