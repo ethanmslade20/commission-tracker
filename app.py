@@ -1710,19 +1710,14 @@ elif page == "AEP Tracker":
             st.caption(f"Showing {len(_view)} of {_total} clients")
             st.markdown("<br>", unsafe_allow_html=True)
 
-            # ── Single unified table with Copy checkbox + editable Status/Notes
+            # ── Editable table ─────────────────────────────────────────────
             _view_display = _view.reset_index(drop=True).copy()
-            _view_display.insert(0, "Copy", False)
-
             _edited = st.data_editor(
                 _view_display,
                 use_container_width=True,
                 hide_index=True,
                 height=min(80 + len(_view_display) * 35, 600),
                 column_config={
-                    "Copy": st.column_config.CheckboxColumn(
-                        "Copy", help="Check to copy this person's name", default=False, width="small",
-                    ),
                     "First Name":      st.column_config.TextColumn("First Name",      disabled=True),
                     "Last Name":       st.column_config.TextColumn("Last Name",       disabled=True),
                     "State":           st.column_config.TextColumn("State",           disabled=True, width="small"),
@@ -1737,18 +1732,6 @@ elif page == "AEP Tracker":
                 },
                 key="aep_editor",
             )
-
-            # Handle Copy checkbox — inject JS to copy name to clipboard
-            _checked_rows = _edited[_edited["Copy"] == True]
-            if not _checked_rows.empty:
-                _copy_name = f"{_checked_rows.iloc[0]['First Name']} {_checked_rows.iloc[0]['Last Name']}".strip()
-                import html as _hm
-                _safe = _hm.escape(_copy_name)
-                st.components.v1.html(
-                    f"<script>navigator.clipboard.writeText('{_safe}').catch(()=>{{}});</script>",
-                    height=0,
-                )
-                st.toast(f"✓ Copied: {_copy_name}", icon="✅")
 
             st.markdown("<br>", unsafe_allow_html=True)
             _sc1, _sc2 = st.columns([1, 4])
