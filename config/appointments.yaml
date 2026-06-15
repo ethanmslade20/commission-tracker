@@ -52,6 +52,7 @@ appointments:
     - United Healthcare
     - UnitedHealthcare
     - Oscar
+    - Cigna
 
   TN:
     - United Healthcare
@@ -87,6 +88,8 @@ appointments:
   LA:
     - Oscar
     - Ambetter
+    - United Healthcare
+    - UnitedHealthcare
 
   MI:
     - Oscar
