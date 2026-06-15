@@ -636,7 +636,7 @@ if page == "Dashboard":
             _eff = pd.to_datetime(_mob_df["effective_date"], errors="coerce")
             _derived = ((_today - _eff).dt.days / 30.44).round(1)
             _mob_df["months_on_book"] = _mob_df["months_on_book"].fillna(_derived)
-        _mob = _mob_df["months_on_book"].dropna()
+        _mob = _mob_df["months_on_book"].fillna(0)  # any remaining nulls → < 3 mo bucket
     if "months_on_book" in all_clients.columns or "effective_date" in all_clients.columns:
         _buckets = {
             "< 3 mo":   int((_mob < 3).sum()),
