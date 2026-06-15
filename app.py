@@ -1710,14 +1710,29 @@ elif page == "AEP Tracker":
             st.caption(f"Showing {len(_view)} of {_total} clients")
             st.markdown("<br>", unsafe_allow_html=True)
 
+            # ── Build CRM search links ──────────────────────────────────────
+            _GHL_BASE = "https://app.agentboost.com/v2/location/dDnwycQfUTFuKbfpBzJl/contacts/smart-list/All"
+            _view_display = _view.reset_index(drop=True).copy()
+            import urllib.parse as _up
+            _view_display.insert(0, "CRM", _view_display.apply(
+                lambda r: _GHL_BASE + "?searchKey=" + _up.quote(f"{r['First Name']} {r['Last Name']}"),
+                axis=1,
+            ))
+
             # ── Editable table ─────────────────────────────────────────────
-            st.markdown("**Update status and notes directly in the table, then hit Save.**")
+            st.markdown("**Click 📋 to open in CRM. Update status and notes, then hit Save.**")
             _edited = st.data_editor(
-                _view.reset_index(drop=True),
+                _view_display,
                 use_container_width=True,
                 hide_index=True,
                 height=min(80 + len(_view) * 35, 600),
                 column_config={
+                    "CRM": st.column_config.LinkColumn(
+                        "CRM",
+                        display_text="Open →",
+                        width="small",
+                        disabled=True,
+                    ),
                     "Status": st.column_config.SelectboxColumn(
                         "Status",
                         options=_AEP_STATUSES,
