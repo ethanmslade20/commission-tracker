@@ -1,6 +1,7 @@
 # Client data — never commit
 snapshots/
 input/
+data/*.json
 
 # Python
 .venv/
