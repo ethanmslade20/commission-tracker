@@ -61,60 +61,29 @@ if not st.session_state.authenticated:
                 st.error("Incorrect PIN")
     st.stop()
 
-# ── Time-based theme ──────────────────────────────────────────────────────────
-_hour = dt.datetime.now().hour
-_day_mode = 9 <= _hour < 18   # Clean Light 9am–6pm, Deep Navy otherwise
-
-if _day_mode:
-    # Clean Light
-    NAVY  = "#1a2744"
-    LNAV  = "#e2e6ed"
-    BLUE  = "#185FA5"
-    GREEN = "#0F6E56"
-    RED   = "#e74c3c"
-    GOLD  = "#BA7517"
-    _theme = dict(
-        page_bg      = "#f5f7fa",
-        sidebar_bg   = "#ffffff",
-        kpi_bg       = "#ffffff",
-        kpi_border   = "#e2e6ed",
-        kpi_val      = "#1a2744",
-        kpi_lbl      = "#1e293b",
-        kpi_sub      = "#94a3b8",
-        divider      = "#e2e6ed",
-        progress_bg  = "#e2e6ed",
-        goal_val     = "#185FA5",
-        goal_green   = "#0F6E56",
-        goal_gold    = "#BA7517",
-        goal_red     = "#e74c3c",
-        text_primary = "#1a2744",
-    )
-else:
-    # Deep Navy
-    NAVY  = "#1a2744"
-    LNAV  = "#243664"
-    BLUE  = "#4285F4"
-    GREEN = "#2ecc71"
-    RED   = "#e74c3c"
-    GOLD  = "#f39c12"
-    _theme = dict(
-        page_bg      = "#0f1a2e",
-        sidebar_bg   = "#0f1a2e",
-        kpi_bg       = "#1a2744",
-        kpi_border   = "#243664",
-        kpi_val      = "#ffffff",
-        kpi_lbl      = "#8aacd6",
-        kpi_sub      = "#5a7ab5",
-        divider      = "#243664",
-        progress_bg  = "#0d1321",
-        goal_val     = "#4285F4",
-        goal_green   = "#2ecc71",
-        goal_gold    = "#f39c12",
-        goal_red     = "#e74c3c",
-        text_primary = "#e8edf5",
-    )
-
-T = _theme
+# ── Theme — Deep Navy always ──────────────────────────────────────────────────
+NAVY  = "#1a2744"
+LNAV  = "#243664"
+BLUE  = "#4285F4"
+GREEN = "#2ecc71"
+RED   = "#e74c3c"
+GOLD  = "#f39c12"
+T = dict(
+    page_bg      = "#0f1a2e",
+    sidebar_bg   = "#0f1a2e",
+    kpi_bg       = "#1a2744",
+    kpi_border   = "#243664",
+    kpi_val      = "#ffffff",
+    kpi_lbl      = "#8aacd6",
+    kpi_sub      = "#5a7ab5",
+    divider      = "#243664",
+    progress_bg  = "#0d1321",
+    goal_val     = "#4285F4",
+    goal_green   = "#2ecc71",
+    goal_gold    = "#f39c12",
+    goal_red     = "#e74c3c",
+    text_primary = "#e8edf5",
+)
 
 # ── CSS: custom KPI boxes + page theming ──────────────────────────────────────
 st.markdown(f"""
