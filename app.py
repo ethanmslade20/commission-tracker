@@ -1711,7 +1711,7 @@ elif page == "AEP Tracker":
             st.markdown("<br>", unsafe_allow_html=True)
 
             # ── Build CRM search links ──────────────────────────────────────
-            _GHL_BASE = "https://app.agentboost.com/v2/location/dDnwycQfUTFuKbfpBzJl/contacts/smart-list/All"
+            _GHL_BASE = "https://app.agentboost.com/v2/location/dDnwycQfUTFuKbfpBzJl/contacts/smart_list/All"
             _view_display = _view.reset_index(drop=True).copy()
             import urllib.parse as _up
             _view_display.insert(0, "CRM", _view_display.apply(
