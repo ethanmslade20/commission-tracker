@@ -602,13 +602,28 @@ if page == "Dashboard":
     _mrr = _total_members * _PMPM
     _arr = _mrr * 12
 
-    r1, r2, r3 = st.columns(3)
+    # Avg client lifetime from actual effective/term dates
+    _today = pd.Timestamp(dt.date.today())
+    if "effective_date" in all_clients.columns:
+        _lt_df = all_clients.copy()
+        _lt_df["effective_date"] = pd.to_datetime(_lt_df["effective_date"], errors="coerce")
+        _lt_df["term_date"]      = pd.to_datetime(_lt_df.get("term_date"), errors="coerce")
+        _lt_df["end"] = _lt_df["term_date"].fillna(_today)
+        _lt_df["lifetime_mo"] = (_lt_df["end"] - _lt_df["effective_date"]).dt.days / 30.44
+        _lt_df = _lt_df[_lt_df["lifetime_mo"] > 0]
+        _avg_lifetime = round(_lt_df["lifetime_mo"].mean(), 1) if not _lt_df.empty else "—"
+    else:
+        _avg_lifetime = "—"
+
+    r1, r2, r3, r4 = st.columns(4)
     with r1:
         st.markdown(kpi_html("Expected Monthly Commission", f"${_mrr:,.0f}"), unsafe_allow_html=True)
     with r2:
         st.markdown(kpi_html("Expected Annual Commission", f"${_arr:,.0f}"), unsafe_allow_html=True)
     with r3:
         st.markdown(kpi_html("Commission per Policy / Mo", f"${_mrr / kpis['Total Active Policies']:.2f}" if kpis.get('Total Active Policies') else "—"), unsafe_allow_html=True)
+    with r4:
+        st.markdown(kpi_html("Avg Client Lifetime", f"{_avg_lifetime} mo", sub="Active + cancelled clients"), unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
     st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
