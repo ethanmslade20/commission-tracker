@@ -77,7 +77,7 @@ def _filter_by_appointments(df: pd.DataFrame, appointments: dict) -> pd.DataFram
             return True
         keywords = appointments.get(state, [])
         if not keywords:
-            return True
+            return False  # state not in appointments — exclude
         return any(kw.lower() in carrier for kw in keywords)
     return df[df.apply(_is_appointed, axis=1)].copy()
 
