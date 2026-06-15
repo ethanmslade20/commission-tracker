@@ -53,11 +53,12 @@ if not st.session_state.authenticated:
     col = st.columns([1, 1, 1])[1]
     with col:
         pin = st.text_input("PIN", type="password", max_chars=4, placeholder="••••", label_visibility="collapsed")
-        if st.button("Unlock", use_container_width=True):
+        submitted = st.button("Unlock", use_container_width=True) or (len(pin) == 4)
+        if submitted:
             if pin == "2020":
                 st.session_state.authenticated = True
                 st.rerun()
-            else:
+            elif pin:
                 st.error("Incorrect PIN")
     st.stop()
 
