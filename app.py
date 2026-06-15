@@ -134,6 +134,11 @@ st.markdown(f"""
   h1, h2, h3, p, label, .stMarkdown {{
     color: {T['text_primary']};
   }}
+  [data-testid="stMarkdownContainer"] h1,
+  [data-testid="stHeadingWithActionElements"] h1,
+  .stApp h1 {{
+    color: {T['text_primary']} !important;
+  }}
   .kpi-box {{
     background: {T['kpi_bg']};
     border-radius: 10px;
