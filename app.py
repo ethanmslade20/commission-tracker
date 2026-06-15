@@ -1710,12 +1710,23 @@ elif page == "AEP Tracker":
             st.caption(f"Showing {len(_view)} of {_total} clients")
             st.markdown("<br>", unsafe_allow_html=True)
 
-            # ── Build display table with combined name for easy copying ────
+            # ── Build display table ────────────────────────────────────────
             _view_display = _view.reset_index(drop=True).copy()
-            _view_display.insert(0, "Full Name", _view_display["First Name"] + " " + _view_display["Last Name"])
+
+            # ── Name copy tool ─────────────────────────────────────────────
+            _all_names = [f"{r['First Name']} {r['Last Name']}" for _, r in _view.iterrows()]
+            _cc1, _cc2 = st.columns([2, 3])
+            with _cc1:
+                _pick = st.selectbox("Select client to copy name:", ["— pick a client —"] + _all_names, key="aep_name_pick", label_visibility="collapsed")
+            with _cc2:
+                if _pick and _pick != "— pick a client —":
+                    st.code(_pick, language=None)
+                else:
+                    st.caption("← pick a name, then click the copy icon that appears")
+            st.markdown("<br>", unsafe_allow_html=True)
 
             # ── Editable table ─────────────────────────────────────────────
-            st.markdown("**Double-click a name to select it, then Cmd+C to copy into GHL. Update status and notes, then hit Save.**")
+            st.markdown("**Update status and notes directly in the table, then hit Save.**")
             _edited = st.data_editor(
                 _view_display,
                 use_container_width=True,
