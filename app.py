@@ -378,6 +378,20 @@ def _load_from_sheets():
     spreadsheet  = client.open_by_url(st.secrets["sheet_url"])
 
     all_clients  = _read_all_clients_from_sheet(spreadsheet)
+    all_clients  = _filter_by_appointments(all_clients, _load_appointments())
+    # Deduplicate — keep active over inactive, then most recent effective_date
+    if not all_clients.empty:
+        _ac = {"Effectuated", "PendingEffectuation", "PendingFollowups"}
+        all_clients = all_clients.copy()
+        all_clients["_is_active"] = all_clients["status"].isin(_ac).astype(int)
+        all_clients["effective_date"] = pd.to_datetime(all_clients.get("effective_date"), errors="coerce")
+        all_clients = (
+            all_clients
+            .sort_values(["_is_active", "effective_date"], ascending=[False, False])
+            .drop_duplicates(subset=["first_name", "last_name"], keep="first")
+            .drop(columns=["_is_active"])
+            .reset_index(drop=True)
+        )
 
     # Determine first snapshot month from Daily Tracker tabs
     _snapshot_months = []
@@ -520,6 +534,23 @@ def _chart_layout(**extra) -> dict:
 # ── Load ──────────────────────────────────────────────────────────────────────
 months, all_clients, dd = load_data()
 
+# 1. Appointment filter — remove clients from non-appointed carrier/state combos
+_appointments = _load_appointments()
+all_clients   = _filter_by_appointments(all_clients, _appointments)
+
+# 2. Deduplicate — for same name, keep active over inactive, then most recent effective_date
+_ACTIVE_STS = {"Effectuated", "PendingEffectuation", "PendingFollowups"}
+if not all_clients.empty:
+    all_clients = all_clients.copy()
+    all_clients["_is_active"] = all_clients["status"].isin(_ACTIVE_STS).astype(int)
+    all_clients["effective_date"] = pd.to_datetime(all_clients.get("effective_date"), errors="coerce")
+    all_clients = (
+        all_clients
+        .sort_values(["_is_active", "effective_date"], ascending=[False, False])
+        .drop_duplicates(subset=["first_name", "last_name"], keep="first")
+        .drop(columns=["_is_active"])
+        .reset_index(drop=True)
+    )
 
 kpis        = dd["kpis"]
 mom_df      = dd["mom_df"]
