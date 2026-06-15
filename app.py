@@ -197,6 +197,10 @@ st.markdown(f"""
     [data-testid="stDataFrame"] {{
       overflow-x: auto;
     }}
+    /* Daily Tracker table progress bars — green */
+    [data-testid="stDataFrame"] [role="progressbar"] > div {{
+      background-color: #2ecc71 !important;
+    }}
     /* Tighten up headers */
     h1 {{ font-size: 1.6rem !important; }}
     h2 {{ font-size: 1.2rem !important; }}
@@ -816,7 +820,7 @@ elif page == "Daily Tracker":
             x="Day",
             y="Policies",
             color="Best Day",
-            color_discrete_map={True: GREEN, False: BLUE},
+            color_discrete_map={True: GOLD, False: GREEN},
             text="Policies",
         )
         fig.update_traces(textposition="outside", textfont_size=9)
