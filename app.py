@@ -1740,14 +1740,18 @@ elif page == "AEP Tracker":
             _sc1, _sc2 = st.columns([1, 4])
             with _sc1:
                 if st.button("💾 Save changes", use_container_width=True, type="primary"):
-                    # Merge edits back into the full dataframe (filtered view may be a subset)
+                    # Map edits back positionally — name-based keys fail on duplicate names.
+                    # Re-apply the same filters to find which original rows are in the view.
                     _merged = st.session_state.aep_df.copy()
-                    _edited_indexed = _edited.set_index(["First Name", "Last Name"])
-                    for idx, row in _merged.iterrows():
-                        _k = (row["First Name"], row["Last Name"])
-                        if _k in _edited_indexed.index:
-                            _merged.at[idx, "Status"] = _edited_indexed.loc[_k, "Status"]
-                            _merged.at[idx, "Notes"]  = _edited_indexed.loc[_k, "Notes"]
+                    _mask = pd.Series([True] * len(_merged), index=_merged.index)
+                    if _f_state   != "All States":   _mask &= _merged["State"]   == _f_state
+                    if _f_carrier != "All Carriers": _mask &= _merged["Carrier"] == _f_carrier
+                    if _f_status  != "All Statuses": _mask &= _merged["Status"]  == _f_status
+                    _orig_indices = _merged.index[_mask].tolist()
+                    for _pos, _orig_idx in enumerate(_orig_indices):
+                        if _pos < len(_edited):
+                            _merged.at[_orig_idx, "Status"] = _edited.iloc[_pos]["Status"]
+                            _merged.at[_orig_idx, "Notes"]  = _edited.iloc[_pos]["Notes"]
                     if _save_aep_tab(_aep_tab, _merged):
                         st.session_state.aep_df = _merged
                         st.success("Saved!")
