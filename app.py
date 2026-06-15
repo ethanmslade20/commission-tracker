@@ -630,8 +630,16 @@ if page == "Dashboard":
 
     # Book age distribution
     st.subheader("Book age — months on book")
-    if "months_on_book" in all_clients.columns:
-        _mob = all_clients.loc[_active_mask, "months_on_book"].dropna()
+    if "months_on_book" in all_clients.columns or "effective_date" in all_clients.columns:
+        _mob_df = all_clients.loc[_active_mask].copy()
+        if "months_on_book" not in _mob_df.columns:
+            _mob_df["months_on_book"] = None
+        if "effective_date" in _mob_df.columns:
+            _eff = pd.to_datetime(_mob_df["effective_date"], errors="coerce")
+            _derived = ((_today - _eff).dt.days / 30.44).round(1)
+            _mob_df["months_on_book"] = _mob_df["months_on_book"].fillna(_derived)
+        _mob = _mob_df["months_on_book"].dropna()
+    if "months_on_book" in all_clients.columns or "effective_date" in all_clients.columns:
         _buckets = {
             "< 3 mo":   int((_mob < 3).sum()),
             "3–6 mo":   int(((_mob >= 3) & (_mob < 6)).sum()),
