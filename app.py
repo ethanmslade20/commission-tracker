@@ -547,7 +547,12 @@ if page == "Dashboard":
     with c4:
         st.markdown(kpi_html("Avg Policies Added / Month", kpis["Avg Policies Added/Month"], sub="Feb 2026 – present"), unsafe_allow_html=True)
     with c5:
-        st.markdown(kpi_html("Avg Policies Lost / Month", kpis["Avg Policies Lost/Month"], sub="All history"), unsafe_allow_html=True)
+        try:
+            _churn_pct = round(float(kpis["Avg Policies Lost/Month"]) / max(kpis["Total Active Policies"], 1) * 100, 2)
+            _churn_sub = f"All history · {_churn_pct}% monthly churn"
+        except Exception:
+            _churn_sub = "All history"
+        st.markdown(kpi_html("Avg Policies Lost / Month", kpis["Avg Policies Lost/Month"], sub=_churn_sub), unsafe_allow_html=True)
     with c6:
         try:
             net = round(float(kpis["Avg Policies Added/Month"]) - float(kpis["Avg Policies Lost/Month"]), 1)
