@@ -348,16 +348,31 @@ def _load_from_sheets():
 
     all_clients  = _read_all_clients_from_sheet(spreadsheet)
 
+    # Determine first snapshot month from Daily Tracker tabs
+    _snapshot_months = []
+    for _ws in spreadsheet.worksheets():
+        if _ws.title.startswith("Daily Tracker - "):
+            try:
+                _snapshot_months.append(
+                    pd.Timestamp(_ws.title.replace("Daily Tracker - ", "")).strftime("%Y-%m")
+                )
+            except Exception:
+                pass
+    _first_snapshot = min(_snapshot_months) if _snapshot_months else None
+
     # Compute dashboard data from all_clients (same logic as dashboard.py)
     _ACTIVE = {"Effectuated", "PendingEffectuation", "PendingFollowups"}
     active_df = all_clients[all_clients["status"].isin(_ACTIVE)] if "status" in all_clients.columns else pd.DataFrame()
 
-    mom_df = _build_mom_from_all_clients(all_clients)
+    mom_df = _build_mom_from_all_clients(all_clients, start_month=_first_snapshot)
 
     if not mom_df.empty and "New Policies" in mom_df.columns:
-        avg_added          = round(mom_df["New Policies"].mean(), 1)
+        _ytd_start = f"{dt.date.today().year}-02"
+        _ytd = mom_df[mom_df["Month"] >= _ytd_start] if "Month" in mom_df.columns else mom_df
+        _base = _ytd if not _ytd.empty else mom_df
+        avg_added          = round(_base["New Policies"].mean(), 1)
         avg_lost           = round(mom_df["Policies Lost"].mean(), 1)
-        avg_members_added  = round(mom_df["New Members"].mean(), 1)
+        avg_members_added  = round(_base["New Members"].mean(), 1)
         avg_members_lost   = round(mom_df["Members Lost"].mean(), 1)
     else:
         avg_added = avg_lost = avg_members_added = avg_members_lost = "N/A"
