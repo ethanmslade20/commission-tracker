@@ -933,6 +933,17 @@ elif page == "Book of Business":
     with m4:
         st.metric("Active Members", f"{total_mem:,}")
 
+    # Duplicate detection
+    dup_mask = all_clients.duplicated(subset=["first_name", "last_name"], keep=False)
+    dups = all_clients[dup_mask][["first_name", "last_name", "carrier", "state", "status", "effective_date"]].copy()
+    dups = dups.sort_values(["last_name", "first_name"])
+    if not dups.empty:
+        st.warning(f"⚠️ {len(dups)} duplicate client names detected ({dups.groupby(['first_name','last_name']).ngroups} unique names appear more than once)")
+        with st.expander("View duplicates"):
+            dups.columns = [c.replace("_", " ").title() for c in dups.columns]
+            st.dataframe(dups, use_container_width=True, hide_index=True,
+                column_config={"Effective Date": st.column_config.DateColumn("Effective Date", format="MMM D, YYYY")})
+
     st.markdown("<br>", unsafe_allow_html=True)
 
     # Table
