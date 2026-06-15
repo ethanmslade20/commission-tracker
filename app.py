@@ -693,6 +693,8 @@ with st.sidebar:
 
     if st.button("🔄 Refresh data", use_container_width=True):
         st.cache_data.clear()
+        for _k in ["aep_df", "aep_tab"]:
+            st.session_state.pop(_k, None)
         st.rerun()
 
 
