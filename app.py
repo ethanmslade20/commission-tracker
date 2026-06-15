@@ -378,7 +378,6 @@ def _load_from_sheets():
     spreadsheet  = client.open_by_url(st.secrets["sheet_url"])
 
     all_clients  = _read_all_clients_from_sheet(spreadsheet)
-    all_clients  = _filter_by_appointments(all_clients, _load_appointments())
 
     # Determine first snapshot month from Daily Tracker tabs
     _snapshot_months = []
@@ -521,9 +520,6 @@ def _chart_layout(**extra) -> dict:
 # ── Load ──────────────────────────────────────────────────────────────────────
 months, all_clients, dd = load_data()
 
-# Filter all_clients to only appointed carrier/state combos
-_appointments = _load_appointments()
-all_clients   = _filter_by_appointments(all_clients, _appointments)
 
 kpis        = dd["kpis"]
 mom_df      = dd["mom_df"]
