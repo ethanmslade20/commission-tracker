@@ -488,7 +488,7 @@ with st.sidebar:
 
     page = st.radio(
         "Navigation",
-        ["Overview", "Month-over-Month", "Daily Tracker", "Book of Business", "Goals", "Re-Engage"],
+        ["Dashboard", "Month-over-Month", "Daily Tracker", "Book of Business", "Goals", "Re-Engage"],
         label_visibility="collapsed",
     )
 
@@ -504,8 +504,8 @@ with st.sidebar:
 # ══════════════════════════════════════════════════════════════════════════════
 # OVERVIEW
 # ══════════════════════════════════════════════════════════════════════════════
-if page == "Overview":
-    st.title("Overview")
+if page == "Dashboard":
+    st.title("Dashboard")
     st.caption(f"Snapshot: {latest_label}")
     st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 
