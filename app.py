@@ -46,7 +46,7 @@ if not st.session_state.authenticated:
     .pin-sub   { font-size: 0.95rem; opacity: 0.6; }
     </style>
     <div class="pin-wrap">
-        <div class="pin-title">🔒 Commission Tracker</div>
+        <div class="pin-title">🔒 Ethan Slade Book of Business</div>
         <div class="pin-sub">Enter your 4-digit PIN to continue</div>
     </div>
     """, unsafe_allow_html=True)
