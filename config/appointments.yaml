@@ -29,6 +29,8 @@ appointments:
     - United Healthcare
     - UnitedHealthcare
     - Cigna
+    - Ambetter
+    - Molina
 
   FL:
     - Ambetter
@@ -37,11 +39,13 @@ appointments:
     - United Healthcare
     - UnitedHealthcare
     - Oscar
+    - Cigna
 
   SC:
     - United Healthcare
     - UnitedHealthcare
     - Ambetter
+    - Molina
 
   NC:
     - Ambetter
@@ -99,6 +103,7 @@ appointments:
     - Wellpoint
     - BlueCross
     - Blue Cross
+    - Cigna
 
 
   IN:
@@ -139,6 +144,7 @@ appointments:
     - Cigna
     - United Healthcare
     - UnitedHealthcare
+    - Ambetter
 
   AR:
     - Ambetter
