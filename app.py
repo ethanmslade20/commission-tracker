@@ -1713,41 +1713,74 @@ elif page == "AEP Tracker":
             # ── Build display table ────────────────────────────────────────
             _view_display = _view.reset_index(drop=True).copy()
 
-            # ── Name copy tool ─────────────────────────────────────────────
-            _all_names = [f"{r['First Name']} {r['Last Name']}" for _, r in _view.iterrows()]
-            _cc1, _cc2 = st.columns([2, 3])
-            with _cc1:
-                _pick = st.selectbox("Select client to copy name:", ["— pick a client —"] + _all_names, key="aep_name_pick", label_visibility="collapsed")
-            with _cc2:
-                if _pick and _pick != "— pick a client —":
-                    st.code(_pick, language=None)
-                else:
-                    st.caption("← pick a name, then click the copy icon that appears")
+            # ── HTML table with per-row Copy button ────────────────────────
+            import html as _html_mod
+            _rows_html = ""
+            for _, _r in _view_display.iterrows():
+                _full  = _html_mod.escape(f"{_r['First Name']} {_r['Last Name']}")
+                _state = _html_mod.escape(str(_r.get("State",   "")))
+                _carr  = _html_mod.escape(str(_r.get("Carrier", "")))
+                _mem   = int(_r.get("Members", 1) or 1)
+                try:
+                    _prem = f"${float(_r.get('Monthly Premium', 0) or 0):.2f}"
+                except Exception:
+                    _prem = "$0.00"
+                _eff    = _html_mod.escape(str(_r.get("Effective Date", "")))
+                _status = _html_mod.escape(str(_r.get("Status", "")))
+                _status_color = {"Renewed": "#2ecc71", "Contacted": "#4285F4",
+                                 "Not Started": "#f39c12", "Lost": "#e74c3c"}.get(_status, "#aaa")
+                _rows_html += f"""<tr>
+  <td><button class="cpbtn" onclick="cp(this,'{_full}')">Copy</button></td>
+  <td class="name">{_full}</td>
+  <td>{_state}</td><td>{_carr}</td><td>{_mem}</td><td>{_prem}</td><td>{_eff}</td>
+  <td><span style="color:{_status_color};font-weight:600">{_status}</span></td>
+</tr>"""
+
+            _table_html = f"""<!DOCTYPE html><html><head><style>
+*{{box-sizing:border-box;margin:0;padding:0}}
+body{{background:transparent;color:#e0e0e0;font-family:-apple-system,sans-serif;font-size:13px}}
+table{{width:100%;border-collapse:collapse}}
+th{{background:#1a2744;padding:8px 10px;text-align:left;font-size:11px;color:#aaa;font-weight:600;text-transform:uppercase;letter-spacing:.5px;border-bottom:2px solid #243664}}
+td{{padding:7px 10px;border-bottom:1px solid #1a2744}}
+tr:hover td{{background:#1a2744}}
+.name{{font-weight:500;color:#fff}}
+.cpbtn{{background:#243664;color:#fff;border:none;padding:4px 12px;border-radius:5px;cursor:pointer;font-size:12px;transition:background .15s}}
+.cpbtn:hover{{background:#4285F4}}
+.cpbtn.ok{{background:#2ecc71;color:#fff}}
+#toast{{position:fixed;bottom:16px;right:16px;background:#2ecc71;color:#fff;padding:8px 18px;border-radius:8px;font-weight:600;display:none;z-index:999}}
+</style></head><body>
+<table><thead><tr>
+  <th style="width:70px">Copy</th><th>Name</th><th>State</th><th>Carrier</th><th>Mbrs</th><th>Premium</th><th>Eff. Date</th><th>Status</th>
+</tr></thead><tbody>{_rows_html}</tbody></table>
+<div id="toast">Copied!</div>
+<script>
+function cp(btn,name){{
+  navigator.clipboard.writeText(name).then(()=>{{
+    btn.textContent='✓';btn.classList.add('ok');
+    var t=document.getElementById('toast');t.style.display='block';
+    setTimeout(()=>{{btn.textContent='Copy';btn.classList.remove('ok');t.style.display='none';}},1500);
+  }});
+}}
+</script></body></html>"""
+
+            st.components.v1.html(_table_html, height=min(55 + len(_view_display) * 38, 620), scrolling=True)
             st.markdown("<br>", unsafe_allow_html=True)
 
-            # ── Editable table ─────────────────────────────────────────────
-            st.markdown("**Update status and notes directly in the table, then hit Save.**")
+            # ── Editable table for Status / Notes only ─────────────────────
+            st.markdown("**Update status and notes below, then hit Save.**")
+            _edit_cols = ["First Name", "Last Name", "Status", "Notes"]
             _edited = st.data_editor(
-                _view_display,
+                _view_display[_edit_cols],
                 use_container_width=True,
                 hide_index=True,
-                height=min(80 + len(_view) * 35, 600),
+                height=min(80 + len(_view_display) * 35, 400),
                 column_config={
-                    "Full Name":  st.column_config.TextColumn("Full Name", disabled=True, width="medium"),
+                    "First Name": st.column_config.TextColumn("First Name", disabled=True),
+                    "Last Name":  st.column_config.TextColumn("Last Name",  disabled=True),
                     "Status": st.column_config.SelectboxColumn(
-                        "Status",
-                        options=_AEP_STATUSES,
-                        required=True,
-                        width="medium",
+                        "Status", options=_AEP_STATUSES, required=True, width="medium",
                     ),
                     "Notes": st.column_config.TextColumn("Notes", width="large"),
-                    "First Name":      st.column_config.TextColumn("First Name",      disabled=True),
-                    "Last Name":       st.column_config.TextColumn("Last Name",       disabled=True),
-                    "State":           st.column_config.TextColumn("State",           disabled=True, width="small"),
-                    "Carrier":         st.column_config.TextColumn("Carrier",         disabled=True),
-                    "Members":         st.column_config.NumberColumn("Members",       disabled=True, width="small"),
-                    "Monthly Premium": st.column_config.NumberColumn("Monthly Premium", disabled=True, format="$%.2f", width="medium"),
-                    "Effective Date":  st.column_config.TextColumn("Effective Date",  disabled=True),
                 },
                 key="aep_editor",
             )
