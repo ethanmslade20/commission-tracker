@@ -1078,18 +1078,43 @@ elif page == "Book of Business":
 # GOALS
 # ══════════════════════════════════════════════════════════════════════════════
 elif page == "Goals":
-    GOAL             = 2_000
-    GOAL_DATE        = dt.date(2027, 2, 1)
     TODAY            = dt.date.today()
-    COMMISSION_PMPM  = 23          # $23 per member per month
-    MAX_TENURE_MONTHS = 60         # cap LTV calc at 5 years (conservative ceiling)
+    COMMISSION_PMPM  = 23
+    MAX_TENURE_MONTHS = 60
     _ACTIVE_STS      = {"Effectuated", "PendingEffectuation", "PendingFollowups"}
     _CHURN_STS       = {"Cancelled", "Terminated"}
 
+    # ── Editable goal inputs ──────────────────────────────────────────────────
+    st.title("Goals")
+    st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
+    st.markdown("#### Set your goal")
+    gi1, gi2 = st.columns(2)
+    with gi1:
+        GOAL = st.number_input("Member goal", min_value=1, value=st.session_state.get("goal_members", 2000), step=50)
+        st.session_state["goal_members"] = GOAL
+    with gi2:
+        GOAL_DATE = st.date_input("Target date", value=st.session_state.get("goal_date", dt.date(2027, 2, 1)))
+        st.session_state["goal_date"] = GOAL_DATE
+
+    # Policy equivalent
+    _active_mask_g = all_clients["status"].isin(_ACTIVE_STS) if "status" in all_clients.columns else pd.Series(False, index=all_clients.index)
+    _active_pol = int(_active_mask_g.sum())
+    _active_mem = int(all_clients.loc[_active_mask_g, "applicant_count"].sum()) if "applicant_count" in all_clients.columns else 0
+    _avg_hh = _active_mem / max(_active_pol, 1)
+    _goal_policies = round(GOAL / max(_avg_hh, 1))
+    st.markdown(
+        f'<p style="color:#8aacd6;font-size:0.95rem;margin-top:-6px;">'
+        f'<b style="color:#e8edf5">{GOAL:,} members</b> ≈ '
+        f'<b style="color:#4285F4">{_goal_policies:,} policies</b> '
+        f'(based on your avg household size of {_avg_hh:.2f})</p>',
+        unsafe_allow_html=True,
+    )
+    st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
+
     # ── Core member counts ────────────────────────────────────────────────────
-    _active_mask = all_clients["status"].isin(_ACTIVE_STS) if "status" in all_clients.columns else pd.Series(False, index=all_clients.index)
+    _active_mask = _active_mask_g
     _churn_mask  = all_clients["status"].isin(_CHURN_STS)  if "status" in all_clients.columns else pd.Series(False, index=all_clients.index)
-    current      = int(all_clients.loc[_active_mask, "applicant_count"].sum()) if "applicant_count" in all_clients.columns else 0
+    current      = _active_mem
     gap          = max(GOAL - current, 0)
     pct_done     = min(current / GOAL * 100, 100)
 
@@ -1148,18 +1173,13 @@ elif page == "Goals":
         )
 
     # ══ PAGE ══════════════════════════════════════════════════════════════════
-
-    st.title("Goals")
     st.markdown(
-        f'<p style="color:#8aacd6;font-size:1rem;">Target: <b style="color:#e8edf5">'
-        f'{GOAL:,} active members</b> by <b style="color:#e8edf5">'
-        f'{GOAL_DATE.strftime("%B %d, %Y")}</b> &nbsp;·&nbsp; '
-        f'LTV source: {_churn_label} churn rate ({monthly_churn_rate*100:.2f}%/mo → '
-        f'{implied_tenure_mo:.0f}-mo avg tenure → <b style="color:#2ecc71">'
+        f'<p style="color:#8aacd6;font-size:0.95rem;">'
+        f'LTV: {_churn_label} churn ({monthly_churn_rate*100:.2f}%/mo → '
+        f'{implied_tenure_mo:.0f}-mo tenure → <b style="color:#2ecc71">'
         f'${ltv_per_member:,}/member</b>)</p>',
         unsafe_allow_html=True,
     )
-    st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 
     # ── Dual progress bars: Members + Revenue ────────────────────────────────
     rev_pct   = min(current_arr / goal_arr * 100, 100)
@@ -1225,12 +1245,12 @@ elif page == "Goals":
     with p1:
         st.markdown(_goal_kpi("Avg net new members / mo (last 3)", f"+{recent_mo_growth:.0f}", "based on recent history"), unsafe_allow_html=True)
     with p2:
-        st.markdown(_goal_kpi("Projected members by Feb 1", f"{projected_at_goal_date:,}", proj_label, proj_color), unsafe_allow_html=True)
+        st.markdown(_goal_kpi("Projected members by goal date", f"{projected_at_goal_date:,}", proj_label, proj_color), unsafe_allow_html=True)
     with p3:
         if shortfall > 0:
-            st.markdown(_goal_kpi("Projected ARR by Feb 1", f"${projected_arr_at_goal:,.0f}", f"${goal_arr - projected_arr_at_goal:,.0f} short of goal ARR", "red"), unsafe_allow_html=True)
+            st.markdown(_goal_kpi("Projected ARR by goal date", f"${projected_arr_at_goal:,.0f}", f"${goal_arr - projected_arr_at_goal:,.0f} short of goal ARR", "red"), unsafe_allow_html=True)
         else:
-            st.markdown(_goal_kpi("Projected ARR by Feb 1", f"${projected_arr_at_goal:,.0f}", f"Goal ARR exceeded ✓", "green"), unsafe_allow_html=True)
+            st.markdown(_goal_kpi("Projected ARR by goal date", f"${projected_arr_at_goal:,.0f}", f"Goal ARR exceeded ✓", "green"), unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
 
@@ -1258,7 +1278,7 @@ elif page == "Goals":
             fig = go.Figure()
             fig.add_trace(go.Scatter(x=hist["month"], y=hist["active"], mode="lines+markers", name="Actual", line=dict(color=BLUE, width=3), marker=dict(size=7)))
             fig.add_trace(go.Scatter(x=pace_df["month"], y=pace_df["required"], mode="lines", name="Required pace", line=dict(color=GOLD, width=2, dash="dash")))
-            fig.add_hline(y=GOAL, line_color=GREEN, line_dash="dot", line_width=1.5, annotation_text="Goal: 2,000", annotation_position="top left", annotation_font_color=GREEN)
+            fig.add_hline(y=GOAL, line_color=GREEN, line_dash="dot", line_width=1.5, annotation_text=f"Goal: {GOAL:,}", annotation_position="top left", annotation_font_color=GREEN)
             fig.add_vline(x=TODAY.isoformat(), line_color="#8aacd6", line_dash="dot", line_width=1, annotation_text="Today", annotation_position="top right", annotation_font_color="#8aacd6")
             fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font_color="#e8edf5", xaxis=dict(showgrid=False, title=""), yaxis=dict(showgrid=True, gridcolor="#1a2744", title="Active members"), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1), margin=dict(l=0, r=0, t=30, b=0), height=360)
             st.plotly_chart(fig, use_container_width=True)
@@ -1276,6 +1296,18 @@ elif page == "Goals":
 
     st.markdown("<br>", unsafe_allow_html=True)
 
+    # ── Weekly callout ────────────────────────────────────────────────────────
+    _week_policies = round(needed_per_week / max(_avg_hh, 1))
+    st.markdown(
+        f'<div style="background:#1a2744;border-left:4px solid #f39c12;padding:14px 18px;'
+        f'border-radius:6px;margin-bottom:20px;">'
+        f'<div style="font-size:0.85rem;color:#8aacd6;text-transform:uppercase;letter-spacing:0.05em;">This week\'s target</div>'
+        f'<div style="font-size:1.8rem;font-weight:700;color:#f39c12;">+{needed_per_week:.0f} members</div>'
+        f'<div style="font-size:0.9rem;color:#8aacd6;">≈ {_week_policies} policies &nbsp;·&nbsp; {weeks_left:.0f} weeks remaining to reach {GOAL:,} members by {GOAL_DATE.strftime("%b %d, %Y")}</div>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
     # ── Monthly targets table ─────────────────────────────────────────────────
     st.subheader("Monthly targets")
     breakdown_rows = []
@@ -1287,11 +1319,13 @@ elif page == "Goals":
         add_target  = round(needed_per_mo)
         running_members = min(running_members + add_target, GOAL)
         breakdown_rows.append({
-            "Month":           mo_label,
-            "Members to add":  add_target,
-            "Running total":   running_members,
-            "MRR at target":   f"${running_members * COMMISSION_PMPM:,.0f}",
-            "ARR at target":   f"${running_members * COMMISSION_PMPM * 12:,.0f}",
+            "Month":              mo_label,
+            "Members to add":     add_target,
+            "Policies to add":    round(add_target / max(_avg_hh, 1)),
+            "Running members":    running_members,
+            "Running policies":   round(running_members / max(_avg_hh, 1)),
+            "MRR at target":      f"${running_members * COMMISSION_PMPM:,.0f}",
+            "ARR at target":      f"${running_members * COMMISSION_PMPM * 12:,.0f}",
         })
         if running_members >= GOAL:
             break
