@@ -615,15 +615,13 @@ if page == "Dashboard":
     else:
         _avg_lifetime = "—"
 
-    r1, r2, r3, r4 = st.columns(4)
+    r1, r2, r3 = st.columns(3)
     with r1:
         st.markdown(kpi_html("Expected Monthly Commission", f"${_mrr:,.0f}"), unsafe_allow_html=True)
     with r2:
         st.markdown(kpi_html("Expected Annual Commission", f"${_arr:,.0f}"), unsafe_allow_html=True)
     with r3:
         st.markdown(kpi_html("Commission per Policy / Mo", f"${_mrr / kpis['Total Active Policies']:.2f}" if kpis.get('Total Active Policies') else "—"), unsafe_allow_html=True)
-    with r4:
-        st.markdown(kpi_html("Avg Client Lifetime", f"{_avg_lifetime} mo", sub="Active + cancelled clients"), unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
     st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
