@@ -211,30 +211,6 @@ st.markdown(f"""
     h1 {{ font-size: 1.6rem !important; }}
     h2 {{ font-size: 1.2rem !important; }}
     h3 {{ font-size: 1rem !important; }}
-    /* Tab styling */
-    .stTabs [data-baseweb="tab-list"] {{
-      gap: 4px;
-      background-color: {T['sidebar_bg']};
-      padding: 4px 4px 0 4px;
-      border-radius: 8px 8px 0 0;
-    }}
-    .stTabs [data-baseweb="tab"] {{
-      background-color: transparent;
-      color: #8aacd6;
-      border-radius: 6px 6px 0 0;
-      padding: 8px 16px;
-      font-size: 0.88rem;
-      font-weight: 500;
-      border: none;
-    }}
-    .stTabs [aria-selected="true"] {{
-      background-color: {T['kpi_bg']} !important;
-      color: #ffffff !important;
-      font-weight: 700;
-    }}
-    .stTabs [data-baseweb="tab-panel"] {{
-      padding-top: 16px;
-    }}
     /* Progress bar thicker for easier reading */
     .progress-wrap {{
       height: 26px;
@@ -602,27 +578,30 @@ state_df    = dd["state_df"]
 latest_m    = sorted(months.keys())[-1]
 latest_label = pd.Timestamp(latest_m + "-01").strftime("%B %Y")
 
-# ── Top bar ───────────────────────────────────────────────────────────────────
-_top_left, _top_right = st.columns([6, 1])
-with _top_left:
-    st.markdown(
-        f'<div style="display:flex;align-items:center;gap:10px;padding:4px 0 8px 0;">'
-        f'<span style="font-size:1.3rem;font-weight:700;color:#e8edf5;">📊 Commission Tracker</span>'
-        f'<span style="font-size:0.8rem;color:#5a7ab5;">· {latest_label} · {len(all_clients):,} clients</span>'
-        f'</div>',
-        unsafe_allow_html=True,
+# ── Sidebar ───────────────────────────────────────────────────────────────────
+with st.sidebar:
+    st.markdown("## 📊 Commission Tracker")
+    st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
+
+    page = st.radio(
+        "Navigation",
+        ["Dashboard", "Month-over-Month", "Daily Tracker", "Book of Business", "Goals", "Re-Engage", "Settings"],
+        label_visibility="collapsed",
     )
-with _top_right:
-    if st.button("🔄 Refresh", use_container_width=True):
+
+    st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
+    st.caption(f"📅 Latest snapshot: **{latest_label}**")
+    st.caption(f"👥 {len(all_clients):,} total clients tracked")
+
+    if st.button("🔄 Refresh data", use_container_width=True):
         st.cache_data.clear()
         st.rerun()
 
-(tab_dash, tab_mom, tab_daily, tab_bob, tab_goals, tab_reengage, tab_settings) = st.tabs(
-    ["Dashboard", "Month-over-Month", "Daily Tracker", "Book of Business", "Goals", "Re-Engage", "Settings"]
-)
 
-
-with tab_dash:
+# ══════════════════════════════════════════════════════════════════════════════
+# OVERVIEW
+# ══════════════════════════════════════════════════════════════════════════════
+if page == "Dashboard":
     st.title("Dashboard")
     st.caption(f"Snapshot: {latest_label}")
     st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
@@ -809,7 +788,7 @@ with tab_dash:
 # ══════════════════════════════════════════════════════════════════════════════
 # MONTH-OVER-MONTH
 # ══════════════════════════════════════════════════════════════════════════════
-with tab_mom:
+elif page == "Month-over-Month":
     st.title("Month-over-Month Trends")
     st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 
@@ -899,7 +878,7 @@ with tab_mom:
 # ══════════════════════════════════════════════════════════════════════════════
 # DAILY TRACKER
 # ══════════════════════════════════════════════════════════════════════════════
-with tab_daily:
+elif page == "Daily Tracker":
     st.title("Daily Tracker")
     st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 
@@ -1006,7 +985,7 @@ with tab_daily:
 # ══════════════════════════════════════════════════════════════════════════════
 # CLIENT ROSTER
 # ══════════════════════════════════════════════════════════════════════════════
-with tab_bob:
+elif page == "Book of Business":
     st.title("Book of Business")
     st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 
@@ -1098,7 +1077,7 @@ with tab_bob:
 # ══════════════════════════════════════════════════════════════════════════════
 # GOALS
 # ══════════════════════════════════════════════════════════════════════════════
-with tab_goals:
+elif page == "Goals":
     TODAY            = dt.date.today()
     COMMISSION_PMPM  = 23
     MAX_TENURE_MONTHS = 60
@@ -1358,7 +1337,7 @@ with tab_goals:
 # ══════════════════════════════════════════════════════════════════════════════
 # RE-ENGAGE
 # ══════════════════════════════════════════════════════════════════════════════
-with tab_reengage:
+elif page == "Re-Engage":
     import json
     from tracker.diff import compute_diff, _dedup_month
 
@@ -1552,7 +1531,7 @@ with tab_reengage:
 # ══════════════════════════════════════════════════════════════════════════════
 # SETTINGS
 # ══════════════════════════════════════════════════════════════════════════════
-with tab_settings:
+elif page == "Settings":
     st.title("Settings")
     st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
     st.markdown("Toggle the carriers you are appointed with in each state. Changes apply immediately to the dashboard.")
