@@ -495,6 +495,12 @@ def _read_aep_tab(tab_name: str) -> pd.DataFrame:
             if c not in df.columns:
                 df[c] = ""
         df["Status"] = df["Status"].where(df["Status"].isin(_AEP_STATUSES), "Not Started")
+        if "Monthly Premium" in df.columns:
+            df["Monthly Premium"] = (
+                df["Monthly Premium"].astype(str).str.replace("$", "", regex=False)
+                .str.strip().replace("", "0")
+                .pipe(pd.to_numeric, errors="coerce").fillna(0.0)
+            )
         return df[_AEP_COLS].reset_index(drop=True)
     except Exception:
         return pd.DataFrame(columns=_AEP_COLS)

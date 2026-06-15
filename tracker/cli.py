@@ -334,7 +334,7 @@ def aep_init(year: Optional[int]):
             _clean(row.get("state",      "")),
             _clean(row.get("carrier",    "")),
             _clean(row.get("applicant_count", 1)),
-            round(premium, 2),
+            f"${premium:.2f}",  # string so Sheets won't reformat as a date
             _clean(eff),
             status,
             prev.get("notes", ""),
