@@ -545,6 +545,55 @@ def _save_aep_tab(tab_name: str, df: pd.DataFrame) -> bool:
         return False
 
 
+_SETTINGS_TAB = "App Settings"
+
+
+def _read_app_settings_raw() -> dict:
+    """Uncached read of the persisted Goals/Settings blob from Google Sheets."""
+    if not _running_in_cloud():
+        return {}
+    try:
+        import json
+        client = _gspread_client()
+        sheet  = client.open_by_url(st.secrets["sheet_url"])
+        ws     = sheet.worksheet(_SETTINGS_TAB)
+        raw    = ws.acell("A1").value
+        return json.loads(raw) if raw else {}
+    except Exception:
+        return {}
+
+
+@st.cache_data(ttl=30)
+def _read_app_settings() -> dict:
+    return _read_app_settings_raw()
+
+
+def _save_app_settings(settings: dict) -> bool:
+    if not _running_in_cloud():
+        return False
+    try:
+        import json
+        client = _gspread_client()
+        sheet  = client.open_by_url(st.secrets["sheet_url"])
+        try:
+            ws = sheet.worksheet(_SETTINGS_TAB)
+        except Exception:
+            ws = sheet.add_worksheet(title=_SETTINGS_TAB, rows=10, cols=2)
+        ws.update([[json.dumps(settings)]], "A1")
+        _read_app_settings.clear()
+        return True
+    except Exception as e:
+        st.error(f"Settings save failed: {e}")
+        return False
+
+
+def _persist_settings(**updates) -> bool:
+    """Merge `updates` into the persisted settings blob and save."""
+    current = _read_app_settings_raw()
+    current.update(updates)
+    return _save_app_settings(current)
+
+
 @st.cache_data(ttl=60)
 def load_data():
     if _running_in_cloud():
@@ -646,17 +695,31 @@ if not _state_carrier_map:
                     _state_carrier_map.setdefault(_s, set()).add(_c)
     _state_carrier_map = {s: sorted(c) for s, c in sorted(_state_carrier_map.items())}
 
-# Initialize session_state appointments from yaml (exact carrier name matching)
+# Pull persisted Goals/Settings from the Sheet (survives restarts and new devices)
+_persisted_settings = _read_app_settings()
+
+# Initialize session_state appointments — prefer the persisted save, falling back
+# to yaml-keyword defaults for any state/carrier not yet in the saved settings.
 if "settings_appointments" not in st.session_state:
     _appt_yaml = _load_appointments()
+    _persisted_appts = _persisted_settings.get("appointments", {})
     _selected: dict = {}
     for state, carriers in _state_carrier_map.items():
         keywords = _appt_yaml.get(state, [])
+        _saved_state = _persisted_appts.get(state, {})
         _selected[state] = {
-            c: any(kw.lower() in c.lower() for kw in keywords)
+            c: _saved_state.get(c, any(kw.lower() in c.lower() for kw in keywords))
             for c in carriers
         }
     st.session_state.settings_appointments = _selected
+
+if "goal_members" not in st.session_state and "goal_members" in _persisted_settings:
+    st.session_state["goal_members"] = _persisted_settings["goal_members"]
+if "goal_date" not in st.session_state and "goal_date" in _persisted_settings:
+    try:
+        st.session_state["goal_date"] = dt.date.fromisoformat(_persisted_settings["goal_date"])
+    except Exception:
+        pass
 
 # Override appointment filter with session_state settings
 def _filter_by_settings(df: pd.DataFrame) -> pd.DataFrame:
@@ -1195,13 +1258,19 @@ elif page == "Goals":
     st.title("Goals")
     st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
     st.markdown("#### Set your goal")
+    _prev_goal_members = st.session_state.get("goal_members", 2000)
+    _prev_goal_date     = st.session_state.get("goal_date", dt.date(2027, 2, 1))
+
     gi1, gi2 = st.columns(2)
     with gi1:
-        GOAL = st.number_input("Member goal", min_value=1, value=st.session_state.get("goal_members", 2000), step=50)
+        GOAL = st.number_input("Member goal", min_value=1, value=_prev_goal_members, step=50)
         st.session_state["goal_members"] = GOAL
     with gi2:
-        GOAL_DATE = st.date_input("Target date", value=st.session_state.get("goal_date", dt.date(2027, 2, 1)))
+        GOAL_DATE = st.date_input("Target date", value=_prev_goal_date)
         st.session_state["goal_date"] = GOAL_DATE
+
+    if (GOAL != _prev_goal_members or GOAL_DATE != _prev_goal_date) and _running_in_cloud():
+        _persist_settings(goal_members=GOAL, goal_date=GOAL_DATE.isoformat())
 
     # Policy equivalent
     _active_mask_g = all_clients["status"].isin(_ACTIVE_STS) if "status" in all_clients.columns else pd.Series(False, index=all_clients.index)
@@ -1784,3 +1853,10 @@ elif page == "Settings":
                         key=f"appt_{state}_{carrier}"
                     )
                     st.session_state.settings_appointments[state][carrier] = new_val
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    if not _running_in_cloud():
+        st.caption("Settings persistence is only available on the deployed (cloud) app.")
+    elif st.button("💾 Save Settings", type="primary"):
+        if _persist_settings(appointments=st.session_state.settings_appointments):
+            st.success("Saved — these settings will now load on any device.")

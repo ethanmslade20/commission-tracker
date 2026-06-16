@@ -37,9 +37,34 @@ def _build_credentials(impersonation_target: str):
     )
 
 
+def _patch_retry_on_quota(client: gspread.Client, max_retries: int = 5) -> None:
+    """Wrap the HTTP client's request method so 429 (quota exceeded) errors
+    are retried with backoff instead of crashing mid-write and leaving a
+    tab half-cleared."""
+    http_client = client.http_client
+    original_request = http_client.request
+
+    def _request_with_retry(method, endpoint, **kwargs):
+        for attempt in range(max_retries + 1):
+            try:
+                return original_request(method, endpoint, **kwargs)
+            except gspread.exceptions.APIError as e:
+                status = e.response.status_code
+                if status == 429 and attempt < max_retries:
+                    wait = 20 * (attempt + 1)
+                    print(f"  Quota hit (429) — retrying in {wait}s "
+                          f"(attempt {attempt + 1}/{max_retries})...")
+                    time.sleep(wait)
+                    continue
+                raise
+
+    http_client.request = _request_with_retry
+
+
 def _open_sheet(sheet_url: str, impersonation_target: str) -> gspread.Spreadsheet:
     creds = _build_credentials(impersonation_target)
     client = gspread.authorize(creds)
+    _patch_retry_on_quota(client)
     return client.open_by_url(sheet_url)
 
 
