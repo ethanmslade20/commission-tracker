@@ -644,10 +644,22 @@ def _write_daily_tracker_tab(
     spreadsheet.batch_update({"requests": requests})
 
 
+# Tabs the app manages on its own (AEP Tracker per-year, Goals/Settings
+# persistence) — never auto-deleted by the CLI's report cleanup, since they
+# aren't rebuilt by `track report` and would otherwise be wiped every run.
+_PROTECTED_TAB_PREFIXES = ("AEP ",)
+_PROTECTED_TAB_NAMES    = {"App Settings"}
+
+
+def _is_protected_tab(title: str) -> bool:
+    return title in _PROTECTED_TAB_NAMES or title.startswith(_PROTECTED_TAB_PREFIXES)
+
+
 def _delete_stale_tabs(spreadsheet: gspread.Spreadsheet, keep: set) -> None:
-    """Delete any worksheet whose title is not in the keeper set."""
+    """Delete any worksheet whose title is not in the keeper set (and isn't
+    one of the app-managed protected tabs)."""
     for ws in list(spreadsheet.worksheets()):
-        if ws.title not in keep:
+        if ws.title not in keep and not _is_protected_tab(ws.title):
             try:
                 spreadsheet.del_worksheet(ws)
                 print(f"  Deleted stale tab: {ws.title}")

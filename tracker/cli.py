@@ -278,7 +278,9 @@ def aep_init(year: Optional[int]):
         target_scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"],
         lifetime=3600,
     )
+    from tracker.sheets import _patch_retry_on_quota
     client      = gspread.authorize(creds)
+    _patch_retry_on_quota(client)
     spreadsheet = client.open_by_url(sheet_url)
 
     # Load existing tab to preserve Status / Notes
