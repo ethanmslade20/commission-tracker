@@ -484,9 +484,13 @@ def _read_aep_tab(tab_name: str) -> pd.DataFrame:
     if not _running_in_cloud():
         return pd.DataFrame(columns=_AEP_COLS)
     try:
+        import gspread
         client = _gspread_client()
         sheet  = client.open_by_url(st.secrets["sheet_url"])
-        ws     = sheet.worksheet(tab_name)
+        try:
+            ws = sheet.worksheet(tab_name)
+        except gspread.WorksheetNotFound:
+            return pd.DataFrame(columns=_AEP_COLS)
         rows   = ws.get_all_records()
         if not rows:
             return pd.DataFrame(columns=_AEP_COLS)
