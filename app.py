@@ -341,6 +341,7 @@ def _load_from_sheets():
     import gspread
     from google.oauth2 import service_account
     from tracker.dashboard import _build_mom_from_all_clients
+    from tracker.sheets import _patch_retry_on_quota
 
     creds = service_account.Credentials.from_service_account_info(
         dict(st.secrets["gcp_service_account"]),
@@ -350,6 +351,7 @@ def _load_from_sheets():
         ],
     )
     client       = gspread.authorize(creds)
+    _patch_retry_on_quota(client)
     spreadsheet  = client.open_by_url(st.secrets["sheet_url"])
 
     all_clients  = _read_all_clients_from_sheet(spreadsheet)
@@ -456,15 +458,20 @@ def _running_in_cloud() -> bool:
 
 
 def _gspread_client():
-    """Return an authenticated gspread client using st.secrets (cloud mode)."""
+    """Return an authenticated gspread client using st.secrets (cloud mode).
+    Retries on 429 (quota exceeded) instead of raising, since this app reads
+    Sheets on every page load and can outrun the per-minute read quota."""
     import gspread
     from google.oauth2 import service_account
+    from tracker.sheets import _patch_retry_on_quota
     creds = service_account.Credentials.from_service_account_info(
         dict(st.secrets["gcp_service_account"]),
         scopes=["https://www.googleapis.com/auth/spreadsheets",
                 "https://www.googleapis.com/auth/drive.readonly"],
     )
-    return gspread.authorize(creds)
+    client = gspread.authorize(creds)
+    _patch_retry_on_quota(client)
+    return client
 
 
 _AEP_STATUSES   = ["Not Started", "Contacted", "Renewed", "Lost"]
