@@ -1446,9 +1446,10 @@ elif page == "Month-over-Month":
             fig.update_layout(**_chart_layout(
                 showlegend=False, height=360,
                 xaxis=dict(gridcolor="rgba(96,165,250,0.06)", showgrid=False, zeroline=False,
-                           range=[-0.6, _n_mom - 0.4]),
-                yaxis=dict(title="Members", gridcolor="rgba(96,165,250,0.10)", showgrid=True, zeroline=False),
-                margin=dict(t=20, b=30, l=20, r=55),
+                           range=[-0.6, _n_mom - 0.2], automargin=True),
+                yaxis=dict(title="Members", gridcolor="rgba(96,165,250,0.10)", showgrid=True,
+                           zeroline=False, automargin=True),
+                margin=dict(t=24, b=30, l=10, r=70),
             ))
             show_chart(fig)
 
@@ -1468,8 +1469,9 @@ elif page == "Month-over-Month":
                 legend=dict(orientation="h", yanchor="bottom", y=1.03, x=0,
                             bgcolor="rgba(0,0,0,0)", font=dict(size=12)),
                 height=360, margin=dict(t=34, b=44, l=10, r=10),
-                xaxis=dict(gridcolor="rgba(0,0,0,0)", showgrid=False, zeroline=False, tickangle=-45, tickfont=dict(size=10)),
-                yaxis=dict(gridcolor="rgba(96,165,250,0.10)", showgrid=True, zeroline=False),
+                xaxis=dict(gridcolor="rgba(0,0,0,0)", showgrid=False, zeroline=False,
+                           tickangle=-45, tickfont=dict(size=10), automargin=True),
+                yaxis=dict(gridcolor="rgba(96,165,250,0.10)", showgrid=True, zeroline=False, automargin=True),
             ))
             return f
 
