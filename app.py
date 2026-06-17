@@ -147,6 +147,28 @@ if not st.session_state.authenticated:
     """, unsafe_allow_html=True)
 
     pin = st.text_input("PIN", type="password", max_chars=4, placeholder="••••", label_visibility="collapsed")
+
+    # Force the iOS numeric keypad (not the full keyboard) for PIN entry.
+    import streamlit.components.v1 as _components
+    _components.html(
+        """
+        <script>
+        const doc = window.parent.document;
+        function setNumeric() {
+            const inp = doc.querySelector('[data-testid="stTextInput"] input');
+            if (inp) {
+                inp.setAttribute('inputmode', 'numeric');
+                inp.setAttribute('pattern', '[0-9]*');
+                inp.setAttribute('autocomplete', 'one-time-code');
+            }
+        }
+        setNumeric();
+        new MutationObserver(setNumeric).observe(doc.body, {childList: true, subtree: true});
+        </script>
+        """,
+        height=0,
+    )
+
     submitted = st.button("🔒 Unlock", use_container_width=True) or (len(pin) == 4)
     st.markdown(
         f'<div class="lock-note">{_shield_svg} Your data is encrypted and secure</div>',
