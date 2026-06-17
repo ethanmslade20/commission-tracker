@@ -1371,13 +1371,16 @@ if page == "Dashboard":
                     ],
                 )
                 fig.update_traces(
-                    textfont_size=11, textposition="auto",
+                    textposition="inside", textinfo="percent",
+                    insidetextorientation="horizontal", textfont_size=12,
                     marker=dict(line=dict(color="#0a1326", width=2)),
                     hovertemplate="%{label}: %{value} (%{percent})<extra></extra>",
                 )
                 fig.update_layout(**_chart_layout(
-                    legend=dict(font=dict(size=11), orientation="v"),
-                    margin=dict(t=6, b=6, l=6, r=6), height=370,
+                    uniformtext_minsize=11, uniformtext_mode="hide",
+                    legend=dict(orientation="h", yanchor="top", y=-0.03,
+                                xanchor="center", x=0.5, font=dict(size=11)),
+                    margin=dict(t=10, b=10, l=10, r=10), height=440,
                 ))
                 show_chart(fig)
 
