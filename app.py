@@ -91,19 +91,33 @@ if not st.session_state.authenticated:
         color: #94a3b8; font-size: 0.9rem; font-weight: 500; margin-top: 22px;
     }}
     .lock-note svg {{ width: 18px; height: 18px; stroke: #64748b; }}
-    /* PIN input */
-    [data-testid="stTextInput"] input {{
+    /* PIN input — style the BaseWeb wrapper so input + eye button align */
+    [data-testid="stTextInput"] [data-baseweb="input"],
+    [data-testid="stTextInput"] [data-baseweb="base-input"] {{
         background: rgba(15,23,42,0.75) !important;
         border: 1px solid rgba(129,140,248,0.25) !important;
         border-radius: 16px !important;
-        height: 64px; color: #f8fafc !important;
-        font-size: 1.6rem; letter-spacing: 0.4em; text-align: center;
+        height: 60px; overflow: hidden;
         transition: border-color .15s ease, box-shadow .15s ease;
     }}
-    [data-testid="stTextInput"] input:focus {{
+    [data-testid="stTextInput"] [data-baseweb="input"]:focus-within {{
         border-color: rgba(96,165,250,0.7) !important;
         box-shadow: 0 0 30px rgba(59,130,246,0.22) !important;
     }}
+    [data-testid="stTextInput"] input {{
+        background: transparent !important;
+        border: none !important; box-shadow: none !important;
+        color: #f8fafc !important; height: 100%;
+        font-size: 1.4rem; letter-spacing: 0.45em; text-align: center;
+    }}
+    /* Eye (show/hide) button — blend into the field, no separate box */
+    [data-testid="stTextInput"] [data-baseweb="input"] button {{
+        background: transparent !important; border: none !important;
+        color: #94a3b8 !important; margin-right: 6px;
+    }}
+    [data-testid="stTextInput"] [data-baseweb="input"] button:hover {{ color: #f8fafc !important; }}
+    /* Hide the "0/4" character counter (it triggers the red outline) */
+    [data-testid="InputInstructions"] {{ display: none !important; }}
     /* Unlock button */
     .stButton > button {{
         background: linear-gradient(90deg, #3b82f6, #7c3aed) !important;
