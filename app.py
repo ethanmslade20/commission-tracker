@@ -62,162 +62,295 @@ if not st.session_state.authenticated:
                 st.error("Incorrect PIN")
     st.stop()
 
-# ── Theme — Deep Navy always ──────────────────────────────────────────────────
-NAVY  = "#1a2744"
-LNAV  = "#243664"
-BLUE  = "#4285F4"
-GREEN = "#2ecc71"
-RED   = "#e74c3c"
-GOLD  = "#f39c12"
+# ── Theme — Premium midnight fintech ────────────────────────────────────────
+NAVY  = "#0f1c34"
+LNAV  = "#1b2c4d"
+BLUE  = "#3b82f6"
+ELEC  = "#60a5fa"
+PURPLE= "#7c3aed"
+CYAN  = "#22d3ee"
+GREEN = "#22c55e"
+RED   = "#ef4444"
+GOLD  = "#f59e0b"
 T = dict(
-    page_bg      = "#0f1a2e",
-    sidebar_bg   = "#0f1a2e",
-    kpi_bg       = "#1a2744",
-    kpi_border   = "#243664",
-    kpi_val      = "#ffffff",
-    kpi_lbl      = "#8aacd6",
-    kpi_sub      = "#5a7ab5",
-    divider      = "#243664",
-    progress_bg  = "#0d1321",
-    goal_val     = "#4285F4",
-    goal_green   = "#2ecc71",
-    goal_gold    = "#f39c12",
-    goal_red     = "#e74c3c",
-    text_primary = "#e8edf5",
+    page_bg      = "#070f22",
+    sidebar_bg   = "#081426",
+    kpi_bg       = "rgba(15, 28, 52, 0.82)",
+    kpi_border   = "rgba(96, 165, 250, 0.25)",
+    kpi_val      = "#f8fafc",
+    kpi_lbl      = "#94a3b8",
+    kpi_sub      = "#6b84ad",
+    divider      = "rgba(96, 165, 250, 0.18)",
+    progress_bg  = "#0a1326",
+    goal_val     = "#60a5fa",
+    goal_green   = "#22c55e",
+    goal_gold    = "#f59e0b",
+    goal_red     = "#ef4444",
+    text_primary = "#f8fafc",
 )
 
-# ── CSS: custom KPI boxes + page theming ──────────────────────────────────────
+# ── CSS: premium midnight fintech theme ───────────────────────────────────────
 st.markdown(f"""
 <style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+  html, body, [data-testid="stAppViewContainer"], [data-testid="stSidebar"],
+  .stMarkdown, .stButton, input, textarea, select, [class*="css"] {{
+    font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }}
+
+  /* Page background with radial lighting */
   [data-testid="stAppViewContainer"] {{
-    background-color: {T['page_bg']};
+    background:
+      radial-gradient(1100px 560px at 82% -8%, rgba(124,58,237,0.13), transparent 60%),
+      radial-gradient(900px 520px at 8% -4%, rgba(59,130,246,0.13), transparent 55%),
+      {T['page_bg']};
   }}
-  [data-testid="stSidebar"] {{
-    background-color: {T['sidebar_bg']};
-  }}
-  [data-testid="stSidebar"] * {{
-    color: {T['text_primary']} !important;
-  }}
+  [data-testid="stHeader"] {{ background: transparent; }}
   .main .block-container {{
-    background-color: {T['page_bg']};
+    background: transparent;
+    max-width: 1320px;
+    padding-top: 2.2rem;
   }}
-  h1, h2, h3, p, label, .stMarkdown {{
-    color: {T['text_primary']};
+  h1, h2, h3, h4, p, label, .stMarkdown {{ color: {T['text_primary']}; }}
+  [data-testid="stMarkdownContainer"] h1, .stApp h1 {{ color: {T['text_primary']} !important; }}
+
+  /* ── Sidebar — dark blue gradient, rounded, bordered ── */
+  [data-testid="stSidebar"] {{
+    background: linear-gradient(185deg, #0b1830 0%, {T['sidebar_bg']} 100%);
+    border-right: 1px solid {T['divider']};
   }}
-  [data-testid="stMarkdownContainer"] h1,
-  [data-testid="stHeadingWithActionElements"] h1,
-  .stApp h1 {{
-    color: {T['text_primary']} !important;
+  [data-testid="stSidebar"] > div:first-child {{
+    padding-top: 10px;
+    border-radius: 0 22px 22px 0;
   }}
+  [data-testid="stSidebar"] * {{ color: {T['text_primary']}; }}
+  [data-testid="stSidebar"] h2 {{
+    font-size: 1.15rem; font-weight: 800; letter-spacing: -0.01em;
+    padding: 6px 4px 2px;
+  }}
+  /* Nav items (radio styled as menu) */
+  section[data-testid="stSidebar"] div[role="radiogroup"] {{ gap: 3px; }}
+  section[data-testid="stSidebar"] div[role="radiogroup"] > label {{
+    padding: 9px 12px; border-radius: 11px; margin: 1px 0;
+    transition: background .15s ease, box-shadow .15s ease;
+    cursor: pointer;
+  }}
+  section[data-testid="stSidebar"] div[role="radiogroup"] > label:hover {{
+    background: rgba(96,165,250,0.08);
+  }}
+  section[data-testid="stSidebar"] div[role="radiogroup"] > label:has(input:checked) {{
+    background: linear-gradient(90deg, rgba(59,130,246,0.24), rgba(124,58,237,0.15));
+    box-shadow: inset 0 0 0 1px rgba(96,165,250,0.32);
+  }}
+  /* hide the radio dot so it reads as a clean nav item */
+  section[data-testid="stSidebar"] div[role="radiogroup"] > label > div:first-child {{
+    display: none;
+  }}
+  section[data-testid="stSidebar"] div[role="radiogroup"] label p {{
+    font-size: 0.92rem; font-weight: 500;
+  }}
+  /* Sidebar buttons */
+  [data-testid="stSidebar"] .stButton > button {{
+    background: linear-gradient(90deg, {BLUE}, {PURPLE});
+    color: #fff; border: none; border-radius: 12px; font-weight: 600;
+    box-shadow: 0 8px 22px rgba(59,130,246,0.28);
+    transition: filter .15s ease, transform .15s ease;
+  }}
+  [data-testid="stSidebar"] .stButton > button:hover {{
+    filter: brightness(1.08); transform: translateY(-1px);
+  }}
+  [data-testid="stSidebar"] [data-testid="stDownloadButton"] > button {{
+    background: rgba(15,28,52,0.6); color: #cbd5e1;
+    border: 1px solid rgba(96,165,250,0.32); border-radius: 12px; font-weight: 600;
+    box-shadow: none;
+  }}
+  [data-testid="stSidebar"] [data-testid="stDownloadButton"] > button:hover {{
+    border-color: rgba(96,165,250,0.6); color: #fff;
+  }}
+
+  /* ── Dashboard header + topbar ── */
+  .dash-header {{
+    display: flex; align-items: flex-start; justify-content: space-between;
+    margin: 2px 0 4px;
+  }}
+  .dash-title {{ font-size: 2.7rem; font-weight: 800; letter-spacing: -0.03em; line-height: 1; color: {T['text_primary']}; }}
+  .dash-sub {{ color: {T['kpi_lbl']}; font-size: 0.98rem; margin-top: 10px; }}
+  .topbar {{ display: flex; align-items: center; gap: 12px; }}
+  .topbar .tb-icon {{
+    width: 38px; height: 38px; border-radius: 11px; display: flex; align-items: center; justify-content: center;
+    background: rgba(15,28,52,0.7); border: 1px solid rgba(96,165,250,0.2);
+  }}
+  .topbar .tb-icon svg {{ width: 18px; height: 18px; stroke: {T['kpi_lbl']}; fill: none; stroke-width: 2; }}
+  .avatar {{
+    width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 0.85rem; color: #fff;
+    background: linear-gradient(145deg, {BLUE}, {PURPLE});
+    box-shadow: 0 6px 18px rgba(124,58,237,0.35);
+  }}
+
+  /* ── Section headers ── */
+  .section-head {{ display: flex; align-items: center; gap: 11px; margin: 30px 0 16px; }}
+  .section-head .sh-icon svg {{ width: 16px; height: 16px; stroke: {ELEC}; fill: none; stroke-width: 2; }}
+  .section-head .sh-title {{
+    font-size: 0.78rem; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase;
+    color: {T['kpi_lbl']}; white-space: nowrap;
+  }}
+  .section-head .sh-line {{ flex: 1; height: 1px; background: linear-gradient(90deg, rgba(96,165,250,0.28), rgba(96,165,250,0.02)); }}
+
+  /* ── Metric cards (glassy) ── */
+  .metric-card {{
+    position: relative; overflow: hidden;
+    background: linear-gradient(160deg, rgba(20,34,62,0.9), rgba(11,21,42,0.85));
+    border: 1px solid {T['kpi_border']};
+    border-radius: 18px; padding: 22px 22px 18px;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.03), 0 10px 30px rgba(0,0,0,0.25);
+    transition: transform .2s ease, border-color .2s ease, box-shadow .2s ease;
+    height: 100%;
+  }}
+  .metric-card:hover {{
+    transform: translateY(-3px);
+    border-color: rgba(96,165,250,0.55);
+    box-shadow: 0 0 0 1px rgba(96,165,250,0.25), 0 16px 42px rgba(8,20,46,0.6), 0 0 32px rgba(59,130,246,0.16);
+  }}
+  .metric-card.highlight {{
+    border-color: rgba(124,58,237,0.6);
+    background: linear-gradient(160deg, rgba(38,29,74,0.92), rgba(16,20,52,0.9));
+    box-shadow: 0 0 0 1px rgba(124,58,237,0.42), 0 0 42px rgba(124,58,237,0.28);
+  }}
+  .metric-card.highlight:hover {{ box-shadow: 0 0 0 1px rgba(124,58,237,0.6), 0 0 54px rgba(124,58,237,0.4); }}
+  .mc-icon {{
+    width: 42px; height: 42px; border-radius: 12px; display: flex; align-items: center; justify-content: center;
+    background: linear-gradient(145deg, rgba(59,130,246,0.18), rgba(124,58,237,0.13));
+    border: 1px solid rgba(96,165,250,0.22);
+  }}
+  .mc-icon svg {{ width: 20px; height: 20px; stroke: {ELEC}; fill: none; stroke-width: 2; }}
+  .metric-card.highlight .mc-icon svg {{ stroke: #c4b5fd; }}
+  .mc-value {{ font-size: 2.5rem; font-weight: 800; color: {T['kpi_val']}; line-height: 1.04; margin-top: 16px; letter-spacing: -0.02em; }}
+  .mc-label {{ font-size: 0.72rem; color: {T['kpi_lbl']}; text-transform: uppercase; letter-spacing: 0.08em; margin-top: 5px; font-weight: 600; }}
+  .mc-sub {{ font-size: 0.72rem; color: {T['kpi_sub']}; margin-top: 9px; }}
+  .mc-spark {{ position: absolute; top: 20px; right: 20px; opacity: 0.95; }}
+
+  /* ── Legacy KPI boxes (other pages) restyled to match ── */
   .kpi-box {{
-    background: {T['kpi_bg']};
-    border-radius: 10px;
-    padding: 22px 16px 18px;
-    text-align: center;
+    background: linear-gradient(160deg, rgba(20,34,62,0.9), rgba(11,21,42,0.85));
+    border-radius: 16px; padding: 20px 16px 16px; text-align: center;
     border: 1px solid {T['kpi_border']};
+    transition: transform .2s ease, border-color .2s ease;
   }}
-  .kpi-value {{
-    font-size: 2.2rem;
-    font-weight: 700;
-    color: {T['kpi_val']};
-    line-height: 1.1;
-  }}
-  .kpi-label {{
-    font-size: 0.72rem;
-    color: {T['kpi_lbl']};
-    margin-top: 6px;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-  }}
+  .kpi-box:hover {{ transform: translateY(-2px); border-color: rgba(96,165,250,0.5); }}
+  .kpi-value {{ font-size: 2.1rem; font-weight: 800; color: {T['kpi_val']}; line-height: 1.1; }}
+  .kpi-label {{ font-size: 0.72rem; color: {T['kpi_lbl']}; margin-top: 6px; text-transform: uppercase; letter-spacing: 0.06em; }}
   .section-divider {{ margin: 8px 0 20px; border-top: 1px solid {T['divider']}; }}
+
   .goal-kpi-box {{
-    background: {T['kpi_bg']};
-    border-radius: 12px;
-    padding: 24px 16px 20px;
-    text-align: center;
-    border: 1px solid {T['kpi_border']};
-    position: relative;
+    background: linear-gradient(160deg, rgba(20,34,62,0.9), rgba(11,21,42,0.85));
+    border-radius: 16px; padding: 24px 16px 20px; text-align: center;
+    border: 1px solid {T['kpi_border']}; position: relative;
+    transition: transform .2s ease, border-color .2s ease;
   }}
-  .goal-kpi-value {{
-    font-size: 2.6rem;
-    font-weight: 800;
-    color: {T['goal_val']};
-    line-height: 1.1;
-  }}
+  .goal-kpi-box:hover {{ transform: translateY(-2px); border-color: rgba(96,165,250,0.5); }}
+  .goal-kpi-value {{ font-size: 2.6rem; font-weight: 800; color: {T['goal_val']}; line-height: 1.1; }}
   .goal-kpi-value.green  {{ color: {T['goal_green']}; }}
   .goal-kpi-value.gold   {{ color: {T['goal_gold']}; }}
   .goal-kpi-value.red    {{ color: {T['goal_red']}; }}
-  .goal-kpi-label {{
-    font-size: 0.72rem;
-    color: {T['kpi_lbl']};
-    margin-top: 6px;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-  }}
-  .goal-kpi-sub {{
-    font-size: 0.82rem;
-    color: {T['kpi_lbl']};
-    margin-top: 4px;
-  }}
-  .progress-wrap {{
-    background: {T['progress_bg']};
-    border-radius: 999px;
-    height: 22px;
-    overflow: hidden;
-    margin: 10px 0 6px;
-  }}
-  .progress-bar {{
-    height: 100%;
-    border-radius: 999px;
-    background: linear-gradient(90deg, {BLUE}, {GREEN});
-    transition: width 0.6s ease;
-  }}
+  .goal-kpi-label {{ font-size: 0.72rem; color: {T['kpi_lbl']}; margin-top: 6px; text-transform: uppercase; letter-spacing: 0.06em; }}
+  .goal-kpi-sub {{ font-size: 0.82rem; color: {T['kpi_lbl']}; margin-top: 4px; }}
+  .progress-wrap {{ background: {T['progress_bg']}; border-radius: 999px; height: 22px; overflow: hidden; margin: 10px 0 6px; }}
+  .progress-bar {{ height: 100%; border-radius: 999px; background: linear-gradient(90deg, {BLUE}, {PURPLE}); transition: width 0.6s ease; }}
 
-  /* ── Mobile optimizations ── */
+  /* ── Mobile / tablet ── */
   @media (max-width: 768px) {{
-    /* Bigger tap targets on KPI boxes */
-    .kpi-box {{
-      padding: 18px 12px 14px;
-      margin-bottom: 8px;
-    }}
-    .kpi-value {{
-      font-size: 1.8rem;
-    }}
-    .kpi-label {{
-      font-size: 0.65rem;
-    }}
-    .goal-kpi-box {{
-      padding: 18px 12px 14px;
-      margin-bottom: 8px;
-    }}
-    .goal-kpi-value {{
-      font-size: 2rem;
-    }}
-    /* Make block container use full width with less padding */
-    .block-container {{
-      padding-left: 1rem !important;
-      padding-right: 1rem !important;
-      padding-top: 1rem !important;
-    }}
-    /* Streamlit dataframes scroll horizontally */
-    [data-testid="stDataFrame"] {{
-      overflow-x: auto;
-    }}
-    /* Daily Tracker table progress bars — green */
-    [data-testid="stDataFrame"] [role="progressbar"] > div {{
-      background-color: #2ecc71 !important;
-    }}
-    /* Tighten up headers */
+    .dash-title {{ font-size: 1.9rem; }}
+    .topbar {{ gap: 8px; }}
+    .kpi-box {{ padding: 16px 12px 12px; margin-bottom: 8px; }}
+    .kpi-value {{ font-size: 1.8rem; }}
+    .kpi-label {{ font-size: 0.65rem; }}
+    .metric-card {{ padding: 18px 16px 14px; margin-bottom: 8px; }}
+    .mc-value {{ font-size: 2rem; }}
+    .goal-kpi-box {{ padding: 18px 12px 14px; margin-bottom: 8px; }}
+    .goal-kpi-value {{ font-size: 2rem; }}
+    .block-container {{ padding-left: 1rem !important; padding-right: 1rem !important; padding-top: 1rem !important; }}
+    [data-testid="stDataFrame"] {{ overflow-x: auto; }}
+    [data-testid="stDataFrame"] [role="progressbar"] > div {{ background-color: {GREEN} !important; }}
     h1 {{ font-size: 1.6rem !important; }}
     h2 {{ font-size: 1.2rem !important; }}
     h3 {{ font-size: 1rem !important; }}
-    /* Progress bar thicker for easier reading */
-    .progress-wrap {{
-      height: 26px;
-    }}
+    .progress-wrap {{ height: 26px; }}
   }}
 </style>
 """, unsafe_allow_html=True)
+
+
+# ── UI helpers: icons, sparklines, cards, section headers ─────────────────────
+ICONS = {
+    "shield":   '<svg viewBox="0 0 24 24"><path d="M12 2l8 4v6c0 5-3.5 8.5-8 10-4.5-1.5-8-5-8-10V6l8-4z"/></svg>',
+    "users":    '<svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
+    "home":     '<svg viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 22V12h6v10"/></svg>',
+    "plus":     '<svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>',
+    "minus":    '<svg viewBox="0 0 24 24"><line x1="5" y1="12" x2="19" y2="12"/></svg>',
+    "trend":    '<svg viewBox="0 0 24 24"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>',
+    "dollar":   '<svg viewBox="0 0 24 24"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>',
+    "calendar": '<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>',
+    "file":     '<svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>',
+    "book":     '<svg viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>',
+    "search":   '<svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>',
+    "bell":     '<svg viewBox="0 0 24 24"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>',
+}
+
+
+def _spark_vals(series, n=10):
+    """Last n numeric values from a mom_df column, as a clean float list."""
+    try:
+        v = pd.to_numeric(series, errors="coerce").dropna().tail(n).tolist()
+        return [float(x) for x in v]
+    except Exception:
+        return []
+
+
+def sparkline(values, color=ELEC, w=86, h=30):
+    """Inline SVG sparkline with a soft gradient fill."""
+    vals = [v for v in values if v is not None]
+    if len(vals) < 2:
+        return ""
+    lo, hi = min(vals), max(vals)
+    rng = (hi - lo) or 1.0
+    n = len(vals)
+    pts = []
+    for i, v in enumerate(vals):
+        x = i / (n - 1) * w
+        y = h - (v - lo) / rng * (h - 6) - 3
+        pts.append(f"{x:.1f},{y:.1f}")
+    poly = " ".join(pts)
+    area = f"0,{h} " + poly + f" {w},{h}"
+    gid = f"sg{abs(hash(poly)) % 999999}"
+    return (
+        f'<svg class="mc-spark" width="{w}" height="{h}" viewBox="0 0 {w} {h}" fill="none">'
+        f'<defs><linearGradient id="{gid}" x1="0" y1="0" x2="0" y2="1">'
+        f'<stop offset="0" stop-color="{color}" stop-opacity="0.35"/>'
+        f'<stop offset="1" stop-color="{color}" stop-opacity="0"/></linearGradient></defs>'
+        f'<polygon points="{area}" fill="url(#{gid})"/>'
+        f'<polyline points="{poly}" stroke="{color}" stroke-width="2" '
+        f'stroke-linecap="round" stroke-linejoin="round"/></svg>'
+    )
+
+
+def section_header(title, icon_key):
+    return (
+        f'<div class="section-head"><span class="sh-icon">{ICONS.get(icon_key, "")}</span>'
+        f'<span class="sh-title">{title}</span><span class="sh-line"></span></div>'
+    )
+
+
+def metric_card(label, value, sub="", icon_key="", spark="", highlight=False):
+    cls = "metric-card highlight" if highlight else "metric-card"
+    icon_html = f'<div class="mc-icon">{ICONS.get(icon_key, "")}</div>' if icon_key else ""
+    sub_html = f'<div class="mc-sub">{sub}</div>' if sub else ""
+    return (
+        f'<div class="{cls}">{icon_html}{spark}'
+        f'<div class="mc-value">{value}</div>'
+        f'<div class="mc-label">{label}</div>{sub_html}</div>'
+    )
 
 
 def _load_appointments() -> dict:
@@ -778,78 +911,101 @@ with st.sidebar:
             st.session_state.pop(_k, None)
         st.rerun()
 
+    # Export Report — download the current book of business as CSV
+    try:
+        _export_csv = all_clients.to_csv(index=False).encode("utf-8")
+        st.download_button(
+            "⬇️ Export Report",
+            data=_export_csv,
+            file_name=f"commission-tracker-{latest_m}.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+    except Exception:
+        pass
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # OVERVIEW
 # ══════════════════════════════════════════════════════════════════════════════
 if page == "Dashboard":
-    st.title("Dashboard")
-    st.caption(f"Snapshot: {latest_label}")
-    st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
+    # ── Header with decorative topbar ─────────────────────────────────────────
+    st.markdown(
+        f'<div class="dash-header">'
+        f'<div><div class="dash-title">Dashboard</div>'
+        f'<div class="dash-sub">{latest_label} Snapshot</div></div>'
+        f'<div class="topbar">'
+        f'<div class="tb-icon">{ICONS["search"]}</div>'
+        f'<div class="tb-icon">{ICONS["bell"]}</div>'
+        f'<div class="avatar">CT</div>'
+        f'</div></div>',
+        unsafe_allow_html=True,
+    )
 
-    # Row 1 KPIs
+    # ── BOOK SNAPSHOT ─────────────────────────────────────────────────────────
+    st.markdown(section_header("Book Snapshot", "book"), unsafe_allow_html=True)
+    _ap = kpis["Total Active Policies"]
+    _tm = kpis["Total Members"]
+    _avg_sz = round(_tm / _ap, 1) if _ap else "—"
     c1, c2, c3 = st.columns(3)
     with c1:
-        st.markdown(kpi_html("Total Active Policies", f"{kpis['Total Active Policies']:,}"), unsafe_allow_html=True)
+        st.markdown(metric_card("Total Active Policies", f"{_ap:,}", icon_key="shield",
+                                spark=sparkline(_spark_vals(mom_df["Total Policies"]) if "Total Policies" in mom_df.columns else [])),
+                    unsafe_allow_html=True)
     with c2:
-        st.markdown(kpi_html("Total Members", f"{kpis['Total Members']:,}"), unsafe_allow_html=True)
+        st.markdown(metric_card("Total Members", f"{_tm:,}", icon_key="users",
+                                spark=sparkline(_spark_vals(mom_df["Total Members"]) if "Total Members" in mom_df.columns else [], color=CYAN)),
+                    unsafe_allow_html=True)
     with c3:
-        ap = kpis["Total Active Policies"]
-        tm = kpis["Total Members"]
-        avg_sz = round(tm / ap, 1) if ap else "—"
-        st.markdown(kpi_html("Avg Household Size", avg_sz), unsafe_allow_html=True)
+        st.markdown(metric_card("Avg Household Size", _avg_sz, icon_key="home"), unsafe_allow_html=True)
 
-    st.markdown("<br>", unsafe_allow_html=True)
+    # ── GROWTH METRICS ────────────────────────────────────────────────────────
+    st.markdown(section_header("Growth Metrics", "trend"), unsafe_allow_html=True)
+    try:
+        _churn_pct = round(float(kpis["Avg Policies Lost/Month"]) / max(kpis["Total Active Policies"], 1) * 100, 2)
+        _churn_sub = f"All history • {_churn_pct}% monthly churn"
+    except Exception:
+        _churn_sub = "All history"
+    try:
+        net = round(float(kpis["Avg Policies Added/Month"]) - float(kpis["Avg Policies Lost/Month"]), 1)
+        net_str = f"+{net}" if net >= 0 else str(net)
+    except Exception:
+        net_str = "N/A"
+    g1, g2, g3 = st.columns(3)
+    with g1:
+        st.markdown(metric_card("Avg Policies Added / Month", kpis["Avg Policies Added/Month"], sub="Feb 2026 – present",
+                                icon_key="plus", spark=sparkline(_spark_vals(mom_df["New Policies"]) if "New Policies" in mom_df.columns else [], color=GREEN)),
+                    unsafe_allow_html=True)
+    with g2:
+        st.markdown(metric_card("Avg Policies Lost / Month", kpis["Avg Policies Lost/Month"], sub=_churn_sub,
+                                icon_key="minus", spark=sparkline(_spark_vals(mom_df["Policies Lost"]) if "Policies Lost" in mom_df.columns else [], color=RED)),
+                    unsafe_allow_html=True)
+    with g3:
+        st.markdown(metric_card("Avg Net Growth / Month", net_str, sub="Added (Feb+) minus Lost (all-time)",
+                                icon_key="trend", spark=sparkline(_spark_vals(mom_df["Net Change"]) if "Net Change" in mom_df.columns else [], color=ELEC)),
+                    unsafe_allow_html=True)
 
-    # Row 2 KPIs
-    c4, c5, c6 = st.columns(3)
-    with c4:
-        st.markdown(kpi_html("Avg Policies Added / Month", kpis["Avg Policies Added/Month"], sub="Feb 2026 – present"), unsafe_allow_html=True)
-    with c5:
-        try:
-            _churn_pct = round(float(kpis["Avg Policies Lost/Month"]) / max(kpis["Total Active Policies"], 1) * 100, 2)
-            _churn_sub = f"All history · {_churn_pct}% monthly churn"
-        except Exception:
-            _churn_sub = "All history"
-        st.markdown(kpi_html("Avg Policies Lost / Month", kpis["Avg Policies Lost/Month"], sub=_churn_sub), unsafe_allow_html=True)
-    with c6:
-        try:
-            net = round(float(kpis["Avg Policies Added/Month"]) - float(kpis["Avg Policies Lost/Month"]), 1)
-            net_str = f"+{net}" if net >= 0 else str(net)
-        except Exception:
-            net_str = "N/A"
-        st.markdown(kpi_html("Avg Net Growth / Month", net_str, sub="Added (Feb+) minus Lost (all-time)"), unsafe_allow_html=True)
-
-    st.markdown("<br>", unsafe_allow_html=True)
-
-    # Row 3 — Revenue KPIs
+    # ── COMMISSION FORECAST ───────────────────────────────────────────────────
     _ACTIVE_STS = {"Effectuated", "PendingEffectuation", "PendingFollowups"}
     _PMPM = 23
     _active_mask = all_clients["status"].isin(_ACTIVE_STS) if "status" in all_clients.columns else pd.Series(False, index=all_clients.index)
     _total_members = int(all_clients.loc[_active_mask, "applicant_count"].sum()) if "applicant_count" in all_clients.columns else kpis.get("Total Members", 0)
     _mrr = _total_members * _PMPM
     _arr = _mrr * 12
-
-    # Avg client lifetime from actual effective/term dates
     _today = pd.Timestamp(dt.date.today())
-    if "effective_date" in all_clients.columns:
-        _lt_df = all_clients.copy()
-        _lt_df["effective_date"] = pd.to_datetime(_lt_df["effective_date"], errors="coerce")
-        _lt_df["term_date"]      = pd.to_datetime(_lt_df.get("term_date"), errors="coerce")
-        _lt_df["end"] = _lt_df["term_date"].fillna(_today)
-        _lt_df["lifetime_mo"] = (_lt_df["end"] - _lt_df["effective_date"]).dt.days / 30.44
-        _lt_df = _lt_df[_lt_df["lifetime_mo"] > 0]
-        _avg_lifetime = round(_lt_df["lifetime_mo"].mean(), 1) if not _lt_df.empty else "—"
-    else:
-        _avg_lifetime = "—"
 
+    _per_policy = f"${_mrr / kpis['Total Active Policies']:.2f}" if kpis.get('Total Active Policies') else "—"
+    _mem_spark = sparkline(_spark_vals(mom_df["Total Members"]) if "Total Members" in mom_df.columns else [], color="#c4b5fd")
+
+    st.markdown(section_header("Commission Forecast", "dollar"), unsafe_allow_html=True)
     r1, r2, r3 = st.columns(3)
     with r1:
-        st.markdown(kpi_html("Expected Monthly Commission", f"${_mrr:,.0f}"), unsafe_allow_html=True)
+        st.markdown(metric_card("Expected Monthly Commission", f"${_mrr:,.0f}", icon_key="dollar",
+                                spark=_mem_spark, highlight=True), unsafe_allow_html=True)
     with r2:
-        st.markdown(kpi_html("Expected Annual Commission", f"${_arr:,.0f}"), unsafe_allow_html=True)
+        st.markdown(metric_card("Expected Annual Commission", f"${_arr:,.0f}", icon_key="calendar"), unsafe_allow_html=True)
     with r3:
-        st.markdown(kpi_html("Commission per Policy / Mo", f"${_mrr / kpis['Total Active Policies']:.2f}" if kpis.get('Total Active Policies') else "—"), unsafe_allow_html=True)
+        st.markdown(metric_card("Commission per Policy / Mo", _per_policy, icon_key="file"), unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
     st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
