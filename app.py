@@ -2176,6 +2176,25 @@ elif page == "Re-Engage":
 
                 st.dataframe(disp.style.apply(_row_color, axis=1), use_container_width=True, hide_index=True, height=520)
 
+                # ── Quick Text — copy & paste into your CRM ────────────────
+                st.markdown("<br>", unsafe_allow_html=True)
+                with st.container(border=True):
+                    st.markdown(
+                        chart_head("Quick Text", "Pick a client, copy the message, paste into your CRM", "users"),
+                        unsafe_allow_html=True,
+                    )
+                    _opts = view["_name"].tolist()
+                    _pick = st.selectbox("Client", _opts, key="reengage_msg_pick", label_visibility="collapsed")
+                    _prow = view[view["_name"] == _pick].iloc[0]
+                    _first = str(_prow.get("first_name") or (_pick.split()[0] if _pick else "")).strip().title()
+                    _msg = (
+                        f"Hey {_first}, it's Ethan, your insurance guy. Looks like another agent "
+                        f"took over your health plan and I lost access. Did you authorize that? "
+                        f"Let me know ASAP!"
+                    )
+                    st.code(_msg, language=None)
+                    st.caption("Tap the copy icon at the top-right of the box, then paste it into your CRM.")
+
         # ── TAB 2: Won Back ───────────────────────────────────────────────────
         with tab_saved:
             if not winbacks:
