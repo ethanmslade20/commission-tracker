@@ -2238,9 +2238,37 @@ elif page == "AEP Tracker":
             st.caption(f"Showing {len(_view)} of {_total} clients")
             st.markdown("<br>", unsafe_allow_html=True)
 
-            # ── Editable table ─────────────────────────────────────────────
+            # ── Editable table (auto-saves on each edit) ───────────────────
+            # Re-apply the active filters to map edited view-rows back to the
+            # original rows positionally (name keys fail on duplicate names).
+            def _aep_autosave():
+                _state = st.session_state.get("aep_editor", {})
+                _changes = _state.get("edited_rows", {}) if isinstance(_state, dict) else {}
+                if not _changes:
+                    return
+                _merged = st.session_state.aep_df.copy()
+                _mask = pd.Series([True] * len(_merged), index=_merged.index)
+                _fs  = st.session_state.get("aep_f_state",   "All States")
+                _fc  = st.session_state.get("aep_f_carrier", "All Carriers")
+                _fst = st.session_state.get("aep_f_status",  "All Statuses")
+                if _fs  != "All States":   _mask &= _merged["State"]   == _fs
+                if _fc  != "All Carriers": _mask &= _merged["Carrier"] == _fc
+                if _fst != "All Statuses": _mask &= _merged["Status"]  == _fst
+                _orig = _merged.index[_mask].tolist()
+                for _pos_str, _vals in _changes.items():
+                    _pos = int(_pos_str)
+                    if _pos < len(_orig):
+                        _oi = _orig[_pos]
+                        if "Status" in _vals: _merged.at[_oi, "Status"] = _vals["Status"]
+                        if "Notes"  in _vals: _merged.at[_oi, "Notes"]  = _vals["Notes"]
+                if _save_aep_tab(_aep_tab, _merged):
+                    st.session_state.aep_df = _merged
+                    st.toast("Saved ✓")
+                else:
+                    st.toast("Save failed — check connection", icon="⚠️")
+
             _view_display = _view.reset_index(drop=True).copy()
-            _edited = st.data_editor(
+            st.data_editor(
                 _view_display,
                 use_container_width=True,
                 hide_index=True,
@@ -2259,29 +2287,9 @@ elif page == "AEP Tracker":
                     "Notes": st.column_config.TextColumn("Notes", width="large"),
                 },
                 key="aep_editor",
+                on_change=_aep_autosave,
             )
-
-            st.markdown("<br>", unsafe_allow_html=True)
-            _sc1, _sc2 = st.columns([1, 4])
-            with _sc1:
-                if st.button("💾 Save changes", use_container_width=True, type="primary"):
-                    # Map edits back positionally — name-based keys fail on duplicate names.
-                    # Re-apply the same filters to find which original rows are in the view.
-                    _merged = st.session_state.aep_df.copy()
-                    _mask = pd.Series([True] * len(_merged), index=_merged.index)
-                    if _f_state   != "All States":   _mask &= _merged["State"]   == _f_state
-                    if _f_carrier != "All Carriers": _mask &= _merged["Carrier"] == _f_carrier
-                    if _f_status  != "All Statuses": _mask &= _merged["Status"]  == _f_status
-                    _orig_indices = _merged.index[_mask].tolist()
-                    for _pos, _orig_idx in enumerate(_orig_indices):
-                        if _pos < len(_edited):
-                            _merged.at[_orig_idx, "Status"] = _edited.iloc[_pos]["Status"]
-                            _merged.at[_orig_idx, "Notes"]  = _edited.iloc[_pos]["Notes"]
-                    if _save_aep_tab(_aep_tab, _merged):
-                        st.session_state.aep_df = _merged
-                        st.success("Saved!")
-                    else:
-                        st.error("Save failed — check connection.")
+            st.caption("✓ Changes save automatically.")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
