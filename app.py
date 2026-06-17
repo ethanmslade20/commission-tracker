@@ -1422,7 +1422,6 @@ elif page == "Daily Tracker":
     days_active = int((daily_df["Policies"] > 0).sum())
     daily_avg   = round(total_pol / max(days_elapsed, 1), 1)
     pct_month   = round(days_active / dim * 100)
-    MONTHLY_TARGET = 100
 
     # ── KPI row (icon stat-cards) ─────────────────────────────────────────────
     st.markdown("<br>", unsafe_allow_html=True)
@@ -1435,18 +1434,6 @@ elif page == "Daily Tracker":
         st.markdown(stat_card(f"Daily Avg ({days_elapsed} days elapsed)", daily_avg, "trend", CYAN), unsafe_allow_html=True)
     with k4:
         st.markdown(stat_card(f"Days with Activity ({pct_month}% of {dim})", days_active, "calendar", PURPLE), unsafe_allow_html=True)
-
-    st.markdown("<br>", unsafe_allow_html=True)
-
-    # ── Monthly target progress (custom gradient bar) ─────────────────────────
-    prog_pct = min(total_pol / MONTHLY_TARGET, 1.0)
-    st.markdown(
-        f'<div class="tp-head"><span class="tp-title">Monthly Target Progress — '
-        f'{total_pol} / {MONTHLY_TARGET} policies ({round(prog_pct*100)}%)</span>'
-        f'<span class="tp-info">{ICONS["info"]}</span></div>'
-        f'<div class="target-track"><div class="target-fill" style="width:{prog_pct*100:.1f}%;"></div></div>',
-        unsafe_allow_html=True,
-    )
 
     st.markdown("<br>", unsafe_allow_html=True)
 
