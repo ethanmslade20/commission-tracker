@@ -280,6 +280,58 @@ st.markdown(f"""
   .progress-wrap {{ background: {T['progress_bg']}; border-radius: 999px; height: 22px; overflow: hidden; margin: 10px 0 6px; }}
   .progress-bar {{ height: 100%; border-radius: 999px; background: linear-gradient(90deg, {BLUE}, {PURPLE}); transition: width 0.6s ease; }}
 
+  /* ── Glass panels (st.container(border=True)) ── */
+  [data-testid="stVerticalBlockBorderWrapper"] {{
+    background: linear-gradient(160deg, rgba(16,28,52,0.78), rgba(10,18,38,0.72));
+    border: 1px solid rgba(96,165,250,0.22) !important;
+    border-radius: 20px !important;
+    padding: 8px 14px 10px;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.03), 0 10px 30px rgba(0,0,0,0.25);
+    transition: border-color .2s ease, box-shadow .2s ease;
+  }}
+  [data-testid="stVerticalBlockBorderWrapper"]:hover {{
+    border-color: rgba(96,165,250,0.45) !important;
+    box-shadow: 0 0 0 1px rgba(96,165,250,0.2), 0 14px 40px rgba(8,20,46,0.55), 0 0 28px rgba(59,130,246,0.12);
+  }}
+  /* Chart card header */
+  .chart-head {{ display: flex; align-items: flex-start; gap: 12px; padding: 12px 6px 6px; }}
+  .chart-head .ch-icon {{
+    width: 34px; height: 34px; border-radius: 10px; display: flex; align-items: center; justify-content: center;
+    background: linear-gradient(145deg, rgba(59,130,246,0.18), rgba(124,58,237,0.13)); border: 1px solid rgba(96,165,250,0.22);
+  }}
+  .chart-head .ch-icon svg {{ width: 17px; height: 17px; stroke: {ELEC}; fill: none; stroke-width: 2; }}
+  .chart-head .ch-title {{ font-size: 1.05rem; font-weight: 700; color: {T['text_primary']}; line-height: 1.15; }}
+  .chart-head .ch-sub {{ font-size: 0.76rem; color: {T['kpi_lbl']}; margin-top: 2px; }}
+  .chart-head .ch-dots {{ margin-left: auto; color: #64748b; font-size: 1.4rem; line-height: 1; }}
+  /* Book-age cards */
+  .ba-card {{
+    position: relative; overflow: hidden; height: 100%;
+    background: linear-gradient(160deg, rgba(20,34,62,0.9), rgba(11,21,42,0.85));
+    border: 1px solid rgba(96,165,250,0.22); border-radius: 16px; padding: 16px 16px 14px;
+    transition: transform .2s ease, border-color .2s ease, box-shadow .2s ease;
+  }}
+  .ba-card:hover {{ transform: translateY(-3px); border-color: rgba(96,165,250,0.5);
+    box-shadow: 0 12px 32px rgba(8,20,46,0.5); }}
+  .ba-card .ba-bar {{ position: absolute; top: 0; left: 0; right: 0; height: 3px; }}
+  .ba-icon {{ width: 38px; height: 38px; border-radius: 11px; display: flex; align-items: center; justify-content: center; }}
+  .ba-icon svg {{ width: 18px; height: 18px; fill: none; stroke-width: 2; }}
+  .ba-val {{ font-size: 1.95rem; font-weight: 800; color: {T['kpi_val']}; line-height: 1; margin-top: 12px; }}
+  .ba-lbl {{ font-size: 0.72rem; color: {T['kpi_lbl']}; text-transform: uppercase; letter-spacing: 0.06em; margin-top: 5px; }}
+  .ba-pct {{ font-size: 0.98rem; font-weight: 700; margin-top: 6px; }}
+  /* Insight callout */
+  .insight {{
+    display: flex; align-items: flex-start; gap: 14px; margin: 16px 6px 6px;
+    background: linear-gradient(90deg, rgba(59,130,246,0.13), rgba(59,130,246,0.04));
+    border: 1px solid rgba(96,165,250,0.3); border-radius: 14px; padding: 14px 18px;
+  }}
+  .insight .in-icon {{
+    flex: 0 0 auto; width: 34px; height: 34px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+    background: rgba(59,130,246,0.18); border: 1px solid rgba(96,165,250,0.4);
+  }}
+  .insight .in-icon svg {{ width: 18px; height: 18px; stroke: {ELEC}; fill: none; stroke-width: 2; }}
+  .insight .in-main {{ font-size: 0.95rem; font-weight: 700; color: #f1f5f9; }}
+  .insight .in-sub {{ font-size: 0.82rem; color: {T['kpi_lbl']}; margin-top: 3px; }}
+
   /* ── Mobile / tablet ── */
   @media (max-width: 768px) {{
     .dash-title {{ font-size: 1.9rem; }}
@@ -346,7 +398,19 @@ ICONS = {
     "book":     '<svg viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>',
     "search":   '<svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>',
     "bell":     '<svg viewBox="0 0 24 24"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>',
+    "clock":    '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>',
+    "info":     '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>',
+    "pie":      '<svg viewBox="0 0 24 24"><path d="M21.21 15.89A10 10 0 1 1 8 2.83"/><path d="M22 12A10 10 0 0 0 12 2v10z"/></svg>',
+    "pin":      '<svg viewBox="0 0 24 24"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>',
 }
+
+
+def chart_head(title, sub, icon_key):
+    return (
+        f'<div class="chart-head"><div class="ch-icon">{ICONS.get(icon_key, "")}</div>'
+        f'<div><div class="ch-title">{title}</div><div class="ch-sub">{sub}</div></div>'
+        f'<div class="ch-dots">⋯</div></div>'
+    )
 
 
 def _spark_vals(series, n=10):
@@ -840,10 +904,12 @@ def _chart_layout(**extra) -> dict:
     base = dict(
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(color="#e8edf5", size=12),
+        font=dict(color="#cbd5e1", size=12, family="Inter, sans-serif"),
         margin=dict(t=30, b=40, l=10, r=10),
-        xaxis=dict(gridcolor="#243664", showgrid=True, zeroline=False),
-        yaxis=dict(gridcolor="#243664", showgrid=True, zeroline=False),
+        xaxis=dict(gridcolor="rgba(96,165,250,0.12)", showgrid=True, zeroline=False),
+        yaxis=dict(gridcolor="rgba(96,165,250,0.12)", showgrid=True, zeroline=False),
+        hoverlabel=dict(bgcolor="#0f1c34", bordercolor="rgba(96,165,250,0.4)",
+                        font=dict(color="#f8fafc", family="Inter, sans-serif")),
     )
     base.update(extra)
     return base
@@ -1068,116 +1134,131 @@ if page == "Dashboard":
     st.markdown("<br>", unsafe_allow_html=True)
     st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 
-    # Book age distribution
-    st.subheader("Book age — months on book")
+    # ── Book age — months on book (glass panel) ───────────────────────────────
     if "months_on_book" in all_clients.columns or "effective_date" in all_clients.columns:
-        _mob_df = all_clients.loc[_active_mask].copy()
-        if "months_on_book" not in _mob_df.columns:
-            _mob_df["months_on_book"] = None
-        if "effective_date" in _mob_df.columns:
-            _eff = pd.to_datetime(_mob_df["effective_date"], errors="coerce")
+        _mob_src = all_clients.loc[_active_mask].copy()
+        if "months_on_book" not in _mob_src.columns:
+            _mob_src["months_on_book"] = None
+        if "effective_date" in _mob_src.columns:
+            _eff = pd.to_datetime(_mob_src["effective_date"], errors="coerce")
             _derived = ((_today - _eff).dt.days / 30.44).round(1)
-            _mob_df["months_on_book"] = _mob_df["months_on_book"].fillna(_derived)
-        _mob = _mob_df["months_on_book"].fillna(0)  # any remaining nulls → < 3 mo bucket
-    if "months_on_book" in all_clients.columns or "effective_date" in all_clients.columns:
+            _mob_src["months_on_book"] = _mob_src["months_on_book"].fillna(_derived)
+        _mob = _mob_src["months_on_book"].fillna(0)  # any remaining nulls → < 3 mo bucket
+
         _buckets = {
-            "< 3 mo":   int((_mob < 3).sum()),
-            "3–6 mo":   int(((_mob >= 3) & (_mob < 6)).sum()),
-            "6–12 mo":  int(((_mob >= 6) & (_mob < 12)).sum()),
-            "12–18 mo": int(((_mob >= 12) & (_mob < 18)).sum()),
-            "18 mo+":   int((_mob >= 18).sum()),
+            "< 3 MO":   int((_mob < 3).sum()),
+            "3–6 MO":   int(((_mob >= 3) & (_mob < 6)).sum()),
+            "6–12 MO":  int(((_mob >= 6) & (_mob < 12)).sum()),
+            "12–18 MO": int(((_mob >= 12) & (_mob < 18)).sum()),
+            "18 MO+":   int((_mob >= 18).sum()),
         }
         _total_active_p = sum(_buckets.values())
-        ba1, ba2, ba3, ba4, ba5 = st.columns(5)
-        _bucket_colors = ["#e74c3c", GOLD, BLUE, "#2d5fa6", GREEN]
-        for col, (label, count), color in zip([ba1, ba2, ba3, ba4, ba5], _buckets.items(), _bucket_colors):
-            pct = round(count / _total_active_p * 100) if _total_active_p else 0
-            with col:
-                st.markdown(
-                    f'<div class="kpi-box" style="border-top: 3px solid {color};">'
-                    f'<div class="kpi-value" style="font-size:2rem;">{count:,}</div>'
-                    f'<div class="kpi-label">{label}</div>'
-                    f'<div class="kpi-sub" style="color:{color};font-weight:600;">{pct}%</div>'
-                    f'</div>',
-                    unsafe_allow_html=True,
-                )
+        _bucket_colors = [RED, GOLD, BLUE, PURPLE, GREEN]
 
-        # Bar chart of distribution
-        _mob_df = pd.DataFrame({"Bucket": list(_buckets.keys()), "Policies": list(_buckets.values()),
-                                 "Color": _bucket_colors})
-        fig_mob = px.bar(
-            _mob_df, x="Bucket", y="Policies",
-            color="Bucket",
-            color_discrete_sequence=_bucket_colors,
-            text="Policies",
-        )
-        fig_mob.update_traces(textposition="outside")
-        _mob_max = max(_buckets.values()) if _buckets else 1
-        fig_mob.update_layout(**_chart_layout(
-            showlegend=False,
-            xaxis=dict(gridcolor="rgba(0,0,0,0)", showgrid=False, zeroline=False),
-            yaxis=dict(gridcolor="#243664", showgrid=True, zeroline=False,
-                       range=[0, _mob_max * 1.18]),
-            margin=dict(t=20, b=10, l=10, r=10),
-            height=260,
-        ))
-        st.plotly_chart(fig_mob, use_container_width=True)
+        with st.container(border=True):
+            st.markdown(chart_head("Book age — months on book",
+                                   "Active policies grouped by tenure", "calendar"),
+                        unsafe_allow_html=True)
 
-        # Risk callout
-        _new_pct = round((_buckets["< 3 mo"] + _buckets["3–6 mo"]) / _total_active_p * 100) if _total_active_p else 0
-        _veteran_pct = round(_buckets["18 mo+"] / _total_active_p * 100) if _total_active_p else 0
-        st.caption(
-            f"**{_new_pct}%** of your book is under 6 months old (higher AEP risk) &nbsp;·&nbsp; "
-            f"**{_veteran_pct}%** has been with you 18+ months (most loyal clients)"
-        )
+            cols = st.columns(5)
+            for col, (label, count), color in zip(cols, _buckets.items(), _bucket_colors):
+                pct = round(count / _total_active_p * 100) if _total_active_p else 0
+                clock = (f'<svg viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="2" '
+                         f'stroke-linecap="round" stroke-linejoin="round">'
+                         f'<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>')
+                with col:
+                    st.markdown(
+                        f'<div class="ba-card">'
+                        f'<div class="ba-bar" style="background:linear-gradient(90deg,{color},rgba(0,0,0,0));"></div>'
+                        f'<div class="ba-icon" style="background:{color}22;border:1px solid {color}55;">{clock}</div>'
+                        f'<div class="ba-val">{count:,}</div>'
+                        f'<div class="ba-lbl">{label}</div>'
+                        f'<div class="ba-pct" style="color:{color};">{pct}%</div>'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
+
+            _mob_chart = pd.DataFrame({"Bucket": list(_buckets.keys()), "Policies": list(_buckets.values())})
+            fig_mob = px.bar(_mob_chart, x="Bucket", y="Policies", text="Policies")
+            fig_mob.update_traces(
+                marker_color=_bucket_colors, marker_cornerradius=8,
+                textposition="outside", textfont=dict(size=13, color="#e2e8f0"),
+                hovertemplate="%{x}: %{y} policies<extra></extra>",
+            )
+            _mob_max = max(_buckets.values()) if any(_buckets.values()) else 1
+            fig_mob.update_layout(**_chart_layout(
+                showlegend=False,
+                xaxis=dict(gridcolor="rgba(0,0,0,0)", showgrid=False, zeroline=False, tickfont=dict(size=12)),
+                yaxis=dict(title="Policies", gridcolor="rgba(96,165,250,0.10)", showgrid=True, zeroline=False,
+                           range=[0, _mob_max * 1.2]),
+                margin=dict(t=16, b=20, l=10, r=10), height=300, bargap=0.45,
+            ))
+            st.plotly_chart(fig_mob, use_container_width=True)
+
+            _new_pct = round((_buckets["< 3 MO"] + _buckets["3–6 MO"]) / _total_active_p * 100) if _total_active_p else 0
+            _vet_pct = round(_buckets["18 MO+"] / _total_active_p * 100) if _total_active_p else 0
+            st.markdown(
+                f'<div class="insight"><div class="in-icon">{ICONS["info"]}</div>'
+                f'<div><div class="in-main">{_new_pct}% of your book is under 6 months old (higher AEP risk)</div>'
+                f'<div class="in-sub">{_vet_pct}% has been with you 18+ months (most loyal clients)</div>'
+                f'</div></div>',
+                unsafe_allow_html=True,
+            )
 
     st.markdown("<br>", unsafe_allow_html=True)
-    st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 
-    # Charts
+    # ── Carrier + State charts (side-by-side glass cards) ─────────────────────
     col_a, col_b = st.columns(2)
 
     with col_a:
-        st.subheader("Policies by Carrier")
-        if not carrier_df.empty:
-            fig = px.pie(
-                carrier_df,
-                names="Carrier",
-                values="Policies",
-                hole=0.38,
-                color_discrete_sequence=[
-                    BLUE, "#6aabff", "#2d5fa6", GREEN, GOLD,
-                    "#9b59b6", "#e67e22", "#1abc9c", "#e84393", "#95a5a6",
-                ],
-            )
-            fig.update_traces(textfont_size=11, textposition="auto")
-            fig.update_layout(**_chart_layout(
-                legend=dict(font=dict(size=11), orientation="v"),
-                margin=dict(t=10, b=10, l=10, r=10),
-            ))
-            st.plotly_chart(fig, use_container_width=True)
+        with st.container(border=True):
+            st.markdown(chart_head("Policies by Carrier",
+                                   "Carrier distribution across active policies", "pie"),
+                        unsafe_allow_html=True)
+            if not carrier_df.empty:
+                fig = px.pie(
+                    carrier_df, names="Carrier", values="Policies", hole=0.55,
+                    color_discrete_sequence=[
+                        BLUE, ELEC, "#2d5fa6", GREEN, GOLD,
+                        CYAN, "#f97316", PURPLE, "#e84393", "#94a3b8",
+                    ],
+                )
+                fig.update_traces(
+                    textfont_size=11, textposition="auto",
+                    marker=dict(line=dict(color="#0a1326", width=2)),
+                    hovertemplate="%{label}: %{value} (%{percent})<extra></extra>",
+                )
+                fig.update_layout(**_chart_layout(
+                    legend=dict(font=dict(size=11), orientation="v"),
+                    margin=dict(t=6, b=6, l=6, r=6), height=370,
+                ))
+                st.plotly_chart(fig, use_container_width=True)
 
     with col_b:
-        st.subheader("Policies by State (Top 15)")
-        if not state_df.empty:
-            top_states = state_df.sort_values("Policies", ascending=False).head(15)
-            fig2 = px.bar(
-                top_states.sort_values("Policies"),
-                x="Policies",
-                y="State",
-                orientation="h",
-                color="Policies",
-                color_continuous_scale=[[0, LNAV], [1, BLUE]],
-                text="Policies",
-            )
-            fig2.update_traces(textposition="outside")
-            fig2.update_layout(**_chart_layout(
-                coloraxis_showscale=False,
-                xaxis=dict(gridcolor="#243664", showgrid=True, zeroline=False),
-                yaxis=dict(gridcolor="rgba(0,0,0,0)", tickfont=dict(size=11)),
-                margin=dict(t=10, b=10, l=60, r=40),
-            ))
-            st.plotly_chart(fig2, use_container_width=True)
+        with st.container(border=True):
+            st.markdown(chart_head("Policies by State (Top 15)",
+                                   "Top 15 states by active policy count", "pin"),
+                        unsafe_allow_html=True)
+            if not state_df.empty:
+                top_states = state_df.sort_values("Policies", ascending=False).head(15)
+                fig2 = px.bar(
+                    top_states.sort_values("Policies"),
+                    x="Policies", y="State", orientation="h",
+                    color="Policies", color_continuous_scale=[[0, "#1b2c4d"], [1, BLUE]],
+                    text="Policies",
+                )
+                fig2.update_traces(
+                    marker_cornerradius=5, textposition="outside",
+                    textfont=dict(size=11, color="#cbd5e1"),
+                    hovertemplate="%{y}: %{x} policies<extra></extra>",
+                )
+                fig2.update_layout(**_chart_layout(
+                    coloraxis_showscale=False,
+                    xaxis=dict(title="Policies", gridcolor="rgba(96,165,250,0.10)", showgrid=True, zeroline=False),
+                    yaxis=dict(gridcolor="rgba(0,0,0,0)", tickfont=dict(size=11)),
+                    margin=dict(t=6, b=20, l=50, r=44), height=370,
+                ))
+                st.plotly_chart(fig2, use_container_width=True)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
