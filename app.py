@@ -286,11 +286,6 @@ st.markdown(f"""
   section[data-testid="stSidebar"] div[role="radiogroup"] label p {{
     font-size: 0.92rem; font-weight: 500; color: #cbd5e1;
   }}
-  /* Settings (8th item) set apart at the bottom of the menu */
-  section[data-testid="stSidebar"] div[role="radiogroup"] > label:nth-of-type(8) {{
-    margin-top: 22px; padding-top: 18px;
-    border-top: 1px solid rgba(96,165,250,0.16);
-  }}
   /* Brand logo row */
   .brand-row {{ display: flex; align-items: center; gap: 11px; padding: 8px 4px 2px; }}
   .brand-row .brand-logo {{
