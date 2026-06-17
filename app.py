@@ -551,6 +551,19 @@ def stat_card(label, value, icon_key, color):
     )
 
 
+def show_chart(fig):
+    """Render a Plotly chart: keep hover tooltips, but disable the floating
+    toolbar and all zoom/pan/drag so it's display-only."""
+    fig.update_xaxes(fixedrange=True)
+    fig.update_yaxes(fixedrange=True)
+    fig.update_layout(dragmode=False)
+    st.plotly_chart(
+        fig,
+        use_container_width=True,
+        config={"displayModeBar": False, "scrollZoom": False, "doubleClick": False},
+    )
+
+
 def _spark_vals(series, n=10):
     """Last n numeric values from a mom_df column, as a clean float list."""
     try:
@@ -1327,7 +1340,7 @@ if page == "Dashboard":
                            range=[0, _mob_max * 1.2]),
                 margin=dict(t=16, b=20, l=10, r=10), height=300, bargap=0.45,
             ))
-            st.plotly_chart(fig_mob, use_container_width=True)
+            show_chart(fig_mob)
 
             _new_pct = round((_buckets["< 3 MO"] + _buckets["3–6 MO"]) / _total_active_p * 100) if _total_active_p else 0
             _vet_pct = round(_buckets["18 MO+"] / _total_active_p * 100) if _total_active_p else 0
@@ -1366,7 +1379,7 @@ if page == "Dashboard":
                     legend=dict(font=dict(size=11), orientation="v"),
                     margin=dict(t=6, b=6, l=6, r=6), height=370,
                 ))
-                st.plotly_chart(fig, use_container_width=True)
+                show_chart(fig)
 
     with col_b:
         with st.container(border=True):
@@ -1392,7 +1405,7 @@ if page == "Dashboard":
                     yaxis=dict(gridcolor="rgba(0,0,0,0)", tickfont=dict(size=11)),
                     margin=dict(t=6, b=20, l=50, r=44), height=370,
                 ))
-                st.plotly_chart(fig2, use_container_width=True)
+                show_chart(fig2)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1434,7 +1447,7 @@ elif page == "Month-over-Month":
                 yaxis=dict(title="Members", gridcolor="rgba(96,165,250,0.10)", showgrid=True, zeroline=False),
                 margin=dict(t=20, b=30, l=20, r=55),
             ))
-            st.plotly_chart(fig, use_container_width=True)
+            show_chart(fig)
 
         st.markdown("<br>", unsafe_allow_html=True)
 
@@ -1462,15 +1475,13 @@ elif page == "Month-over-Month":
                 st.markdown(chart_head("New vs. Lost Policies",
                                        "Policies added vs. lost each month", "bars"),
                             unsafe_allow_html=True)
-                st.plotly_chart(_new_vs_lost("New Policies", "Policies Lost"),
-                                use_container_width=True)
+                show_chart(_new_vs_lost("New Policies", "Policies Lost"))
         with col_r:
             with st.container(border=True):
                 st.markdown(chart_head("New vs. Lost Members",
                                        "Members added vs. lost each month", "bars"),
                             unsafe_allow_html=True)
-                st.plotly_chart(_new_vs_lost("New Members", "Members Lost"),
-                                use_container_width=True)
+                show_chart(_new_vs_lost("New Members", "Members Lost"))
 
         st.markdown("<br>", unsafe_allow_html=True)
 
@@ -1558,7 +1569,7 @@ elif page == "Daily Tracker":
                 yaxis=dict(title="Policies", gridcolor="rgba(96,165,250,0.10)", showgrid=True, zeroline=False),
                 margin=dict(t=14, b=10, l=10, r=10),
             ))
-            st.plotly_chart(fig, use_container_width=True)
+            show_chart(fig)
 
     with col_table:
         with st.container(border=True):
@@ -1904,7 +1915,7 @@ elif page == "Goals":
                 yaxis=dict(showgrid=True, gridcolor="rgba(96,165,250,0.10)", title="Active members"),
                 legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
                 margin=dict(l=0, r=0, t=30, b=0), height=360))
-            st.plotly_chart(fig, use_container_width=True)
+            show_chart(fig)
 
         with tab_revenue:
             fig2 = go.Figure()
@@ -1917,7 +1928,7 @@ elif page == "Goals":
                 yaxis=dict(showgrid=True, gridcolor="rgba(96,165,250,0.10)", title="Annual Revenue ($)", tickprefix="$", tickformat=",.0f"),
                 legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
                 margin=dict(l=0, r=0, t=30, b=0), height=360))
-            st.plotly_chart(fig2, use_container_width=True)
+            show_chart(fig2)
     else:
         st.info("Not enough history to plot growth chart.")
 
