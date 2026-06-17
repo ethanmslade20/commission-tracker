@@ -1191,16 +1191,12 @@ with st.sidebar:
 # OVERVIEW
 # ══════════════════════════════════════════════════════════════════════════════
 if page == "Dashboard":
-    # ── Header with decorative topbar ─────────────────────────────────────────
+    # ── Header ────────────────────────────────────────────────────────────────
     st.markdown(
         f'<div class="dash-header">'
         f'<div><div class="dash-title">Dashboard</div>'
         f'<div class="dash-sub">{latest_label} Snapshot</div></div>'
-        f'<div class="topbar">'
-        f'<div class="tb-icon">{ICONS["search"]}</div>'
-        f'<div class="tb-icon">{ICONS["bell"]}</div>'
-        f'<div class="avatar">CT</div>'
-        f'</div></div>',
+        f'</div>',
         unsafe_allow_html=True,
     )
 
