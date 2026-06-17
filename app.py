@@ -1063,39 +1063,6 @@ elif page == "Daily Tracker":
     st.title("Daily Tracker")
     st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 
-    # ── New Business Sold (upcoming effective period) ─────────────────────────
-    # Counts every active/pending client whose coverage hasn't started yet,
-    # regardless of whether HealthSherpa has logged a formal submission date.
-    # This is your true production for the upcoming effective date — it matches
-    # a manually-kept sales sheet. The per-day stats further down only count
-    # policies that have a recorded submission date, so they read lower; this
-    # number is the stable, complete "how much have I sold" figure.
-    _today_nb = dt.date.today()
-    _ACTIVE_PENDING = {"Effectuated", "PendingEffectuation", "PendingFollowups"}
-    if (not all_clients.empty and "effective_date" in all_clients.columns
-            and "status" in all_clients.columns):
-        _eff = pd.to_datetime(all_clients["effective_date"], errors="coerce")
-        _nb_mask = all_clients["status"].isin(_ACTIVE_PENDING) & (_eff.dt.date > _today_nb)
-        _nb = all_clients[_nb_mask]
-        _nb_pol = int(len(_nb))
-        _nb_mem = int(pd.to_numeric(_nb["applicant_count"], errors="coerce").fillna(0).sum())
-        _future_effs = sorted(_eff[_nb_mask].dropna().dt.strftime("%m/%d/%Y").unique())
-        _eff_label = _future_effs[0] if len(_future_effs) == 1 else "upcoming dates"
-    else:
-        _nb_pol = _nb_mem = 0
-        _eff_label = "upcoming dates"
-
-    if _nb_pol > 0:
-        st.markdown(f"#### New Business — effective {_eff_label}")
-        nb1, nb2 = st.columns(2)
-        with nb1:
-            st.markdown(kpi_html("New Policies Sold", f"{_nb_pol:,}",
-                                 "active & pending, not yet effective"), unsafe_allow_html=True)
-        with nb2:
-            st.markdown(kpi_html("New Members Sold", f"{_nb_mem:,}",
-                                 "all sales, regardless of submission status"), unsafe_allow_html=True)
-        st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
-
     month_options = {
         pd.Timestamp(m + "-01").strftime("%B %Y"): m
         for m in reversed(sorted(months.keys()))
