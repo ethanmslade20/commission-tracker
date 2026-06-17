@@ -1430,11 +1430,13 @@ elif page == "Month-over-Month":
                 fill="tozeroy", fillcolor="rgba(59,130,246,0.15)",
                 hovertemplate="%{x}: %{y} members<extra></extra>",
             ))
+            _n_mom = len(mom_plot)
             fig.update_layout(**_chart_layout(
                 showlegend=False, height=360,
-                xaxis=dict(gridcolor="rgba(96,165,250,0.06)", showgrid=False, zeroline=False),
+                xaxis=dict(gridcolor="rgba(96,165,250,0.06)", showgrid=False, zeroline=False,
+                           range=[-0.6, _n_mom - 0.4]),
                 yaxis=dict(title="Members", gridcolor="rgba(96,165,250,0.10)", showgrid=True, zeroline=False),
-                margin=dict(t=10, b=30, l=10, r=24),
+                margin=dict(t=20, b=30, l=20, r=55),
             ))
             st.plotly_chart(fig, use_container_width=True)
 
