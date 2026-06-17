@@ -402,6 +402,7 @@ ICONS = {
     "info":     '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>',
     "pie":      '<svg viewBox="0 0 24 24"><path d="M21.21 15.89A10 10 0 1 1 8 2.83"/><path d="M22 12A10 10 0 0 0 12 2v10z"/></svg>',
     "pin":      '<svg viewBox="0 0 24 24"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>',
+    "bars":     '<svg viewBox="0 0 24 24"><line x1="6" y1="20" x2="6" y2="14"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="18" y1="20" x2="18" y2="10"/></svg>',
 }
 
 
@@ -1266,7 +1267,7 @@ if page == "Dashboard":
 # ══════════════════════════════════════════════════════════════════════════════
 elif page == "Month-over-Month":
     st.title("Month-over-Month Trends")
-    st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
+    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
 
     if mom_df.empty:
         st.info("No month-over-month data available yet.")
@@ -1276,79 +1277,84 @@ elif page == "Month-over-Month":
             lambda m: pd.Timestamp(str(m) + "-01").strftime("%b %Y")
         )
 
-        # Total policies over time
-        st.subheader("Total Active Policies Over Time")
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(
-            x=mom_plot["Month Label"],
-            y=mom_plot["Total Policies"],
-            mode="lines+markers+text",
-            text=mom_plot["Total Policies"],
-            textposition="top center",
-            textfont=dict(size=11, color="white"),
-            line=dict(color=BLUE, width=3),
-            marker=dict(size=9, color=BLUE, line=dict(width=2, color="white")),
-            fill="tozeroy",
-            fillcolor="rgba(66,133,244,0.12)",
-        ))
-        fig.update_layout(**_chart_layout(showlegend=False, height=320))
-        st.plotly_chart(fig, use_container_width=True)
+        # ── Total policies over time (glass card, area chart) ─────────────────
+        with st.container(border=True):
+            st.markdown(chart_head("Total Active Policies Over Time",
+                                   "Cumulative active book by month", "trend"),
+                        unsafe_allow_html=True)
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(
+                x=mom_plot["Month Label"], y=mom_plot["Total Policies"],
+                mode="lines+markers+text",
+                text=mom_plot["Total Policies"], textposition="top center",
+                textfont=dict(size=11, color="#e2e8f0"),
+                line=dict(color=ELEC, width=3, shape="spline"),
+                marker=dict(size=8, color=BLUE, line=dict(width=2, color="#dbeafe")),
+                fill="tozeroy", fillcolor="rgba(59,130,246,0.15)",
+                hovertemplate="%{x}: %{y} policies<extra></extra>",
+            ))
+            fig.update_layout(**_chart_layout(
+                showlegend=False, height=360,
+                xaxis=dict(gridcolor="rgba(96,165,250,0.06)", showgrid=False, zeroline=False),
+                yaxis=dict(title="Policies", gridcolor="rgba(96,165,250,0.10)", showgrid=True, zeroline=False),
+                margin=dict(t=10, b=30, l=10, r=24),
+            ))
+            st.plotly_chart(fig, use_container_width=True)
 
-        # New vs Lost
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        # ── New vs Lost (two glass cards) ─────────────────────────────────────
         col_l, col_r = st.columns(2)
 
+        def _new_vs_lost(added_col, lost_col):
+            f = go.Figure()
+            f.add_trace(go.Bar(x=mom_plot["Month Label"], y=mom_plot[added_col], name="Added", marker_color=GREEN))
+            f.add_trace(go.Bar(x=mom_plot["Month Label"], y=mom_plot[lost_col], name="Lost", marker_color=RED))
+            f.update_traces(marker_cornerradius=3,
+                            hovertemplate="%{x}: %{y}<extra></extra>")
+            f.update_layout(**_chart_layout(
+                barmode="group", bargap=0.3,
+                legend=dict(orientation="h", yanchor="bottom", y=1.03, x=0,
+                            bgcolor="rgba(0,0,0,0)", font=dict(size=12)),
+                height=360, margin=dict(t=34, b=44, l=10, r=10),
+                xaxis=dict(gridcolor="rgba(0,0,0,0)", showgrid=False, zeroline=False, tickangle=-45, tickfont=dict(size=10)),
+                yaxis=dict(gridcolor="rgba(96,165,250,0.10)", showgrid=True, zeroline=False),
+            ))
+            return f
+
         with col_l:
-            st.subheader("New vs. Lost Policies")
-            fig2 = go.Figure()
-            fig2.add_trace(go.Bar(
-                x=mom_plot["Month Label"], y=mom_plot["New Policies"],
-                name="Added", marker_color=GREEN,
-            ))
-            fig2.add_trace(go.Bar(
-                x=mom_plot["Month Label"], y=mom_plot["Policies Lost"],
-                name="Lost", marker_color=RED,
-            ))
-            fig2.update_layout(**_chart_layout(
-                barmode="group",
-                legend=dict(orientation="h", yanchor="bottom", y=1.01),
-                height=320,
-            ))
-            st.plotly_chart(fig2, use_container_width=True)
-
+            with st.container(border=True):
+                st.markdown(chart_head("New vs. Lost Policies",
+                                       "Policies added vs. lost each month", "bars"),
+                            unsafe_allow_html=True)
+                st.plotly_chart(_new_vs_lost("New Policies", "Policies Lost"),
+                                use_container_width=True)
         with col_r:
-            st.subheader("New vs. Lost Members")
-            fig3 = go.Figure()
-            fig3.add_trace(go.Bar(
-                x=mom_plot["Month Label"], y=mom_plot["New Members"],
-                name="Added", marker_color=GREEN,
-            ))
-            fig3.add_trace(go.Bar(
-                x=mom_plot["Month Label"], y=mom_plot["Members Lost"],
-                name="Lost", marker_color=RED,
-            ))
-            fig3.update_layout(**_chart_layout(
-                barmode="group",
-                legend=dict(orientation="h", yanchor="bottom", y=1.01),
-                height=320,
-            ))
-            st.plotly_chart(fig3, use_container_width=True)
+            with st.container(border=True):
+                st.markdown(chart_head("New vs. Lost Members",
+                                       "Members added vs. lost each month", "bars"),
+                            unsafe_allow_html=True)
+                st.plotly_chart(_new_vs_lost("New Members", "Members Lost"),
+                                use_container_width=True)
 
-        # MoM table
-        st.subheader("Full Trend Table")
-        disp = mom_plot.drop(columns=["Month"]).rename(columns={"Month Label": "Month"})
-        # Reorder so Month is first
-        cols = ["Month"] + [c for c in disp.columns if c != "Month"]
-        disp = disp[cols]
+        st.markdown("<br>", unsafe_allow_html=True)
 
-        st.dataframe(
-            disp,
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "% Growth": st.column_config.NumberColumn("% Growth", format="%.1f%%"),
-                "Net Change": st.column_config.NumberColumn("Net Change", format="%+d"),
-            },
-        )
+        # ── Full trend table (glass card) ─────────────────────────────────────
+        with st.container(border=True):
+            st.markdown(chart_head("Full Trend Table", "Month-by-month detail", "calendar"),
+                        unsafe_allow_html=True)
+            disp = mom_plot.drop(columns=["Month"]).rename(columns={"Month Label": "Month"})
+            cols = ["Month"] + [c for c in disp.columns if c != "Month"]
+            disp = disp[cols]
+            st.dataframe(
+                disp,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "% Growth": st.column_config.NumberColumn("% Growth", format="%.1f%%"),
+                    "Net Change": st.column_config.NumberColumn("Net Change", format="%+d"),
+                },
+            )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
