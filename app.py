@@ -1414,26 +1414,26 @@ elif page == "Month-over-Month":
             lambda m: pd.Timestamp(str(m) + "-01").strftime("%b %Y")
         )
 
-        # ── Total policies over time (glass card, area chart) ─────────────────
+        # ── Total members over time (glass card, area chart) ──────────────────
         with st.container(border=True):
-            st.markdown(chart_head("Total Active Policies Over Time",
-                                   "Cumulative active book by month", "trend"),
+            st.markdown(chart_head("Total Active Members Over Time",
+                                   "Cumulative active members by month", "trend"),
                         unsafe_allow_html=True)
             fig = go.Figure()
             fig.add_trace(go.Scatter(
-                x=mom_plot["Month Label"], y=mom_plot["Total Policies"],
+                x=mom_plot["Month Label"], y=mom_plot["Total Members"],
                 mode="lines+markers+text",
-                text=mom_plot["Total Policies"], textposition="top center",
+                text=mom_plot["Total Members"], textposition="top center",
                 textfont=dict(size=11, color="#e2e8f0"),
                 line=dict(color=ELEC, width=3, shape="spline"),
                 marker=dict(size=8, color=BLUE, line=dict(width=2, color="#dbeafe")),
                 fill="tozeroy", fillcolor="rgba(59,130,246,0.15)",
-                hovertemplate="%{x}: %{y} policies<extra></extra>",
+                hovertemplate="%{x}: %{y} members<extra></extra>",
             ))
             fig.update_layout(**_chart_layout(
                 showlegend=False, height=360,
                 xaxis=dict(gridcolor="rgba(96,165,250,0.06)", showgrid=False, zeroline=False),
-                yaxis=dict(title="Policies", gridcolor="rgba(96,165,250,0.10)", showgrid=True, zeroline=False),
+                yaxis=dict(title="Members", gridcolor="rgba(96,165,250,0.10)", showgrid=True, zeroline=False),
                 margin=dict(t=10, b=30, l=10, r=24),
             ))
             st.plotly_chart(fig, use_container_width=True)
