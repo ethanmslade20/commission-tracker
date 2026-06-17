@@ -2187,9 +2187,11 @@ elif page == "Re-Engage":
                     _pick = st.selectbox("Client", _opts, key="reengage_msg_pick", label_visibility="collapsed")
                     _prow = view[view["_name"] == _pick].iloc[0]
                     _first = str(_prow.get("first_name") or (_pick.split()[0] if _pick else "")).strip().title()
+                    _carrier = str(_prow.get("carrier") or "").strip()
+                    _plan = f"{_carrier} plan" if _carrier and _carrier.lower() not in ("none", "nan") else "health plan"
                     _msg = (
                         f"Hey {_first}, it's Ethan, your insurance guy. Looks like another agent "
-                        f"took over your health plan and I lost access. Did you authorize that? "
+                        f"took over your {_plan} and I lost access. Did you authorize that? "
                         f"Let me know ASAP!"
                     )
                     st.code(_msg, language=None)
