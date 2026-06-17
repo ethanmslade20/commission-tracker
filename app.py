@@ -428,6 +428,9 @@ ICONS = {
     "pie":      '<svg viewBox="0 0 24 24"><path d="M21.21 15.89A10 10 0 1 1 8 2.83"/><path d="M22 12A10 10 0 0 0 12 2v10z"/></svg>',
     "pin":      '<svg viewBox="0 0 24 24"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>',
     "bars":     '<svg viewBox="0 0 24 24"><line x1="6" y1="20" x2="6" y2="14"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="18" y1="20" x2="18" y2="10"/></svg>',
+    "target":   '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg>',
+    "refresh":  '<svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>',
+    "gear":     '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>',
 }
 
 
@@ -1509,7 +1512,7 @@ elif page == "Daily Tracker":
 # ══════════════════════════════════════════════════════════════════════════════
 elif page == "Book of Business":
     st.title("Book of Business")
-    st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
+    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
 
     # Normalise PendingEffectuation → Effectuated for display/filtering
     all_clients = all_clients.copy()
@@ -1551,13 +1554,15 @@ elif page == "Book of Business":
     inactive_ct = int((~df["status"].isin(active_sts)).sum())
     total_mem  = int(df.loc[df["status"].isin(active_sts), "applicant_count"].sum())
     with m1:
-        st.metric("Total Policies", f"{len(df):,}")
+        st.markdown(stat_card("Total Policies", f"{len(df):,}", "file", ELEC), unsafe_allow_html=True)
     with m2:
-        st.metric("Active Policies", f"{active_ct:,}")
+        st.markdown(stat_card("Active Policies", f"{active_ct:,}", "shield", GREEN), unsafe_allow_html=True)
     with m3:
-        st.metric("Inactive Policies", f"{inactive_ct:,}")
+        st.markdown(stat_card("Inactive Policies", f"{inactive_ct:,}", "minus", RED), unsafe_allow_html=True)
     with m4:
-        st.metric("Active Members", f"{total_mem:,}")
+        st.markdown(stat_card("Active Members", f"{total_mem:,}", "users", CYAN), unsafe_allow_html=True)
+
+    st.markdown("<br>", unsafe_allow_html=True)
 
     # Duplicate detection
     dup_mask = all_clients.duplicated(subset=["first_name", "last_name"], keep=False)
@@ -1572,7 +1577,7 @@ elif page == "Book of Business":
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # Table
+    # Table (glass card)
     display_cols = [
         "first_name", "last_name", "carrier", "state", "status_display",
         "effective_date", "term_date", "months_on_book", "applicant_count", "net_premium",
@@ -1581,19 +1586,22 @@ elif page == "Book of Business":
     disp = disp.rename(columns={"status_display": "status"})
     disp.columns = [c.replace("_", " ").title() for c in disp.columns]
 
-    st.dataframe(
-        disp,
-        use_container_width=True,
-        hide_index=True,
-        height=600,
-        column_config={
-            "Effective Date":  st.column_config.DateColumn("Effective Date", format="MMM D, YYYY"),
-            "Term Date":       st.column_config.DateColumn("Term Date",      format="MMM D, YYYY"),
-            "Net Premium":     st.column_config.NumberColumn("Net Premium", format="$%.2f"),
-            "Applicant Count": st.column_config.NumberColumn("Members"),
-            "Months On Book":  st.column_config.NumberColumn("Mo. on Book"),
-        },
-    )
+    with st.container(border=True):
+        st.markdown(chart_head("Client Roster", f"{len(df):,} policies in current view", "book"),
+                    unsafe_allow_html=True)
+        st.dataframe(
+            disp,
+            use_container_width=True,
+            hide_index=True,
+            height=600,
+            column_config={
+                "Effective Date":  st.column_config.DateColumn("Effective Date", format="MMM D, YYYY"),
+                "Term Date":       st.column_config.DateColumn("Term Date",      format="MMM D, YYYY"),
+                "Net Premium":     st.column_config.NumberColumn("Net Premium", format="$%.2f"),
+                "Applicant Count": st.column_config.NumberColumn("Members"),
+                "Months On Book":  st.column_config.NumberColumn("Mo. on Book"),
+            },
+        )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1608,8 +1616,8 @@ elif page == "Goals":
 
     # ── Editable goal inputs ──────────────────────────────────────────────────
     st.title("Goals")
-    st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
-    st.markdown("#### Set your goal")
+    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+    st.markdown(section_header("Set your goal", "target"), unsafe_allow_html=True)
     _prev_goal_members = st.session_state.get("goal_members", 2000)
     _prev_goal_date     = st.session_state.get("goal_date", dt.date(2027, 2, 1))
 
@@ -1739,7 +1747,7 @@ elif page == "Goals":
     )
 
     # ── Revenue snapshot ──────────────────────────────────────────────────────
-    st.subheader("Revenue — where you are now")
+    st.markdown(section_header("Revenue — where you are now", "dollar"), unsafe_allow_html=True)
     r1, r2, r3, r4 = st.columns(4)
     with r1:
         st.markdown(_goal_kpi("Monthly Recurring Revenue", f"${current_mrr:,.0f}", f"{current:,} members × ${COMMISSION_PMPM}/mo"), unsafe_allow_html=True)
@@ -1753,7 +1761,7 @@ elif page == "Goals":
     st.markdown("<br>", unsafe_allow_html=True)
 
     # ── Pace needed ───────────────────────────────────────────────────────────
-    st.subheader("Pace needed to hit goal")
+    st.markdown(section_header("Pace needed to hit goal", "target"), unsafe_allow_html=True)
     k1, k2, k3 = st.columns(3)
     with k1:
         st.markdown(_goal_kpi("New members / day", f"+{needed_per_day}", f"{days_left:,} days remaining"), unsafe_allow_html=True)
@@ -1765,7 +1773,7 @@ elif page == "Goals":
     st.markdown("<br>", unsafe_allow_html=True)
 
     # ── At your current pace ──────────────────────────────────────────────────
-    st.subheader("At your current pace")
+    st.markdown(section_header("At your current pace", "trend"), unsafe_allow_html=True)
     p1, p2, p3 = st.columns(3)
     proj_color = "green" if on_track else "red"
     proj_label = "On track ✓" if on_track else "Behind pace"
@@ -1783,7 +1791,7 @@ elif page == "Goals":
     st.markdown("<br>", unsafe_allow_html=True)
 
     # ── Growth chart ──────────────────────────────────────────────────────────
-    st.subheader("Growth vs. required pace")
+    st.markdown(section_header("Growth vs. required pace", "bars"), unsafe_allow_html=True)
 
     if not mom_df.empty and "Month" in mom_df.columns and "Total Members" in mom_df.columns:
         hist = mom_df[["Month", "Total Members"]].dropna().copy()
@@ -1807,8 +1815,12 @@ elif page == "Goals":
             fig.add_trace(go.Scatter(x=hist["month"], y=hist["active"], mode="lines+markers", name="Actual", line=dict(color=BLUE, width=3), marker=dict(size=7)))
             fig.add_trace(go.Scatter(x=pace_df["month"], y=pace_df["required"], mode="lines", name="Required pace", line=dict(color=GOLD, width=2, dash="dash")))
             fig.add_hline(y=GOAL, line_color=GREEN, line_dash="dot", line_width=1.5, annotation_text=f"Goal: {GOAL:,}", annotation_position="top left", annotation_font_color=GREEN)
-            fig.add_vline(x=TODAY.isoformat(), line_color="#8aacd6", line_dash="dot", line_width=1, annotation_text="Today", annotation_position="top right", annotation_font_color="#8aacd6")
-            fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font_color="#e8edf5", xaxis=dict(showgrid=False, title=""), yaxis=dict(showgrid=True, gridcolor="#1a2744", title="Active members"), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1), margin=dict(l=0, r=0, t=30, b=0), height=360)
+            fig.add_vline(x=TODAY.isoformat(), line_color="#94a3b8", line_dash="dot", line_width=1, annotation_text="Today", annotation_position="top right", annotation_font_color="#94a3b8")
+            fig.update_layout(**_chart_layout(
+                xaxis=dict(showgrid=False, title=""),
+                yaxis=dict(showgrid=True, gridcolor="rgba(96,165,250,0.10)", title="Active members"),
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+                margin=dict(l=0, r=0, t=30, b=0), height=360))
             st.plotly_chart(fig, use_container_width=True)
 
         with tab_revenue:
@@ -1816,8 +1828,12 @@ elif page == "Goals":
             fig2.add_trace(go.Scatter(x=hist["month"], y=hist["arr"], mode="lines+markers", name="Actual ARR", line=dict(color=GREEN, width=3), marker=dict(size=7)))
             fig2.add_trace(go.Scatter(x=pace_df["month"], y=pace_df["required_arr"], mode="lines", name="Required pace", line=dict(color=GOLD, width=2, dash="dash")))
             fig2.add_hline(y=goal_arr, line_color=GREEN, line_dash="dot", line_width=1.5, annotation_text=f"Goal ARR: ${goal_arr:,.0f}", annotation_position="top left", annotation_font_color=GREEN)
-            fig2.add_vline(x=TODAY.isoformat(), line_color="#8aacd6", line_dash="dot", line_width=1, annotation_text="Today", annotation_position="top right", annotation_font_color="#8aacd6")
-            fig2.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font_color="#e8edf5", xaxis=dict(showgrid=False, title=""), yaxis=dict(showgrid=True, gridcolor="#1a2744", title="Annual Revenue ($)", tickprefix="$", tickformat=",.0f"), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1), margin=dict(l=0, r=0, t=30, b=0), height=360)
+            fig2.add_vline(x=TODAY.isoformat(), line_color="#94a3b8", line_dash="dot", line_width=1, annotation_text="Today", annotation_position="top right", annotation_font_color="#94a3b8")
+            fig2.update_layout(**_chart_layout(
+                xaxis=dict(showgrid=False, title=""),
+                yaxis=dict(showgrid=True, gridcolor="rgba(96,165,250,0.10)", title="Annual Revenue ($)", tickprefix="$", tickformat=",.0f"),
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+                margin=dict(l=0, r=0, t=30, b=0), height=360))
             st.plotly_chart(fig2, use_container_width=True)
     else:
         st.info("Not enough history to plot growth chart.")
@@ -1827,17 +1843,18 @@ elif page == "Goals":
     # ── Weekly callout ────────────────────────────────────────────────────────
     _week_policies = round(needed_per_week / max(_avg_hh, 1))
     st.markdown(
-        f'<div style="background:#1a2744;border-left:4px solid #f39c12;padding:14px 18px;'
-        f'border-radius:6px;margin-bottom:20px;">'
-        f'<div style="font-size:0.85rem;color:#8aacd6;text-transform:uppercase;letter-spacing:0.05em;">This week\'s target</div>'
-        f'<div style="font-size:1.8rem;font-weight:700;color:#f39c12;">+{needed_per_week:.0f} members</div>'
-        f'<div style="font-size:0.9rem;color:#8aacd6;">≈ {_week_policies} policies &nbsp;·&nbsp; {weeks_left:.0f} weeks remaining to reach {GOAL:,} members by {GOAL_DATE.strftime("%b %d, %Y")}</div>'
+        f'<div style="background:linear-gradient(90deg,rgba(245,158,11,0.13),rgba(245,158,11,0.04));'
+        f'border:1px solid rgba(245,158,11,0.4);border-left:4px solid {GOLD};padding:16px 20px;'
+        f'border-radius:14px;margin-bottom:20px;">'
+        f'<div style="font-size:0.78rem;color:{T["kpi_lbl"]};text-transform:uppercase;letter-spacing:0.08em;font-weight:600;">This week\'s target</div>'
+        f'<div style="font-size:1.9rem;font-weight:800;color:{GOLD};margin-top:4px;">+{needed_per_week:.0f} members</div>'
+        f'<div style="font-size:0.9rem;color:{T["kpi_lbl"]};margin-top:3px;">≈ {_week_policies} policies &nbsp;·&nbsp; {weeks_left:.0f} weeks remaining to reach {GOAL:,} members by {GOAL_DATE.strftime("%b %d, %Y")}</div>'
         f'</div>',
         unsafe_allow_html=True,
     )
 
     # ── Monthly targets table ─────────────────────────────────────────────────
-    st.subheader("Monthly targets")
+    st.markdown(section_header("Monthly targets", "calendar"), unsafe_allow_html=True)
     breakdown_rows = []
     ref_date      = TODAY.replace(day=1)
     running_members = current
@@ -1859,7 +1876,8 @@ elif page == "Goals":
             break
 
     breakdown_df = pd.DataFrame(breakdown_rows)
-    st.dataframe(breakdown_df, use_container_width=True, hide_index=True, height=340)
+    with st.container(border=True):
+        st.dataframe(breakdown_df, use_container_width=True, hide_index=True, height=340)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1979,13 +1997,13 @@ elif page == "Re-Engage":
 
             k1, k2, k3, k4 = st.columns(4)
             with k1:
-                st.markdown(kpi_html("Need Outreach", f"{len(outreach_df):,}", sub="Not yet won back"), unsafe_allow_html=True)
+                st.markdown(stat_card("Need Outreach", f"{len(outreach_df):,}", "users", ELEC), unsafe_allow_html=True)
             with k2:
-                st.markdown(kpi_html("Lost < 30 Days", f"{last_30:,}", sub="Hottest leads"), unsafe_allow_html=True)
+                st.markdown(stat_card("Lost < 30 Days", f"{last_30:,}", "clock", RED), unsafe_allow_html=True)
             with k3:
-                st.markdown(kpi_html("Lost < 60 Days", f"{last_60:,}", sub="Still warm"), unsafe_allow_html=True)
+                st.markdown(stat_card("Lost < 60 Days", f"{last_60:,}", "clock", GOLD), unsafe_allow_html=True)
             with k4:
-                st.markdown(kpi_html("Won Back", f"{len(winbacks):,}", sub="Auto-detected saves"), unsafe_allow_html=True)
+                st.markdown(stat_card("Won Back", f"{len(winbacks):,}", "refresh", GREEN), unsafe_allow_html=True)
 
             st.markdown("<br>", unsafe_allow_html=True)
 
@@ -2097,19 +2115,23 @@ elif page == "AEP Tracker":
             _done_pct  = round((_renewed + _lost) / max(_total, 1) * 100)
 
             c1, c2, c3, c4 = st.columns(4)
-            _kpi_style = f'background:{NAVY};border-radius:10px;padding:14px 18px;text-align:center;'
-            c1.markdown(f'<div style="{_kpi_style}"><div style="font-size:1.6rem;font-weight:700;color:{GREEN}">{_renewed}</div><div style="font-size:0.75rem;color:#aaa">Renewed</div></div>', unsafe_allow_html=True)
-            c2.markdown(f'<div style="{_kpi_style}"><div style="font-size:1.6rem;font-weight:700;color:{BLUE}">{_contacted}</div><div style="font-size:0.75rem;color:#aaa">Contacted</div></div>', unsafe_allow_html=True)
-            c3.markdown(f'<div style="{_kpi_style}"><div style="font-size:1.6rem;font-weight:700;color:{GOLD}">{_not_start}</div><div style="font-size:0.75rem;color:#aaa">Not Started</div></div>', unsafe_allow_html=True)
-            c4.markdown(f'<div style="{_kpi_style}"><div style="font-size:1.6rem;font-weight:700;color:{RED}">{_lost}</div><div style="font-size:0.75rem;color:#aaa">Lost</div></div>', unsafe_allow_html=True)
+            c1.markdown(stat_card("Renewed", f"{_renewed}", "refresh", GREEN), unsafe_allow_html=True)
+            c2.markdown(stat_card("Contacted", f"{_contacted}", "users", ELEC), unsafe_allow_html=True)
+            c3.markdown(stat_card("Not Started", f"{_not_start}", "clock", GOLD), unsafe_allow_html=True)
+            c4.markdown(stat_card("Lost", f"{_lost}", "minus", RED), unsafe_allow_html=True)
 
             st.markdown("<br>", unsafe_allow_html=True)
 
-            # Progress bar
-            st.markdown(f"**Overall progress: {_renewed + _contacted} of {_total} clients touched ({_done_pct}% fully resolved)**")
+            # Progress bar (custom gradient)
             _prog_val = (_renewed + _lost) / max(_total, 1)
-            st.progress(min(_prog_val, 1.0))
-            st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
+            st.markdown(
+                f'<div class="tp-head"><span class="tp-title">Overall progress — '
+                f'{_renewed + _contacted} of {_total} clients touched ({_done_pct}% fully resolved)</span></div>'
+                f'<div class="target-track"><div class="target-fill" style="width:{min(_prog_val,1.0)*100:.1f}%;'
+                f'background:linear-gradient(90deg,{BLUE},{GREEN});box-shadow:0 0 18px rgba(34,197,94,0.4);"></div></div>',
+                unsafe_allow_html=True,
+            )
+            st.markdown("<br>", unsafe_allow_html=True)
 
             # ── Filters ────────────────────────────────────────────────────
             fc1, fc2, fc3 = st.columns(3)
@@ -2182,7 +2204,8 @@ elif page == "AEP Tracker":
 # ══════════════════════════════════════════════════════════════════════════════
 elif page == "Settings":
     st.title("Settings")
-    st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
+    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+    st.markdown(section_header("Carrier Appointments", "gear"), unsafe_allow_html=True)
     st.markdown("Toggle the carriers you are appointed with in each state. Changes apply immediately to the dashboard.")
     st.markdown("<br>", unsafe_allow_html=True)
 
