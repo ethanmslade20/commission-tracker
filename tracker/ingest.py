@@ -332,8 +332,12 @@ def ingest_file(
     if source != "healthsherpa":
         df = _dedup_against_healthsherpa(df, month_str, snapshot_dir)
 
-    # Use the CSV stem so multiple files of the same source type don't overwrite each other
-    snapshot_path = snapshot_dir / f"{month_str}_{csv_path.stem}.parquet"
+    # Use the CSV stem so multiple files of the same source type don't overwrite
+    # each other. Normalize whitespace/case so accidental filename variations
+    # (e.g. "healthsherpa .csv" with a stray space) don't create a duplicate
+    # snapshot alongside the real one, which would double-count clients.
+    stem = re.sub(r"\s+", "", csv_path.stem.strip().lower())
+    snapshot_path = snapshot_dir / f"{month_str}_{stem}.parquet"
     df.to_parquet(snapshot_path, index=False)
 
     return snapshot_path, df
