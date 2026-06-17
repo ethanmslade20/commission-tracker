@@ -332,6 +332,31 @@ st.markdown(f"""
   .insight .in-main {{ font-size: 0.95rem; font-weight: 700; color: #f1f5f9; }}
   .insight .in-sub {{ font-size: 0.82rem; color: {T['kpi_lbl']}; margin-top: 3px; }}
 
+  /* ── Stat cards (icon-left layout) ── */
+  .stat-card {{
+    display: flex; align-items: center; gap: 16px; height: 100%;
+    background: linear-gradient(160deg, rgba(20,34,62,0.9), rgba(11,21,42,0.85));
+    border: 1px solid rgba(96,165,250,0.22); border-radius: 18px; padding: 20px 20px;
+    transition: transform .2s ease, border-color .2s ease, box-shadow .2s ease;
+  }}
+  .stat-card:hover {{ transform: translateY(-3px); border-color: rgba(96,165,250,0.5);
+    box-shadow: 0 12px 32px rgba(8,20,46,0.5), 0 0 28px rgba(59,130,246,0.12); }}
+  .stat-card .sc-icon {{ flex: 0 0 auto; width: 50px; height: 50px; border-radius: 14px;
+    display: flex; align-items: center; justify-content: center; }}
+  .stat-card .sc-icon svg {{ width: 23px; height: 23px; fill: none; stroke-width: 2; }}
+  .stat-card .sc-val {{ font-size: 2rem; font-weight: 800; color: {T['kpi_val']}; line-height: 1; }}
+  .stat-card .sc-lbl {{ font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.06em;
+    color: {T['kpi_lbl']}; margin-top: 7px; font-weight: 600; }}
+  /* ── Target progress bar ── */
+  .tp-head {{ display: flex; align-items: center; gap: 9px; margin: 6px 2px 2px; }}
+  .tp-head .tp-title {{ font-size: 1.15rem; font-weight: 700; color: {T['text_primary']}; }}
+  .tp-head .tp-info svg {{ width: 16px; height: 16px; stroke: {T['kpi_lbl']}; fill: none; stroke-width: 2; vertical-align: middle; }}
+  .target-track {{ background: rgba(10,19,38,0.9); border: 1px solid rgba(96,165,250,0.18);
+    border-radius: 999px; height: 14px; overflow: hidden; margin: 10px 2px 6px; }}
+  .target-fill {{ height: 100%; border-radius: 999px;
+    background: linear-gradient(90deg, #f43f5e, #fb7185);
+    box-shadow: 0 0 18px rgba(244,63,94,0.5); transition: width .6s ease; }}
+
   /* ── Mobile / tablet ── */
   @media (max-width: 768px) {{
     .dash-title {{ font-size: 1.9rem; }}
@@ -410,7 +435,18 @@ def chart_head(title, sub, icon_key):
     return (
         f'<div class="chart-head"><div class="ch-icon">{ICONS.get(icon_key, "")}</div>'
         f'<div><div class="ch-title">{title}</div><div class="ch-sub">{sub}</div></div>'
-        f'<div class="ch-dots">⋯</div></div>'
+        f'<div class="ch-dots">⋮</div></div>'
+    )
+
+
+def stat_card(label, value, icon_key, color):
+    """Icon-left KPI card (tinted circular icon + value + label)."""
+    icon = ICONS.get(icon_key, "").replace("<svg ", f'<svg stroke="{color}" ', 1)
+    return (
+        f'<div class="stat-card">'
+        f'<div class="sc-icon" style="background:{color}22;border:1px solid {color}55;">{icon}</div>'
+        f'<div><div class="sc-val">{value}</div><div class="sc-lbl">{label}</div></div>'
+        f'</div>'
     )
 
 
@@ -1385,83 +1421,87 @@ elif page == "Daily Tracker":
     pct_month   = round(days_active / dim * 100)
     MONTHLY_TARGET = 100
 
-    # KPI row
+    # ── KPI row (icon stat-cards) ─────────────────────────────────────────────
     st.markdown("<br>", unsafe_allow_html=True)
     k1, k2, k3, k4 = st.columns(4)
     with k1:
-        st.markdown(kpi_html("Total Policies Submitted", f"{total_pol:,}"), unsafe_allow_html=True)
+        st.markdown(stat_card("Total Policies Submitted", f"{total_pol:,}", "file", BLUE), unsafe_allow_html=True)
     with k2:
-        st.markdown(kpi_html("Total Heads Sold", f"{total_heads:,}"), unsafe_allow_html=True)
+        st.markdown(stat_card("Total Heads Sold", f"{total_heads:,}", "users", ELEC), unsafe_allow_html=True)
     with k3:
-        st.markdown(kpi_html(f"Daily Avg ({days_elapsed} days elapsed)", daily_avg), unsafe_allow_html=True)
+        st.markdown(stat_card(f"Daily Avg ({days_elapsed} days elapsed)", daily_avg, "trend", CYAN), unsafe_allow_html=True)
     with k4:
-        st.markdown(kpi_html(f"Days with Activity ({pct_month}% of {dim})", days_active), unsafe_allow_html=True)
+        st.markdown(stat_card(f"Days with Activity ({pct_month}% of {dim})", days_active, "calendar", PURPLE), unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # Progress bar toward monthly target
+    # ── Monthly target progress (custom gradient bar) ─────────────────────────
     prog_pct = min(total_pol / MONTHLY_TARGET, 1.0)
-    st.subheader(f"Monthly Target Progress — {total_pol} / {MONTHLY_TARGET} policies ({round(prog_pct*100)}%)")
-    st.progress(prog_pct)
+    st.markdown(
+        f'<div class="tp-head"><span class="tp-title">Monthly Target Progress — '
+        f'{total_pol} / {MONTHLY_TARGET} policies ({round(prog_pct*100)}%)</span>'
+        f'<span class="tp-info">{ICONS["info"]}</span></div>'
+        f'<div class="target-track"><div class="target-fill" style="width:{prog_pct*100:.1f}%;"></div></div>',
+        unsafe_allow_html=True,
+    )
 
-    st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
+    st.markdown("<br>", unsafe_allow_html=True)
 
-    # Chart + table
+    # ── Chart + table (glass cards) ───────────────────────────────────────────
     col_chart, col_table = st.columns([3, 2])
 
     with col_chart:
-        st.subheader("Submissions by Day")
-        chart_df = daily_df.copy()
-        chart_df["Day"] = chart_df["Date"].dt.strftime("%b %d")
-        max_pol = max(int(daily_df["Policies"].max()), 1)
-        chart_df["Best Day"] = chart_df["Policies"] == max_pol
+        with st.container(border=True):
+            st.markdown(chart_head("Submissions by Day", "Policies submitted per day this month", "bars"),
+                        unsafe_allow_html=True)
+            chart_df = daily_df.copy()
+            chart_df["Day"] = chart_df["Date"].dt.strftime("%b %d")
+            max_pol = max(int(daily_df["Policies"].max()), 1)
+            chart_df["Best Day"] = chart_df["Policies"] == max_pol
 
-        fig = px.bar(
-            chart_df,
-            x="Day",
-            y="Policies",
-            color="Best Day",
-            color_discrete_map={True: GOLD, False: GREEN},
-            text="Policies",
-        )
-        fig.update_traces(textposition="outside", textfont_size=9)
-        fig.update_layout(**_chart_layout(
-            showlegend=False,
-            height=420,
-            xaxis=dict(gridcolor="#243664", tickangle=-45, tickfont=dict(size=9)),
-        ))
-        st.plotly_chart(fig, use_container_width=True)
+            fig = px.bar(
+                chart_df, x="Day", y="Policies",
+                color="Best Day", color_discrete_map={True: GOLD, False: GREEN},
+                text="Policies",
+            )
+            fig.update_traces(marker_cornerradius=4, textposition="outside", textfont_size=9,
+                              hovertemplate="%{x}: %{y} policies<extra></extra>")
+            fig.update_layout(**_chart_layout(
+                showlegend=False, height=430,
+                xaxis=dict(gridcolor="rgba(0,0,0,0)", showgrid=False, tickangle=-45, tickfont=dict(size=9)),
+                yaxis=dict(title="Policies", gridcolor="rgba(96,165,250,0.10)", showgrid=True, zeroline=False),
+                margin=dict(t=14, b=10, l=10, r=10),
+            ))
+            st.plotly_chart(fig, use_container_width=True)
 
     with col_table:
-        st.subheader("Day-by-Day Breakdown")
-        max_hd = max(int(daily_df["Members"].max()), 1)
+        with st.container(border=True):
+            st.markdown(chart_head("Day-by-Day Breakdown", "Daily policies & members", "calendar"),
+                        unsafe_allow_html=True)
+            max_hd = max(int(daily_df["Members"].max()), 1)
 
-        tbl = daily_df.copy()
-        tbl["Day"] = tbl["Date"].dt.strftime("%b %d")
+            tbl = daily_df.copy()
+            tbl["Day"] = tbl["Date"].dt.strftime("%b %d")
 
-        # Flag today and best days
-        if today.year == year and today.month == mnum:
-            today_str = today.strftime("%b %d")
-            tbl["Day"] = tbl["Day"].apply(
-                lambda d: f"→ {d}" if d == today_str else d
+            # Flag today
+            if today.year == year and today.month == mnum:
+                today_str = today.strftime("%b %d")
+                tbl["Day"] = tbl["Day"].apply(lambda d: f"→ {d}" if d == today_str else d)
+
+            st.dataframe(
+                tbl[["Day", "Policies", "Members"]],
+                use_container_width=True,
+                hide_index=True,
+                height=430,
+                column_config={
+                    "Policies": st.column_config.ProgressColumn(
+                        "Policies", min_value=0, max_value=max_pol, format="%d"
+                    ),
+                    "Members": st.column_config.ProgressColumn(
+                        "Members", min_value=0, max_value=max_hd, format="%d"
+                    ),
+                },
             )
-        best_days = set(daily_df.loc[daily_df["Policies"] == max_pol, "Date"].dt.strftime("%b %d"))
-        # (star shown via color in chart; table stays clean)
-
-        st.dataframe(
-            tbl[["Day", "Policies", "Members"]],
-            use_container_width=True,
-            hide_index=True,
-            height=460,
-            column_config={
-                "Policies": st.column_config.ProgressColumn(
-                    "Policies", min_value=0, max_value=max_pol, format="%d"
-                ),
-                "Members": st.column_config.ProgressColumn(
-                    "Members", min_value=0, max_value=max_hd, format="%d"
-                ),
-            },
-        )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
