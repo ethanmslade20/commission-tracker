@@ -132,24 +132,45 @@ st.markdown(f"""
   /* Nav items (radio styled as menu) */
   section[data-testid="stSidebar"] div[role="radiogroup"] {{ gap: 3px; }}
   section[data-testid="stSidebar"] div[role="radiogroup"] > label {{
-    padding: 9px 12px; border-radius: 11px; margin: 1px 0;
+    display: flex; align-items: center; gap: 13px;
+    padding: 11px 14px; border-radius: 12px; margin: 2px 0;
     transition: background .15s ease, box-shadow .15s ease;
     cursor: pointer;
+  }}
+  /* per-item icon slot (icon image set per nth-of-type below) */
+  section[data-testid="stSidebar"] div[role="radiogroup"] > label::before {{
+    content: ""; flex: 0 0 auto; width: 20px; height: 20px;
+    background-repeat: no-repeat; background-position: center; background-size: contain;
+    opacity: 0.85;
   }}
   section[data-testid="stSidebar"] div[role="radiogroup"] > label:hover {{
     background: rgba(96,165,250,0.08);
   }}
   section[data-testid="stSidebar"] div[role="radiogroup"] > label:has(input:checked) {{
-    background: linear-gradient(90deg, rgba(59,130,246,0.24), rgba(124,58,237,0.15));
-    box-shadow: inset 0 0 0 1px rgba(96,165,250,0.32);
+    background: linear-gradient(90deg, rgba(59,130,246,0.30), rgba(124,58,237,0.18));
+    box-shadow: inset 0 0 0 1px rgba(96,165,250,0.38);
+  }}
+  section[data-testid="stSidebar"] div[role="radiogroup"] > label:has(input:checked)::before {{
+    opacity: 1;
+  }}
+  section[data-testid="stSidebar"] div[role="radiogroup"] > label:has(input:checked) p {{
+    font-weight: 600; color: #ffffff;
   }}
   /* hide the radio dot so it reads as a clean nav item */
   section[data-testid="stSidebar"] div[role="radiogroup"] > label > div:first-child {{
     display: none;
   }}
   section[data-testid="stSidebar"] div[role="radiogroup"] label p {{
-    font-size: 0.92rem; font-weight: 500;
+    font-size: 0.92rem; font-weight: 500; color: #cbd5e1;
   }}
+  /* Brand logo row */
+  .brand-row {{ display: flex; align-items: center; gap: 11px; padding: 8px 4px 2px; }}
+  .brand-row .brand-logo {{
+    width: 34px; height: 34px; border-radius: 10px; display: flex; align-items: center; justify-content: center;
+    background: linear-gradient(145deg, {BLUE}, {PURPLE}); box-shadow: 0 6px 16px rgba(124,58,237,0.35);
+  }}
+  .brand-row .brand-logo svg {{ width: 18px; height: 18px; stroke: #fff; fill: none; stroke-width: 2.2; }}
+  .brand-row .brand-text {{ font-size: 1.12rem; font-weight: 800; letter-spacing: -0.01em; color: #f8fafc; }}
   /* Sidebar buttons */
   [data-testid="stSidebar"] .stButton > button {{
     background: linear-gradient(90deg, {BLUE}, {PURPLE});
@@ -280,6 +301,35 @@ st.markdown(f"""
   }}
 </style>
 """, unsafe_allow_html=True)
+
+
+# ── Sidebar nav icons — injected per item via CSS (keeps st.radio logic intact) ─
+def _nav_icon_css():
+    from urllib.parse import quote
+    def _svg(inner):
+        return ("data:image/svg+xml," + quote(
+            f"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' "
+            f"stroke='#cbd5e1' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'>{inner}</svg>"
+        ))
+    # order MUST match the st.radio options below
+    nav = [
+        "<rect x='3' y='3' width='7' height='7'/><rect x='14' y='3' width='7' height='7'/><rect x='14' y='14' width='7' height='7'/><rect x='3' y='14' width='7' height='7'/>",  # Dashboard (grid)
+        "<polyline points='23 6 13.5 15.5 8.5 10.5 1 18'/><polyline points='17 6 23 6 23 12'/>",  # Month-over-Month (trend)
+        "<rect x='3' y='4' width='18' height='18' rx='2'/><line x1='16' y1='2' x2='16' y2='6'/><line x1='8' y1='2' x2='8' y2='6'/><line x1='3' y1='10' x2='21' y2='10'/>",  # Daily Tracker (calendar)
+        "<rect x='2' y='7' width='20' height='14' rx='2'/><path d='M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16'/>",  # Book of Business (briefcase)
+        "<circle cx='12' cy='12' r='10'/><circle cx='12' cy='12' r='6'/><circle cx='12' cy='12' r='2'/>",  # Goals (target)
+        "<path d='M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2'/><circle cx='9' cy='7' r='4'/><path d='M23 21v-2a4 4 0 0 0-3-3.87'/><path d='M16 3.13a4 4 0 0 1 0 7.75'/>",  # Re-Engage (users)
+        "<path d='M12 2l8 4v6c0 5-3.5 8.5-8 10-4.5-1.5-8-5-8-10V6l8-4z'/>",  # AEP Tracker (shield)
+        "<circle cx='12' cy='12' r='3'/><path d='M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z'/>",  # Settings (gear)
+    ]
+    rules = "".join(
+        f'section[data-testid="stSidebar"] div[role="radiogroup"] > label:nth-of-type({i})::before'
+        f'{{background-image:url("{_svg(inner)}");}}'
+        for i, inner in enumerate(nav, start=1)
+    )
+    return f"<style>{rules}</style>"
+
+st.markdown(_nav_icon_css(), unsafe_allow_html=True)
 
 
 # ── UI helpers: icons, sparklines, cards, section headers ─────────────────────
@@ -892,7 +942,15 @@ latest_label = pd.Timestamp(latest_m + "-01").strftime("%B %Y")
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
-    st.markdown("## 📊 Commission Tracker")
+    st.markdown(
+        '<div class="brand-row">'
+        '<div class="brand-logo"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" '
+        'stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">'
+        '<line x1="6" y1="20" x2="6" y2="13"/><line x1="12" y1="20" x2="12" y2="8"/>'
+        '<line x1="18" y1="20" x2="18" y2="4"/></svg></div>'
+        '<div class="brand-text">Commission Tracker</div></div>',
+        unsafe_allow_html=True,
+    )
     st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 
     page = st.radio(
