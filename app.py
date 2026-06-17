@@ -35,31 +35,111 @@ if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 
 if not st.session_state.authenticated:
-    st.markdown("""
+    _lock_svg = ('<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
+                 'stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/>'
+                 '<path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>')
+    _shield_svg = ('<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
+                   'stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>'
+                   '<polyline points="9 12 11 14 15 10"/></svg>')
+    st.markdown(f"""
     <style>
-    #MainMenu, header, footer {visibility: hidden;}
-    .pin-wrap {
-        display: flex; flex-direction: column; align-items: center;
-        justify-content: center; height: 80vh; gap: 1rem;
-    }
-    .pin-title { font-size: 1.8rem; font-weight: 700; }
-    .pin-sub   { font-size: 0.95rem; opacity: 0.6; }
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+    #MainMenu, header, footer, [data-testid="stToolbar"], [data-testid="stSidebar"], [data-testid="stStatusWidget"] {{
+        visibility: hidden; display: none;
+    }}
+    html, body, [data-testid="stAppViewContainer"], .stButton, input {{
+        font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    }}
+    [data-testid="stAppViewContainer"] {{
+        background:
+          radial-gradient(circle at 35% 20%, rgba(59,130,246,0.22), transparent 32%),
+          radial-gradient(circle at 72% 35%, rgba(124,58,237,0.22), transparent 35%),
+          radial-gradient(circle at 50% 100%, rgba(37,99,235,0.12), transparent 35%),
+          #050b16;
+    }}
+    /* Glass card = the centered block container */
+    .block-container {{
+        max-width: 760px !important;
+        margin: 7vh auto 0 !important;
+        background: rgba(15,28,52,0.72);
+        border: 1px solid rgba(129,140,248,0.38);
+        border-radius: 30px;
+        box-shadow: 0 0 80px rgba(59,130,246,0.18), inset 0 1px 0 rgba(255,255,255,0.04);
+        backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
+        padding: 46px 56px 40px !important;
+    }}
+    .lock-circle {{
+        width: 92px; height: 92px; margin: 0 auto 26px; border-radius: 50%;
+        display: flex; align-items: center; justify-content: center;
+        background: linear-gradient(145deg, rgba(59,130,246,0.22), rgba(124,58,237,0.26));
+        border: 1px solid rgba(129,140,248,0.4);
+        box-shadow: 0 0 35px rgba(124,58,237,0.3);
+    }}
+    .lock-circle svg {{ width: 42px; height: 42px; stroke: #e0e7ff; }}
+    .lock-title {{
+        display: flex; align-items: center; justify-content: center; gap: 14px;
+        font-size: 2.1rem; font-weight: 800; letter-spacing: -0.02em; color: #f8fafc;
+    }}
+    .lock-title svg {{ width: 30px; height: 30px; stroke: #818cf8; }}
+    .lock-sub {{ text-align: center; color: #94a3b8; font-size: 1rem; margin-top: 12px; }}
+    .lock-divider {{
+        height: 1px; max-width: 420px; margin: 26px auto 22px;
+        background: linear-gradient(90deg, transparent, rgba(129,140,248,0.5), transparent);
+    }}
+    .lock-note {{
+        display: flex; align-items: center; justify-content: center; gap: 10px;
+        color: #94a3b8; font-size: 0.9rem; font-weight: 500; margin-top: 22px;
+    }}
+    .lock-note svg {{ width: 18px; height: 18px; stroke: #64748b; }}
+    /* PIN input */
+    [data-testid="stTextInput"] input {{
+        background: rgba(15,23,42,0.75) !important;
+        border: 1px solid rgba(129,140,248,0.25) !important;
+        border-radius: 16px !important;
+        height: 64px; color: #f8fafc !important;
+        font-size: 1.6rem; letter-spacing: 0.4em; text-align: center;
+        transition: border-color .15s ease, box-shadow .15s ease;
+    }}
+    [data-testid="stTextInput"] input:focus {{
+        border-color: rgba(96,165,250,0.7) !important;
+        box-shadow: 0 0 30px rgba(59,130,246,0.22) !important;
+    }}
+    /* Unlock button */
+    .stButton > button {{
+        background: linear-gradient(90deg, #3b82f6, #7c3aed) !important;
+        color: #fff !important; border: none !important; border-radius: 16px !important;
+        height: 60px; font-size: 1.15rem; font-weight: 700;
+        box-shadow: 0 0 35px rgba(59,130,246,0.25);
+        transition: transform .15s ease, filter .15s ease, box-shadow .15s ease;
+    }}
+    .stButton > button:hover {{
+        transform: translateY(-2px); filter: brightness(1.1);
+        box-shadow: 0 0 45px rgba(124,58,237,0.35);
+    }}
+    @media (max-width: 640px) {{
+        .block-container {{ padding: 32px 22px !important; border-radius: 22px; }}
+        .lock-title {{ font-size: 1.5rem; gap: 9px; }}
+        .lock-title svg {{ width: 22px; height: 22px; }}
+    }}
     </style>
-    <div class="pin-wrap">
-        <div class="pin-title">🔒 Ethan Slade Book of Business</div>
-        <div class="pin-sub">Enter your 4-digit PIN to continue</div>
-    </div>
+    <div class="lock-circle">{_lock_svg}</div>
+    <div class="lock-title">{_lock_svg} Ethan Slade Book of Business</div>
+    <div class="lock-sub">Enter your 4-digit PIN to continue.</div>
+    <div class="lock-divider"></div>
     """, unsafe_allow_html=True)
-    col = st.columns([1, 1, 1])[1]
-    with col:
-        pin = st.text_input("PIN", type="password", max_chars=4, placeholder="••••", label_visibility="collapsed")
-        submitted = st.button("Unlock", use_container_width=True) or (len(pin) == 4)
-        if submitted:
-            if pin == "2020":
-                st.session_state.authenticated = True
-                st.rerun()
-            elif pin:
-                st.error("Incorrect PIN")
+
+    pin = st.text_input("PIN", type="password", max_chars=4, placeholder="••••", label_visibility="collapsed")
+    submitted = st.button("🔒 Unlock", use_container_width=True) or (len(pin) == 4)
+    st.markdown(
+        f'<div class="lock-note">{_shield_svg} Your data is encrypted and secure</div>',
+        unsafe_allow_html=True,
+    )
+    if submitted:
+        if pin == "2020":
+            st.session_state.authenticated = True
+            st.rerun()
+        elif pin:
+            st.error("Incorrect PIN")
     st.stop()
 
 # ── Theme — Premium midnight fintech ────────────────────────────────────────
