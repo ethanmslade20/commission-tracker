@@ -154,12 +154,15 @@ if not st.session_state.authenticated:
         """
         <script>
         const doc = window.parent.document;
+        let focused = false;
         function setNumeric() {
             const inp = doc.querySelector('[data-testid="stTextInput"] input');
             if (inp) {
                 inp.setAttribute('inputmode', 'numeric');
                 inp.setAttribute('pattern', '[0-9]*');
                 inp.setAttribute('autocomplete', 'one-time-code');
+                inp.setAttribute('autofocus', 'autofocus');
+                if (!focused) { try { inp.focus(); } catch (e) {} focused = true; }
             }
         }
         setNumeric();
