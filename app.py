@@ -91,14 +91,18 @@ if not st.session_state.authenticated:
         color: #94a3b8; font-size: 0.9rem; font-weight: 500; margin-top: 22px;
     }}
     .lock-note svg {{ width: 18px; height: 18px; stroke: #64748b; }}
-    /* PIN input — style the BaseWeb wrapper so input + eye button align */
-    [data-testid="stTextInput"] [data-baseweb="input"],
-    [data-testid="stTextInput"] [data-baseweb="base-input"] {{
+    /* PIN input — style ONLY the outer BaseWeb wrapper (avoid double border) */
+    [data-testid="stTextInput"] [data-baseweb="input"] {{
         background: rgba(15,23,42,0.75) !important;
         border: 1px solid rgba(129,140,248,0.25) !important;
         border-radius: 16px !important;
         height: 60px; overflow: hidden;
         transition: border-color .15s ease, box-shadow .15s ease;
+    }}
+    /* inner wrapper transparent so it doesn't peek out as a second box */
+    [data-testid="stTextInput"] [data-baseweb="base-input"] {{
+        background: transparent !important; border: none !important;
+        box-shadow: none !important; border-radius: 0 !important;
     }}
     [data-testid="stTextInput"] [data-baseweb="input"]:focus-within {{
         border-color: rgba(96,165,250,0.7) !important;
