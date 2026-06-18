@@ -480,6 +480,39 @@ st.markdown(f"""
     background: linear-gradient(90deg, #f43f5e, #fb7185);
     box-shadow: 0 0 18px rgba(244,63,94,0.5); transition: width .6s ease; }}
 
+  /* ── Form inputs (number / date / text / select) — cohesive dark fields ── */
+  [data-testid="stNumberInput"] div[data-baseweb="input"],
+  [data-testid="stDateInput"] div[data-baseweb="input"] {{
+    background: rgba(15,23,42,0.6) !important;
+    border: 1px solid rgba(96,165,250,0.22) !important;
+    border-radius: 12px !important;
+    overflow: hidden;
+  }}
+  [data-testid="stNumberInput"] input,
+  [data-testid="stDateInput"] input {{
+    background: transparent !important; color: {T['text_primary']} !important;
+  }}
+  [data-testid="stNumberInput"] div[data-baseweb="input"]:focus-within,
+  [data-testid="stDateInput"] div[data-baseweb="input"]:focus-within {{
+    border-color: rgba(96,165,250,0.6) !important;
+    box-shadow: 0 0 0 1px rgba(96,165,250,0.22) !important;
+  }}
+  /* number-input stepper (− / +) buttons blended into the field */
+  [data-testid="stNumberInput"] button {{
+    background: transparent !important; border: none !important;
+    border-left: 1px solid rgba(96,165,250,0.15) !important;
+    color: {T['kpi_lbl']} !important; border-radius: 0 !important;
+  }}
+  [data-testid="stNumberInput"] button:hover {{
+    background: rgba(59,130,246,0.18) !important; color: #fff !important;
+  }}
+  /* selectbox dropdowns */
+  [data-testid="stSelectbox"] div[data-baseweb="select"] > div {{
+    background: rgba(15,23,42,0.6) !important;
+    border: 1px solid rgba(96,165,250,0.22) !important;
+    border-radius: 12px !important;
+  }}
+
   /* ── Mobile / tablet ── */
   @media (max-width: 768px) {{
     .dash-title {{ font-size: 1.9rem; }}
