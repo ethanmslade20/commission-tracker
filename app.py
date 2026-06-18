@@ -178,7 +178,7 @@ if not st.session_state.authenticated:
         unsafe_allow_html=True,
     )
     if submitted:
-        if pin == "2020":
+        if pin == "2626":
             st.session_state.authenticated = True
             st.rerun()
         elif pin:
