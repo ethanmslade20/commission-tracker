@@ -33,14 +33,18 @@ def _load_exclusions() -> list:
 
 
 def _filter_excluded(df: pd.DataFrame, exclusions: list) -> pd.DataFrame:
-    """Remove excluded clients by FFM App ID, or by name+state when no ID."""
+    """Remove excluded clients. Entries WITH an FFM App ID match by ID only
+    (precise — avoids nuking a different person who shares a common name).
+    Entries WITHOUT an App ID fall back to name+state."""
     if not exclusions or df.empty:
         return df
-    app_ids = {str(e["ffm_app_id"]).strip() for e in exclusions if e.get("ffm_app_id")}
-    name_states = {(_excl_name_key(e["first"], e["last"]), str(e["state"]).upper()) for e in exclusions}
+    _digits = lambda x: re.sub(r"[^0-9]", "", str(x))
+    app_ids = {_digits(e["ffm_app_id"]) for e in exclusions if e.get("ffm_app_id")} - {""}
+    name_states = {(_excl_name_key(e["first"], e["last"]), str(e["state"]).upper())
+                   for e in exclusions if not e.get("ffm_app_id")}
 
     def _keep(row) -> bool:
-        aid = str(row.get("ffm_app_id") or "").strip()
+        aid = _digits(row.get("ffm_app_id"))
         if aid and aid in app_ids:
             return False
         key = (_excl_name_key(row.get("first_name", ""), row.get("last_name", "")),
@@ -156,7 +160,7 @@ def run_report(settings: dict) -> None:
     # is active. Drops policies missing from the portal (unless coverage hasn't
     # started yet) and adds portal business the tracker lacks. Daily tracker is
     # built from `months` separately, so sale timing stays HealthSherpa-driven.
-    from tracker.carrier_truth import apply_ambetter_truth, apply_oscar_truth
+    from tracker.carrier_truth import apply_ambetter_truth, apply_oscar_truth, apply_uhc_truth
     all_clients, _amb = apply_ambetter_truth(all_clients)
     if _amb.get("applied"):
         print(f"  Ambetter portal truth: +{_amb['added_from_portal']} added, "
@@ -167,6 +171,11 @@ def run_report(settings: dict) -> None:
         print(f"  Oscar portal truth: +{_osc['added_from_portal']} added, "
               f"{_osc['cancelled_inactive'] + _osc['cancelled_dropped']} marked cancelled "
               f"({_osc['protected_new_sales']} new sales protected)")
+    all_clients, _uhc = apply_uhc_truth(all_clients)
+    if _uhc.get("applied"):
+        print(f"  UHC portal truth: +{_uhc['added_policies']} added, "
+              f"{_uhc['cancelled_lapsed'] + _uhc['cancelled_dropped']} marked cancelled "
+              f"({_uhc['protected_new_sales']} new sales protected)")
 
     # Compute diff to identify missing clients (those who dropped off last month)
     if prior_month:

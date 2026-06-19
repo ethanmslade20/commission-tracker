@@ -267,3 +267,100 @@ def apply_oscar_truth(all_clients: pd.DataFrame,
         "protected_new_sales": n_protected,
         "added_from_portal": len(new_rows),
     }
+
+
+# ── UnitedHealthcare ──────────────────────────────────────────────────────────
+# UHC export: one row per MEMBER, planStatus A=active / I=inactive(lapsed),
+# grouped into policies by "IFP - FFM APP ID". No subscriber ID that matches
+# HealthSherpa and no coverage dates, so match by name/phone and use the
+# tracker's own effective date for the new-sale safety net.
+def apply_uhc_truth(all_clients: pd.DataFrame,
+                    carrier_books_dir: str = "carrier_books",
+                    today=None):
+    """Return (adjusted_all_clients, summary_dict). No-op if no UHC book."""
+    today = pd.Timestamp(today) if today else pd.Timestamp.today().normalize()
+    book = Path(carrier_books_dir) / "uhc_source.xlsx"
+    if all_clients.empty or not book.exists():
+        return all_clients, {"applied": False}
+
+    u = pd.read_excel(book, header=2).dropna(subset=["memberFirstName", "memberLastName"])
+    u["nm"] = u.apply(lambda r: _name_key(r["memberFirstName"], r["memberLastName"]), axis=1)
+    u["ph"] = u["memberPhone"].apply(_phone)
+    u["aid"] = u["IFP - FFM APP ID"].apply(_clean_id)
+    ua, ui = u[u["planStatus"] == "A"], u[u["planStatus"] == "I"]
+
+    A = set(ua["nm"]) | (set(ua["ph"]) - {""})
+    I = set(ui["nm"]) | (set(ui["ph"]) - {""})
+
+    ac = all_clients.copy()
+    ac["_nm"] = ac.apply(lambda r: _name_key(r.get("first_name", ""), r.get("last_name", "")), axis=1)
+    ac["_ph"] = ac["phone"].apply(_phone) if "phone" in ac.columns else ""
+    ac["_eff"] = pd.to_datetime(ac.get("effective_date"), errors="coerce")
+    is_uhc = ac["carrier"].astype(str).str.contains("united", case=False, na=False)
+    is_active = ac["status"].isin(_ACTIVE)
+
+    def _m(nm, ph, S):
+        return bool(nm in S or (ph in S if ph else False))
+
+    dropped = _load_dropped(Path("data/uhc_dropped.json"))
+    today_iso = today.strftime("%Y-%m-%d")
+    n_lapsed = n_dropped = n_protected = 0
+
+    for idx in ac.index[is_uhc & is_active]:
+        nm, ph = ac.at[idx, "_nm"], ac.at[idx, "_ph"]
+        if _m(nm, ph, A):
+            continue  # active in UHC
+        eff = ac.at[idx, "_eff"]
+        if _m(nm, ph, I):
+            ac.at[idx, "status"] = "Cancelled"          # UHC marks inactive
+            key = ph or nm
+            first_seen = dropped.setdefault(key, today_iso)
+            if "term_date" in ac.columns:
+                ac.at[idx, "term_date"] = pd.Timestamp(first_seen)
+            n_lapsed += 1
+        elif pd.notna(eff) and eff > today:
+            n_protected += 1                            # new sale not yet in UHC export
+        else:
+            ac.at[idx, "status"] = "Cancelled"          # gone from UHC entirely
+            key = ph or nm
+            first_seen = dropped.setdefault(key, today_iso)
+            if "term_date" in ac.columns:
+                ac.at[idx, "term_date"] = pd.Timestamp(first_seen)
+            n_dropped += 1
+
+    _save_dropped(dropped, Path("data/uhc_dropped.json"))
+
+    # Add UHC-active business missing from tracker, grouped into policies by App ID
+    t_keys = set(ac.loc[is_uhc, "_nm"]) | (set(ac.loc[is_uhc, "_ph"]) - {""})
+    miss = ua[ua.apply(lambda r: not _m(r["nm"], r["ph"], t_keys), axis=1)].copy()
+    miss["grp"] = miss.apply(lambda r: r["aid"] if r["aid"] else f"solo_{r.name}", axis=1)
+    new_rows = []
+    for _, g in miss.groupby("grp"):
+        rep = g.iloc[0]
+        new_rows.append({
+            "first_name": rep["memberFirstName"],
+            "last_name": rep["memberLastName"],
+            "carrier": "UnitedHealthcare",
+            "effective_date": pd.NaT,
+            "term_date": pd.NaT,
+            "status": "Effectuated",
+            "state": rep.get("memberState"),
+            "ffm_app_id": "",
+            "applicant_count": len(g),
+            "months_on_book": 0.0,
+            "phone": rep.get("memberPhone"),
+        })
+
+    ac = ac.drop(columns=["_nm", "_ph", "_eff"])
+    if new_rows:
+        ac = pd.concat([ac, pd.DataFrame(new_rows)], ignore_index=True)
+
+    return ac, {
+        "applied": True,
+        "portal_active_members": len(ua),
+        "portal_inactive_members": len(ui),
+        "cancelled_lapsed": n_lapsed,
+        "cancelled_dropped": n_dropped,
+        "protected_new_sales": n_protected,
+        "added_policies": len(new_rows),
+    }
