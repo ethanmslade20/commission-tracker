@@ -2,6 +2,9 @@
 Builds all DataFrames from snapshots and pushes them to Google Sheets.
 """
 
+import re
+import json
+import unicodedata
 from pathlib import Path
 
 import pandas as pd
@@ -9,6 +12,42 @@ import pandas as pd
 from tracker.diff import build_all_clients, compute_diff
 from tracker.ingest import load_all_snapshots
 from tracker.sheets import update_sheet
+
+
+def _excl_name_key(first, last) -> str:
+    s = f"{first} {last}".lower()
+    s = unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode()
+    return re.sub(r"[^a-z]", "", s)
+
+
+def _load_exclusions() -> list:
+    """Clients to drop from everything (e.g. HealthSherpa rows the agent never
+    actually sold, confirmed absent from CRM). See data/excluded_clients.json."""
+    p = Path(__file__).parent.parent / "data" / "excluded_clients.json"
+    if not p.exists():
+        return []
+    try:
+        return json.loads(p.read_text())
+    except Exception:
+        return []
+
+
+def _filter_excluded(df: pd.DataFrame, exclusions: list) -> pd.DataFrame:
+    """Remove excluded clients by FFM App ID, or by name+state when no ID."""
+    if not exclusions or df.empty:
+        return df
+    app_ids = {str(e["ffm_app_id"]).strip() for e in exclusions if e.get("ffm_app_id")}
+    name_states = {(_excl_name_key(e["first"], e["last"]), str(e["state"]).upper()) for e in exclusions}
+
+    def _keep(row) -> bool:
+        aid = str(row.get("ffm_app_id") or "").strip()
+        if aid and aid in app_ids:
+            return False
+        key = (_excl_name_key(row.get("first_name", ""), row.get("last_name", "")),
+               str(row.get("state") or "").upper())
+        return key not in name_states
+
+    return df[df.apply(_keep, axis=1)].copy()
 
 _ALL_CLIENTS_COLS = ["first_name", "last_name", "carrier", "effective_date", "term_date",
                      "status", "state", "ffm_app_id", "net_premium", "applicant_count", "months_on_book"]
@@ -89,6 +128,15 @@ def run_report(settings: dict) -> None:
     if not months:
         print("No snapshots found. Run `track ingest` first.")
         return
+
+    # Drop excluded clients (never-sold HealthSherpa noise) from every snapshot
+    # so they vanish from the book, dashboard, Re-Engage, AND daily tracker.
+    _exclusions = _load_exclusions()
+    if _exclusions:
+        _before = sum(len(d) for d in months.values())
+        months = {m: _filter_excluded(d, _exclusions) for m, d in months.items()}
+        _removed = _before - sum(len(d) for d in months.values())
+        print(f"  Excluded clients: removed {_removed} row(s) across snapshots ({len(_exclusions)} on the list)")
 
     sorted_months = sorted(months.keys())
     latest_month = sorted_months[-1]
