@@ -83,6 +83,8 @@ sources:
       date_effectuated:     "date_effectuated"
       term_date:            "date_cancelled"
       agent:                "agent"
+      email:                "email"
+      phone:                "phone"
 
     # Only keep rows where the writing agent is Ethan Slade.
     # Matches "Slade, Ethan", "Ethan Slade", or either case variation.

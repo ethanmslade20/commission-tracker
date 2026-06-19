@@ -53,6 +53,94 @@ def _load_carrier_csv(path: Path) -> pd.DataFrame:
     return pd.read_csv(p)
 
 
+def _email(x) -> str:
+    x = str(x).strip().lower()
+    return x if "@" in x else ""
+
+
+def _phone(x) -> str:
+    d = re.sub(r"[^0-9]", "", str(x))
+    return d[-10:] if len(d) >= 10 else ""
+
+
+def _tracker_active(snapshot_dir: str, carrier_substr: str) -> pd.DataFrame:
+    """Tracker's active clients for a carrier (full history, appointment-filtered)."""
+    months = load_all_snapshots(Path(snapshot_dir))
+    allc = _filter_by_appointments(pd.concat(months.values(), ignore_index=True), _load_appointments())
+    t = allc[
+        allc["status"].isin(_ACTIVE)
+        & allc["carrier"].astype(str).str.contains(carrier_substr, case=False, na=False)
+    ].copy()
+    t["nm"] = t.apply(lambda r: _name_key(r.get("first_name", ""), r.get("last_name", "")), axis=1)
+    t["em"] = t.get("email", "").apply(_email) if "email" in t.columns else ""
+    t["ph"] = t.get("phone", "").apply(_phone) if "phone" in t.columns else ""
+    t["eff"] = pd.to_datetime(t.get("effective_date"), errors="coerce")
+    return t.sort_values("eff").drop_duplicates("nm", keep="last")
+
+
+def reconcile_oscar(oscar_path, snapshot_dir="snapshots", out_dir=".", today=None) -> dict:
+    """Compare an Oscar book export against the tracker's active Oscar book.
+    Matches by name / email / phone (Oscar has no FFM subscriber ID)."""
+    today = pd.Timestamp(today) if today else pd.Timestamp.today().normalize()
+    out = Path(out_dir); out.mkdir(parents=True, exist_ok=True)
+
+    t = _tracker_active(snapshot_dir, "oscar")
+
+    o = _load_carrier_csv(oscar_path)
+    o["nm"] = o["Member name"].apply(lambda n: _name_key(*str(n).split(" ", 1)) if " " in str(n) else _name_key(n, ""))
+    o["em"] = o["Email"].apply(_email)
+    o["ph"] = o["Phone number"].apply(_phone)
+    o["start"] = pd.to_datetime(o["Coverage start date"], errors="coerce")
+    o["Months On Book"] = ((today - o["start"]).dt.days / 30.44).round(1)
+    o_active = o[o["Policy status"] != "Inactive"]
+    o_inact = o[o["Policy status"] == "Inactive"]
+
+    def _keys(df):
+        return set(df["nm"]) | (set(df["em"]) - {""}) | (set(df["ph"]) - {""})
+
+    A, I, T = _keys(o_active), _keys(o_inact), _keys(t)
+
+    def _m(r, S):
+        return bool(r["nm"] in S or (r["em"] in S if r["em"] else False) or (r["ph"] in S if r["ph"] else False))
+
+    lapsed_keys = t[t.apply(lambda r: (not _m(r, A)) and _m(r, I), axis=1)]
+    not_found = t[t.apply(lambda r: (not _m(r, A)) and (not _m(r, I)), axis=1)]
+
+    lk = _keys(lapsed_keys)
+    winback = o_inact[o_inact.apply(lambda r: r["nm"] in lk or r["em"] in lk or r["ph"] in lk, axis=1)].copy()
+    missing = o_active[o_active.apply(lambda r: not _m(r, T), axis=1)].copy()
+
+    _cols = ["Member name", "State", "Plan", "Coverage start date", "Coverage end date",
+             "Months On Book", "Policy status", "Phone number", "Email", "Lives"]
+
+    def _slim(df):
+        return df[[c for c in _cols if c in df.columns]]
+
+    stamp = today.strftime("%Y-%m-%d")
+    f_win = out / f"oscar_winback_lapsed_{stamp}.csv"
+    f_mis = out / f"oscar_missing_from_tracker_{stamp}.csv"
+    f_rev = out / f"oscar_not_in_book_review_{stamp}.csv"
+    _slim(winback).to_csv(f_win, index=False)
+    _slim(missing).to_csv(f_mis, index=False)
+    rev = not_found.copy()
+    rev["months_on_book"] = ((today - rev["eff"]).dt.days / 30.44).round(1)
+    rev[["first_name", "last_name", "state", "carrier", "effective_date",
+         "months_on_book", "status", "ffm_app_id"]].to_csv(f_rev, index=False)
+
+    return {
+        "tracker_active": len(t),
+        "oscar_active": len(o_active),
+        "oscar_inactive": len(o_inact),
+        "confirmed_active": int(t.apply(lambda r: _m(r, A), axis=1).sum()),
+        "lapsed_winbacks": len(winback),
+        "missing_from_tracker": len(missing),
+        "not_in_book_review": len(not_found),
+        "winback_file": str(f_win),
+        "missing_file": str(f_mis),
+        "review_file": str(f_rev),
+    }
+
+
 def _tracker_active_ambetter(snapshot_dir: str) -> pd.DataFrame:
     """The tracker's current view of active Ambetter clients (full history,
     appointment-filtered, deduped by name)."""

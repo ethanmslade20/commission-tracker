@@ -247,6 +247,35 @@ def reconcile_ambetter_cmd(path: Optional[str], out: Optional[str]):
     click.echo(f"  ? Tracker-active not matched: {r['unmatched_tracker_active']} (likely name/ID differences)")
 
 
+@cli.command("reconcile-oscar")
+@click.argument("path", required=False)
+@click.option("--out", "-o", default=None, help="Output folder (default: ~/Desktop/Carrier Reports).")
+def reconcile_oscar_cmd(path: Optional[str], out: Optional[str]):
+    """Cross-check an Oscar book export against the tracker's active Oscar book.
+    With no PATH, auto-uses the most recent 'Oscar*.csv' on the Desktop."""
+    from pathlib import Path as _P
+    from tracker.reconcile import reconcile_oscar
+
+    if not path:
+        cands = sorted((_P.home() / "Desktop").glob("Oscar*.csv"), key=lambda f: f.stat().st_mtime)
+        if not cands:
+            raise click.ClickException("No 'Oscar*.csv' found on the Desktop. Pass a path explicitly.")
+        path = str(cands[-1])
+        click.echo(f"Using latest Oscar export: {path}")
+
+    out_dir = out or str(_P.home() / "Desktop" / "Carrier Reports")
+    _P(out_dir).mkdir(parents=True, exist_ok=True)
+    r = reconcile_oscar(path, out_dir=out_dir)
+    click.echo("")
+    click.echo("=== Oscar Reconciliation ===")
+    click.echo(f"  Tracker active Oscar:        {r['tracker_active']}")
+    click.echo(f"  Oscar book — active:         {r['oscar_active']}   inactive: {r['oscar_inactive']}")
+    click.echo(f"  ✓ Confirmed active (both):    {r['confirmed_active']}")
+    click.echo(f"  🔴 Lapsed (win-back list):    {r['lapsed_winbacks']}   -> {r['winback_file']}")
+    click.echo(f"  ➕ In Oscar, not tracker:     {r['missing_from_tracker']}   -> {r['missing_file']}")
+    click.echo(f"  ❓ In tracker, not in Oscar:  {r['not_in_book_review']}   -> {r['review_file']}")
+
+
 @cli.command("aep-init")
 @click.option("--year", default=None, type=int, help="AEP year (e.g. 2027). Defaults to next calendar year.")
 def aep_init(year: Optional[int]):

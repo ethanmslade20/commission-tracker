@@ -45,6 +45,8 @@ EXTRA_COLS = [
     "date_effectuated",
     "term_date",
     "agent",
+    "email",
+    "phone",
 ]
 
 
