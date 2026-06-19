@@ -1077,10 +1077,12 @@ def build_daily_df(df: pd.DataFrame, month_str: str) -> pd.DataFrame:
     if "Date" in df.columns and "Policies" in df.columns and "submission_date" not in df.columns:
         return df.reset_index(drop=True)
 
-    if "submission_date" not in df.columns or df["submission_date"].isna().all():
+    from tracker.sheets import _coalesce_sale_date
+    sub = _coalesce_sale_date(df)
+    if sub.isna().all():
         return pd.DataFrame({"Date": all_days, "Policies": 0, "Members": 0})
 
-    sub = pd.to_datetime(df["submission_date"], errors="coerce").dt.normalize()
+    sub = sub.dt.normalize()
     mem = pd.to_numeric(
         df.get("applicant_count", pd.Series([1] * len(df))), errors="coerce"
     ).fillna(1)

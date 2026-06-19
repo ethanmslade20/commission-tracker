@@ -162,6 +162,32 @@ def _write_all_clients_tab(
 
 
 
+# Agent's local timezone — used to place UTC creation timestamps on the right
+# calendar day. (Single-tenant for now; would become per-agent in a SaaS.)
+_AGENT_TZ = "America/Denver"
+
+
+def _coalesce_sale_date(df: pd.DataFrame) -> pd.Series:
+    """Date a policy counts as 'sold': submission_date, falling back to the
+    application creation date (converted from UTC to the agent's local day)
+    when HealthSherpa left submission_date blank. Returns a tz-naive Series."""
+    if "submission_date" in df.columns:
+        sub = pd.to_datetime(df["submission_date"], errors="coerce")
+        if getattr(getattr(sub, "dt", None), "tz", None) is not None:
+            sub = sub.dt.tz_localize(None)
+    else:
+        sub = pd.Series(pd.NaT, index=df.index)
+
+    if "created_date" in df.columns:
+        created = pd.to_datetime(df["created_date"], errors="coerce", utc=True)
+        try:
+            created = created.dt.tz_convert(_AGENT_TZ).dt.tz_localize(None)
+        except (TypeError, AttributeError):
+            pass
+        sub = sub.fillna(created)
+    return sub
+
+
 def _build_daily_tracker_data(df: pd.DataFrame, month_str: str) -> pd.DataFrame:
     """Return a DataFrame with one row per calendar day of month_str.
     Columns: Date (Mon DD), Policies (count), Members (applicant_count sum).
@@ -171,14 +197,20 @@ def _build_daily_tracker_data(df: pd.DataFrame, month_str: str) -> pd.DataFrame:
     days_in_month = calendar.monthrange(year, month)[1]
     all_days = pd.date_range(f"{month_str}-01", periods=days_in_month, freq="D")
 
-    if "submission_date" not in df.columns or df["submission_date"].isna().all():
+    # A submitted policy counts as "sold" on its submission date; when
+    # HealthSherpa leaves submission_date blank (common for claimed apps that
+    # are nonetheless submitted), fall back to the application creation date so
+    # every submitted sale lands on the day it was written.
+    sub = _coalesce_sale_date(df)
+
+    if sub.isna().all():
         return pd.DataFrame({
             "Date":     [d.strftime("%b %d") for d in all_days],
             "Policies": [0] * days_in_month,
             "Members":  [0] * days_in_month,
         })
 
-    sub = pd.to_datetime(df["submission_date"], errors="coerce").dt.normalize()
+    sub = sub.dt.normalize()
     mem = pd.to_numeric(df.get("applicant_count", pd.Series([1] * len(df))), errors="coerce").fillna(1)
 
     month_start = pd.Timestamp(f"{month_str}-01")

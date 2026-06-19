@@ -41,6 +41,7 @@ EXTRA_COLS = [
     "applicant_count",
     "missing_count_flag",
     "submission_date",
+    "created_date",
     "date_effectuated",
     "term_date",
     "agent",

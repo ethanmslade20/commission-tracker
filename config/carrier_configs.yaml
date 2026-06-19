@@ -79,6 +79,7 @@ sources:
       # applicant_count = people enrolled on this plan; no per-member active status in HealthSherpa
       applicant_count:      "applicant_count"
       submission_date:      "submission_date"
+      created_date:         "application_creation_date"
       date_effectuated:     "date_effectuated"
       term_date:            "date_cancelled"
       agent:                "agent"
@@ -87,7 +88,7 @@ sources:
     # Matches "Slade, Ethan", "Ethan Slade", or either case variation.
     require_agent: "Ethan Slade"
 
-    date_columns:   ["effective_date", "submission_date", "date_effectuated", "term_date"]
+    date_columns:   ["effective_date", "submission_date", "created_date", "date_effectuated", "term_date"]
     amount_columns: ["commission", "net_premium", "subsidy", "applicant_count"]
 
   # Illinois / Georgia Access portal exports.
