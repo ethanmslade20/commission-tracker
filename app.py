@@ -2206,6 +2206,11 @@ elif page == "Re-Engage":
                 disp["Days Since Lost"]= view["days_since_lost"].fillna(0).astype(int)
                 disp["Mo. on Book"]    = view["months_on_book"].fillna("?").astype(str).str.replace(r"\.0$", "", regex=True)
                 disp["Members"]        = view["applicant_count"].fillna(1).astype(int) if "applicant_count" in view.columns else 1
+                if "net_premium" in view.columns:
+                    _prem = pd.to_numeric(view["net_premium"], errors="coerce")
+                    disp["Premium"]    = _prem.apply(lambda v: f"${v:,.2f}" if pd.notna(v) else "—")
+                disp["Reason"]         = (view["cancel_reason"].fillna("").replace("", "—")
+                                          if "cancel_reason" in view.columns else "—")
                 disp["Urgency"]        = view["Urgency"]
 
                 def _row_color(row):

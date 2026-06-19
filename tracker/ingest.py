@@ -47,6 +47,7 @@ EXTRA_COLS = [
     "agent",
     "email",
     "phone",
+    "cancel_notes",
 ]
 
 

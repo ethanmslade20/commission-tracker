@@ -85,6 +85,7 @@ sources:
       agent:                "agent"
       email:                "email"
       phone:                "phone"
+      cancel_notes:         "policy_status_notes"
 
     # Only keep rows where the writing agent is Ethan Slade.
     # Matches "Slade, Ethan", "Ethan Slade", or either case variation.

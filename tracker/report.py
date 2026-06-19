@@ -54,7 +54,8 @@ def _filter_excluded(df: pd.DataFrame, exclusions: list) -> pd.DataFrame:
     return df[df.apply(_keep, axis=1)].copy()
 
 _ALL_CLIENTS_COLS = ["first_name", "last_name", "carrier", "effective_date", "term_date",
-                     "status", "state", "ffm_app_id", "net_premium", "applicant_count", "months_on_book"]
+                     "status", "state", "ffm_app_id", "net_premium", "applicant_count", "months_on_book",
+                     "cancel_reason"]
 
 _ACTIVE_COLS = ["first_name", "last_name", "carrier", "effective_date",
                 "status", "state", "ffm_app_id", "net_premium", "applicant_count", "months_on_book"]
@@ -182,6 +183,19 @@ def run_report(settings: dict) -> None:
         print(f"  Anthem portal truth: +{_ant['added_policies']} added, "
               f"{_ant['cancelled_lapsed'] + _ant['cancelled_dropped']} marked cancelled "
               f"({_ant['protected_new_sales']} new sales protected)")
+
+    # Cancellation reason for the Re-Engage view: use HealthSherpa's own notes
+    # ("Canceled at member's request" etc.) when present, else a derived
+    # "Lapsed — <carrier>" for carrier-truth lapses.
+    if not all_clients.empty:
+        _churn = all_clients["status"].isin(["Cancelled", "Terminated"])
+        _notes = (all_clients["cancel_notes"].fillna("").astype(str).str.strip()
+                  if "cancel_notes" in all_clients.columns
+                  else pd.Series("", index=all_clients.index))
+        _notes = _notes.replace({"nan": "", "-": "", "None": ""})
+        _derived = "Lapsed — " + all_clients["carrier"].astype(str)
+        all_clients["cancel_reason"] = ""
+        all_clients.loc[_churn, "cancel_reason"] = _notes.where(_notes != "", _derived)[_churn]
 
     # Compute diff to identify missing clients (those who dropped off last month)
     if prior_month:
