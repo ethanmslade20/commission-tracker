@@ -214,14 +214,15 @@ def report():
 
 @cli.command("reconcile-ambetter")
 @click.argument("path")
-@click.option("--out", "-o", default=None, help="Output folder for the CSV lists (default: same folder as the export).")
+@click.option("--out", "-o", default=None, help="Output folder for the CSV lists (default: ~/Desktop/Carrier Reports).")
 def reconcile_ambetter_cmd(path: str, out: Optional[str]):
     """Cross-check an Ambetter 'All policies' export (zip or csv) against the
     tracker's active Ambetter book. Read-only — flags lapses and missing business."""
     from pathlib import Path as _P
     from tracker.reconcile import reconcile_ambetter
 
-    out_dir = out or str(_P(path).resolve().parent)
+    out_dir = out or str(_P.home() / "Desktop" / "Carrier Reports")
+    _P(out_dir).mkdir(parents=True, exist_ok=True)
     r = reconcile_ambetter(path, out_dir=out_dir)
     click.echo("")
     click.echo("=== Ambetter Reconciliation ===")

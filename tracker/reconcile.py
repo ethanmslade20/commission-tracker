@@ -118,8 +118,9 @@ def reconcile_ambetter(ambetter_path, snapshot_dir="snapshots",
     def _slim(df):
         return df[[c for c in _cols if c in df.columns]]
 
-    f_winback = out / "ambetter_winback_lapsed.csv"
-    f_missing = out / "ambetter_missing_from_tracker.csv"
+    _stamp = today.strftime("%Y-%m-%d")
+    f_winback = out / f"ambetter_winback_lapsed_{_stamp}.csv"
+    f_missing = out / f"ambetter_missing_from_tracker_{_stamp}.csv"
     _slim(winback).to_csv(f_winback, index=False)
     _slim(missing).to_csv(f_missing, index=False)
 
