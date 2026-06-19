@@ -1323,15 +1323,18 @@ if page == "Dashboard":
                     unsafe_allow_html=True)
 
     # ── COMMISSION FORECAST ───────────────────────────────────────────────────
+    # Use the SAME member/policy counts shown in the Book Snapshot cards so the
+    # commission always equals $PMPM × the displayed Total Members.
     _ACTIVE_STS = {"Effectuated", "PendingEffectuation", "PendingFollowups"}
-    _PMPM = 23
     _active_mask = all_clients["status"].isin(_ACTIVE_STS) if "status" in all_clients.columns else pd.Series(False, index=all_clients.index)
-    _total_members = int(all_clients.loc[_active_mask, "applicant_count"].sum()) if "applicant_count" in all_clients.columns else kpis.get("Total Members", 0)
+    _PMPM = 23
+    _total_members = int(kpis.get("Total Members", 0) or 0)
+    _active_policies = int(kpis.get("Total Active Policies", 0) or 0)
     _mrr = _total_members * _PMPM
     _arr = _mrr * 12
     _today = pd.Timestamp(dt.date.today())
 
-    _per_policy = f"${_mrr / kpis['Total Active Policies']:.2f}" if kpis.get('Total Active Policies') else "—"
+    _per_policy = f"${_mrr / _active_policies:.2f}" if _active_policies else "—"
     _mem_spark = sparkline(_spark_vals(mom_df["Total Members"]) if "Total Members" in mom_df.columns else [], color="#c4b5fd")
 
     st.markdown(section_header("Commission Forecast", "dollar"), unsafe_allow_html=True)
