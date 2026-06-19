@@ -203,6 +203,16 @@ def _build_daily_tracker_data(df: pd.DataFrame, month_str: str) -> pd.DataFrame:
     # every submitted sale lands on the day it was written.
     sub = _coalesce_sale_date(df)
 
+    # Option A — count only NEW business: policies whose coverage starts AFTER
+    # the day they were sold. This excludes older policies the agent merely
+    # claimed/serviced during the month (effective in the past), so the daily
+    # tracker matches "what I actually sold this month".
+    if "effective_date" in df.columns:
+        _eff = pd.to_datetime(df["effective_date"], errors="coerce")
+        _is_new = (_eff > sub).fillna(False)
+        df = df[_is_new]
+        sub = sub[_is_new]
+
     if sub.isna().all():
         return pd.DataFrame({
             "Date":     [d.strftime("%b %d") for d in all_days],

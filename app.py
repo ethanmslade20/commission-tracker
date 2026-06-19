@@ -1079,6 +1079,12 @@ def build_daily_df(df: pd.DataFrame, month_str: str) -> pd.DataFrame:
 
     from tracker.sheets import _coalesce_sale_date
     sub = _coalesce_sale_date(df)
+    # Option A — new business only: coverage effective after the day sold.
+    if "effective_date" in df.columns:
+        _eff = pd.to_datetime(df["effective_date"], errors="coerce")
+        _is_new = (_eff > sub).fillna(False)
+        df = df[_is_new]
+        sub = sub[_is_new]
     if sub.isna().all():
         return pd.DataFrame({"Date": all_days, "Policies": 0, "Members": 0})
 
