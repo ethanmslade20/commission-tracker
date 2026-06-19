@@ -151,6 +151,13 @@ def run_report(settings: dict) -> None:
         print("No impersonation_target in config/settings.yaml.")
         return
 
+    # Daily tracker should only count carriers/states the agent is appointed
+    # with (cancellations still count for the day they were submitted, but
+    # non-appointed business is excluded entirely).
+    months_appointed = {
+        m: _filter_by_appointments(df, appointments) for m, df in months.items()
+    }
+
     print("Pushing to Google Sheets...")
     update_sheet(
         sheet_url=sheet_url,
@@ -159,6 +166,6 @@ def run_report(settings: dict) -> None:
         all_clients=_sort(_select(all_clients, _ALL_CLIENTS_COLS)),
         active_pending_df=_sort_by_date(_select(active_pending, _ACTIVE_COLS)),
         cancelled_missing_df=_sort_by_term_date_desc(_select(cancelled_missing, _ALL_CLIENTS_COLS)),
-        months=months,
+        months=months_appointed,
     )
     print("Done.")
