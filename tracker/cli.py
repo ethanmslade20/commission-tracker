@@ -213,13 +213,26 @@ def report():
 
 
 @cli.command("reconcile-ambetter")
-@click.argument("path")
+@click.argument("path", required=False)
 @click.option("--out", "-o", default=None, help="Output folder for the CSV lists (default: ~/Desktop/Carrier Reports).")
-def reconcile_ambetter_cmd(path: str, out: Optional[str]):
+def reconcile_ambetter_cmd(path: Optional[str], out: Optional[str]):
     """Cross-check an Ambetter 'All policies' export (zip or csv) against the
-    tracker's active Ambetter book. Read-only — flags lapses and missing business."""
+    tracker's active Ambetter book. Read-only — flags lapses and missing business.
+
+    With no PATH, auto-uses the most recent 'policies*.zip' on the Desktop."""
     from pathlib import Path as _P
     from tracker.reconcile import reconcile_ambetter
+
+    if not path:
+        desktop = _P.home() / "Desktop"
+        cands = sorted(desktop.glob("policies*.zip"), key=lambda f: f.stat().st_mtime)
+        if not cands:
+            raise click.ClickException(
+                "No 'policies*.zip' found on the Desktop. Download the Ambetter "
+                "export there, or pass a path explicitly."
+            )
+        path = str(cands[-1])
+        click.echo(f"Using latest Ambetter export: {path}")
 
     out_dir = out or str(_P.home() / "Desktop" / "Carrier Reports")
     _P(out_dir).mkdir(parents=True, exist_ok=True)
