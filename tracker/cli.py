@@ -212,6 +212,27 @@ def report():
     run_report(settings)
 
 
+@cli.command("reconcile-ambetter")
+@click.argument("path")
+@click.option("--out", "-o", default=None, help="Output folder for the CSV lists (default: same folder as the export).")
+def reconcile_ambetter_cmd(path: str, out: Optional[str]):
+    """Cross-check an Ambetter 'All policies' export (zip or csv) against the
+    tracker's active Ambetter book. Read-only — flags lapses and missing business."""
+    from pathlib import Path as _P
+    from tracker.reconcile import reconcile_ambetter
+
+    out_dir = out or str(_P(path).resolve().parent)
+    r = reconcile_ambetter(path, out_dir=out_dir)
+    click.echo("")
+    click.echo("=== Ambetter Reconciliation ===")
+    click.echo(f"  Tracker active Ambetter:     {r['tracker_active']}")
+    click.echo(f"  Ambetter portal — active:    {r['ambetter_active']}   termed: {r['ambetter_termed']}")
+    click.echo(f"  ✓ Confirmed active (both):    {r['confirmed_active']}")
+    click.echo(f"  🔴 Lapsed (win-back list):    {r['lapsed_winbacks']}   -> {r['winback_file']}")
+    click.echo(f"  ➕ In Ambetter, not tracker:  {r['missing_from_tracker']}   -> {r['missing_file']}")
+    click.echo(f"  ? Tracker-active not matched: {r['unmatched_tracker_active']} (likely name/ID differences)")
+
+
 @cli.command("aep-init")
 @click.option("--year", default=None, type=int, help="AEP year (e.g. 2027). Defaults to next calendar year.")
 def aep_init(year: Optional[int]):
