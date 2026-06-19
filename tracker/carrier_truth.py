@@ -16,12 +16,33 @@ adjusts the book/status side. Currently implemented for Ambetter.
 """
 
 import re
+import json
 import unicodedata
 from pathlib import Path
 
 import pandas as pd
 
 _ACTIVE = {"Effectuated", "PendingEffectuation", "PendingFollowups"}
+
+# Remembers when each "dropped off the portal" client was FIRST detected missing,
+# so their lost date ages correctly instead of resetting to today each run.
+# (These clients are absent from the carrier export entirely, so no true carrier
+# term date exists — first-detected is the best available proxy.)
+_DROPPED_FILE = Path("data/ambetter_dropped.json")
+
+
+def _load_dropped() -> dict:
+    if _DROPPED_FILE.exists():
+        try:
+            return json.loads(_DROPPED_FILE.read_text())
+        except Exception:
+            return {}
+    return {}
+
+
+def _save_dropped(d: dict) -> None:
+    _DROPPED_FILE.parent.mkdir(parents=True, exist_ok=True)
+    _DROPPED_FILE.write_text(json.dumps(d, indent=2))
 
 
 def _clean_id(x) -> str:
@@ -67,6 +88,9 @@ def apply_ambetter_truth(all_clients: pd.DataFrame,
     is_amb = ac["carrier"].astype(str).str.contains("ambetter", case=False, na=False)
     is_active = ac["status"].isin(_ACTIVE)
 
+    dropped = _load_dropped()
+    today_iso = today.strftime("%Y-%m-%d")
+
     n_cancel_termed = n_cancel_dropped = n_protected = 0
     for idx in ac.index[is_amb & is_active]:
         sid, nm = ac.at[idx, "_sid"], ac.at[idx, "_nm"]
@@ -83,9 +107,14 @@ def apply_ambetter_truth(all_clients: pd.DataFrame,
             n_protected += 1                            # safety net: new sale, not yet in portal
         else:
             ac.at[idx, "status"] = "Cancelled"          # established but absent from portal
-            if "term_date" in ac.columns and pd.isna(ac.at[idx, "term_date"]):
-                ac.at[idx, "term_date"] = today
+            # No carrier term date exists; use the date we FIRST saw them gone.
+            key = sid if sid else nm
+            first_seen = dropped.setdefault(key, today_iso)
+            if "term_date" in ac.columns:
+                ac.at[idx, "term_date"] = pd.Timestamp(first_seen)
             n_cancel_dropped += 1
+
+    _save_dropped(dropped)
 
     # Add portal-active clients the tracker doesn't have
     t_sid = set(ac.loc[is_amb, "_sid"]) - {""}
