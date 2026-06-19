@@ -1822,15 +1822,15 @@ elif page == "Goals":
     gap          = max(GOAL - current, 0)
     pct_done     = min(current / GOAL * 100, 100)
 
-    # ── LTV — trailing 3-month churn rate (more accurate than all-time cumulative) ──
-    # Uses avg members lost / avg active members over the last 3 snapshot months.
-    # Falls back to all-time if MoM data is unavailable.
+    # ── LTV — all-time churn across your entire tracked history ──
+    # Aggregate monthly churn = total members lost / total active member-months
+    # over every tracked month (standard churn calc). More stable and
+    # representative than the trailing few months.
     if not mom_df.empty and "Members Lost" in mom_df.columns and "Total Members" in mom_df.columns:
-        _trailing = mom_df.tail(3)
-        _avg_lost   = _trailing["Members Lost"].mean()
-        _avg_active = _trailing["Total Members"].mean()
-        monthly_churn_rate = _avg_lost / max(_avg_active, 1)
-        _churn_label = "trailing 3-mo avg"
+        _total_lost   = mom_df["Members Lost"].sum()
+        _member_months = mom_df["Total Members"].sum()
+        monthly_churn_rate = _total_lost / max(_member_months, 1)
+        _churn_label = "all-time avg"
     else:
         _total_ever  = int(_active_mask.sum()) + int(_churn_mask.sum())
         _total_churned = int(_churn_mask.sum())
