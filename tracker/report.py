@@ -160,7 +160,8 @@ def run_report(settings: dict) -> None:
     # is active. Drops policies missing from the portal (unless coverage hasn't
     # started yet) and adds portal business the tracker lacks. Daily tracker is
     # built from `months` separately, so sale timing stays HealthSherpa-driven.
-    from tracker.carrier_truth import apply_ambetter_truth, apply_oscar_truth, apply_uhc_truth
+    from tracker.carrier_truth import (apply_ambetter_truth, apply_oscar_truth,
+                                        apply_uhc_truth, apply_anthem_truth)
     all_clients, _amb = apply_ambetter_truth(all_clients)
     if _amb.get("applied"):
         print(f"  Ambetter portal truth: +{_amb['added_from_portal']} added, "
@@ -176,6 +177,11 @@ def run_report(settings: dict) -> None:
         print(f"  UHC portal truth: +{_uhc['added_policies']} added, "
               f"{_uhc['cancelled_lapsed'] + _uhc['cancelled_dropped']} marked cancelled "
               f"({_uhc['protected_new_sales']} new sales protected)")
+    all_clients, _ant = apply_anthem_truth(all_clients)
+    if _ant.get("applied"):
+        print(f"  Anthem portal truth: +{_ant['added_policies']} added, "
+              f"{_ant['cancelled_lapsed'] + _ant['cancelled_dropped']} marked cancelled "
+              f"({_ant['protected_new_sales']} new sales protected)")
 
     # Compute diff to identify missing clients (those who dropped off last month)
     if prior_month:

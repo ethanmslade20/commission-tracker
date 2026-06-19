@@ -364,3 +364,95 @@ def apply_uhc_truth(all_clients: pd.DataFrame,
         "protected_new_sales": n_protected,
         "added_policies": len(new_rows),
     }
+
+
+# ── Anthem / Wellpoint ────────────────────────────────────────────────────────
+# Anthem (Producer Toolbox) export: explicit Status (Active / Future Active /
+# Inactive) + Cancellation Date + Effective Date. Name is "Last, First"; no
+# phone/email/ID/group size, so match by name + state and assume 1 member.
+def _split_lastfirst(name):
+    n = str(name)
+    if "," in n:
+        last, first = n.split(",", 1)
+        fp = first.strip().split()
+        return (fp[0] if fp else ""), last.strip()
+    return n, ""
+
+
+def apply_anthem_truth(all_clients: pd.DataFrame,
+                       carrier_books_dir: str = "carrier_books",
+                       today=None):
+    """Return (adjusted_all_clients, summary_dict). No-op if no Anthem book."""
+    today = pd.Timestamp(today) if today else pd.Timestamp.today().normalize()
+    book = Path(carrier_books_dir) / "anthem.csv"
+    if all_clients.empty or not book.exists():
+        return all_clients, {"applied": False}
+
+    a = pd.read_csv(book, skiprows=1)
+    fn_ln = a["Client Name"].apply(_split_lastfirst)
+    a["nm"] = [(_name_key(f, l)) for f, l in fn_ln]
+    a["st"] = a["State"].astype(str).str.upper()
+    a["key"] = list(zip(a["nm"], a["st"]))
+    a["cancel"] = pd.to_datetime(a["Cancellation Date"], errors="coerce")
+    a["eff"] = pd.to_datetime(a["Effective Date"], errors="coerce")
+    a_act = a[a["Status"].isin(["Active", "Future Active"])]
+    a_in = a[a["Status"] == "Inactive"]
+    A, I = set(a_act["key"]), set(a_in["key"])
+
+    ac = all_clients.copy()
+    ac["_k"] = ac.apply(lambda r: (_name_key(r.get("first_name", ""), r.get("last_name", "")),
+                                   str(r.get("state") or "").upper()), axis=1)
+    ac["_eff"] = pd.to_datetime(ac.get("effective_date"), errors="coerce")
+    is_anth = ac["carrier"].astype(str).str.contains("anthem|wellpoint", case=False, na=False, regex=True)
+    is_active = ac["status"].isin(_ACTIVE)
+
+    dropped = _load_dropped(Path("data/anthem_dropped.json"))
+    today_iso = today.strftime("%Y-%m-%d")
+    n_lapsed = n_dropped = n_protected = 0
+
+    for idx in ac.index[is_anth & is_active]:
+        k = ac.at[idx, "_k"]
+        if k in A:
+            continue
+        eff = ac.at[idx, "_eff"]
+        if k in I:
+            ac.at[idx, "status"] = "Cancelled"
+            m = a_in[a_in["key"] == k]
+            if not m.empty and "term_date" in ac.columns and pd.notna(m.iloc[0]["cancel"]):
+                ac.at[idx, "term_date"] = m.iloc[0]["cancel"]
+            n_lapsed += 1
+        elif pd.notna(eff) and eff > today:
+            n_protected += 1
+        else:
+            ac.at[idx, "status"] = "Cancelled"
+            kk = f"{k[0]}|{k[1]}"
+            first_seen = dropped.setdefault(kk, today_iso)
+            if "term_date" in ac.columns:
+                ac.at[idx, "term_date"] = pd.Timestamp(first_seen)
+            n_dropped += 1
+
+    _save_dropped(dropped, Path("data/anthem_dropped.json"))
+
+    t_keys = set(ac.loc[is_anth, "_k"])
+    miss = a_act[~a_act["key"].isin(t_keys)]
+    new_rows = []
+    for _, r in miss.iterrows():
+        f, l = _split_lastfirst(r["Client Name"])
+        eff = r["eff"]
+        new_rows.append({
+            "first_name": f, "last_name": l, "carrier": "Anthem/Wellpoint",
+            "effective_date": eff, "term_date": pd.NaT,
+            "status": "Effectuated", "state": r.get("State"), "ffm_app_id": "",
+            "applicant_count": 1, "months_on_book": _months_on_book(eff, today),
+        })
+
+    ac = ac.drop(columns=["_k", "_eff"])
+    if new_rows:
+        ac = pd.concat([ac, pd.DataFrame(new_rows)], ignore_index=True)
+
+    return ac, {
+        "applied": True,
+        "portal_active": len(a_act), "portal_inactive": len(a_in),
+        "cancelled_lapsed": n_lapsed, "cancelled_dropped": n_dropped,
+        "protected_new_sales": n_protected, "added_policies": len(new_rows),
+    }
