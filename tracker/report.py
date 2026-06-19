@@ -104,6 +104,17 @@ def run_report(settings: dict) -> None:
     if filtered_ct:
         print(f"  Appointment filter: removed {filtered_ct} non-appointed carrier/state rows")
 
+    # Carrier-portal truth (Ambetter): the portal is the source of truth for who
+    # is active. Drops policies missing from the portal (unless coverage hasn't
+    # started yet) and adds portal business the tracker lacks. Daily tracker is
+    # built from `months` separately, so sale timing stays HealthSherpa-driven.
+    from tracker.carrier_truth import apply_ambetter_truth
+    all_clients, _amb = apply_ambetter_truth(all_clients)
+    if _amb.get("applied"):
+        print(f"  Ambetter portal truth: +{_amb['added_from_portal']} added, "
+              f"{_amb['cancelled_termed'] + _amb['cancelled_dropped']} marked cancelled "
+              f"({_amb['protected_new_sales']} new sales protected)")
+
     # Compute diff to identify missing clients (those who dropped off last month)
     if prior_month:
         diff = compute_diff(months[prior_month], months[latest_month])

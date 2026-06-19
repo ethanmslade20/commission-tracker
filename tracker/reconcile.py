@@ -110,10 +110,21 @@ def reconcile_ambetter(ambetter_path, snapshot_dir="snapshots",
         ~amb_active["sid"].isin(t_sid) & ~amb_active["nm"].isin(t_nm)
     ].copy()
 
+    def _add_months_on_book(df):
+        df = df.copy()
+        be = pd.to_datetime(df.get("Broker Effective Date"), errors="coerce")
+        pe = pd.to_datetime(df.get("Policy Effective Date"), errors="coerce")
+        start = be.fillna(pe)
+        df["Months On Book"] = ((today - start).dt.days / 30.44).round(1)
+        return df
+
+    winback = _add_months_on_book(winback)
+    missing = _add_months_on_book(missing)
+
     _cols = ["Insured First Name", "Insured Last Name", "State", "County",
              "Plan Name", "Policy Effective Date", "Policy Term Date",
-             "Member Phone Number", "Member Email", "Number of Members",
-             "Monthly Premium Amount", "Policy Number"]
+             "Months On Book", "Member Phone Number", "Member Email",
+             "Number of Members", "Monthly Premium Amount", "Policy Number"]
 
     def _slim(df):
         return df[[c for c in _cols if c in df.columns]]
