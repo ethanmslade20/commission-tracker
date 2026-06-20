@@ -177,6 +177,8 @@ def _build_mom_from_all_clients(
 
     eff   = pd.to_datetime(all_clients.get("effective_date"), errors="coerce")
     term  = pd.to_datetime(all_clients.get("term_date"),      errors="coerce")
+    _est  = (all_clients.get("term_estimated", pd.Series(False, index=all_clients.index))
+             .fillna(False).astype(bool))
     count = pd.to_numeric(
         all_clients.get("applicant_count", pd.Series([1] * len(all_clients))),
         errors="coerce",
@@ -210,8 +212,10 @@ def _build_mom_from_all_clients(
         new_policies = int(new_mask.sum())
         new_members  = int(count[new_mask].sum())
 
-        # Lost: term_date falls within this month
-        lost_mask     = term.notna() & (term >= month_start) & (term <= month_end)
+        # Lost: term_date falls within this month. Exclude losses with an
+        # ESTIMATED term date (carrier gave no real date — we only know the
+        # client is gone, not when) so they don't distort the churn rate / LTV.
+        lost_mask     = term.notna() & (term >= month_start) & (term <= month_end) & (~_est)
         policies_lost = int(lost_mask.sum())
         members_lost  = int(count[lost_mask].sum())
 

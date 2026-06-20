@@ -89,6 +89,8 @@ def apply_ambetter_truth(all_clients: pd.DataFrame,
     at_sid, at_nm = set(amb_termed["sid"]) - {""}, set(amb_termed["nm"])
 
     ac = all_clients.copy()
+    if "term_estimated" not in ac.columns:
+        ac["term_estimated"] = False
     ac["_sid"] = ac["ffm_subscriber_id"].apply(_clean_id) if "ffm_subscriber_id" in ac.columns else ""
     ac["_nm"] = ac.apply(lambda r: _name_key(r.get("first_name", ""), r.get("last_name", "")), axis=1)
     ac["_eff"] = pd.to_datetime(ac.get("effective_date"), errors="coerce")
@@ -119,6 +121,7 @@ def apply_ambetter_truth(all_clients: pd.DataFrame,
             first_seen = dropped.setdefault(key, today_iso)
             if "term_date" in ac.columns:
                 ac.at[idx, "term_date"] = pd.Timestamp(first_seen)
+            ac.at[idx, "term_estimated"] = True
             n_cancel_dropped += 1
 
     _save_dropped(dropped, Path("data/ambetter_dropped.json"))
@@ -192,6 +195,8 @@ def apply_oscar_truth(all_clients: pd.DataFrame,
     aa, ii = _keys(o_active), _keys(o_inact)
 
     ac = all_clients.copy()
+    if "term_estimated" not in ac.columns:
+        ac["term_estimated"] = False
     ac["_nm"] = ac.apply(lambda r: _name_key(r.get("first_name", ""), r.get("last_name", "")), axis=1)
     ac["_em"] = ac["email"].apply(_email) if "email" in ac.columns else ""
     ac["_ph"] = ac["phone"].apply(_phone) if "phone" in ac.columns else ""
@@ -225,6 +230,7 @@ def apply_oscar_truth(all_clients: pd.DataFrame,
             first_seen = dropped.setdefault(key, today_iso)
             if "term_date" in ac.columns:
                 ac.at[idx, "term_date"] = pd.Timestamp(first_seen)
+            ac.at[idx, "term_estimated"] = True
             n_cancel_dropped += 1
 
     _save_dropped(dropped, Path("data/oscar_dropped.json"))
@@ -293,6 +299,8 @@ def apply_uhc_truth(all_clients: pd.DataFrame,
     I = set(ui["nm"]) | (set(ui["ph"]) - {""})
 
     ac = all_clients.copy()
+    if "term_estimated" not in ac.columns:
+        ac["term_estimated"] = False
     ac["_nm"] = ac.apply(lambda r: _name_key(r.get("first_name", ""), r.get("last_name", "")), axis=1)
     ac["_ph"] = ac["phone"].apply(_phone) if "phone" in ac.columns else ""
     ac["_eff"] = pd.to_datetime(ac.get("effective_date"), errors="coerce")
@@ -317,6 +325,7 @@ def apply_uhc_truth(all_clients: pd.DataFrame,
             first_seen = dropped.setdefault(key, today_iso)
             if "term_date" in ac.columns:
                 ac.at[idx, "term_date"] = pd.Timestamp(first_seen)
+            ac.at[idx, "term_estimated"] = True
             n_lapsed += 1
         elif pd.notna(eff) and eff > today:
             n_protected += 1                            # new sale not yet in UHC export
@@ -326,6 +335,7 @@ def apply_uhc_truth(all_clients: pd.DataFrame,
             first_seen = dropped.setdefault(key, today_iso)
             if "term_date" in ac.columns:
                 ac.at[idx, "term_date"] = pd.Timestamp(first_seen)
+            ac.at[idx, "term_estimated"] = True
             n_dropped += 1
 
     _save_dropped(dropped, Path("data/uhc_dropped.json"))
@@ -400,6 +410,8 @@ def apply_anthem_truth(all_clients: pd.DataFrame,
     A, I = set(a_act["key"]), set(a_in["key"])
 
     ac = all_clients.copy()
+    if "term_estimated" not in ac.columns:
+        ac["term_estimated"] = False
     ac["_k"] = ac.apply(lambda r: (_name_key(r.get("first_name", ""), r.get("last_name", "")),
                                    str(r.get("state") or "").upper()), axis=1)
     ac["_eff"] = pd.to_datetime(ac.get("effective_date"), errors="coerce")
@@ -429,6 +441,7 @@ def apply_anthem_truth(all_clients: pd.DataFrame,
             first_seen = dropped.setdefault(kk, today_iso)
             if "term_date" in ac.columns:
                 ac.at[idx, "term_date"] = pd.Timestamp(first_seen)
+            ac.at[idx, "term_estimated"] = True
             n_dropped += 1
 
     _save_dropped(dropped, Path("data/anthem_dropped.json"))

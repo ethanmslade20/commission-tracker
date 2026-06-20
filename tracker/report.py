@@ -55,7 +55,7 @@ def _filter_excluded(df: pd.DataFrame, exclusions: list) -> pd.DataFrame:
 
 _ALL_CLIENTS_COLS = ["first_name", "last_name", "carrier", "effective_date", "term_date",
                      "status", "state", "ffm_app_id", "net_premium", "applicant_count", "months_on_book",
-                     "cancel_reason"]
+                     "cancel_reason", "term_estimated"]
 
 _ACTIVE_COLS = ["first_name", "last_name", "carrier", "effective_date",
                 "status", "state", "ffm_app_id", "net_premium", "applicant_count", "months_on_book"]
