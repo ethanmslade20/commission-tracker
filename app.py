@@ -1298,8 +1298,13 @@ if page == "Dashboard":
 
     # ── GROWTH METRICS ────────────────────────────────────────────────────────
     st.markdown(section_header("Growth Metrics", "trend"), unsafe_allow_html=True)
+    # Proper churn rate = total members lost / total active member-months (same
+    # basis as the LTV calc), so the dashboard and Goals page always agree.
     try:
-        _churn_pct = round(float(kpis["Avg Policies Lost/Month"]) / max(kpis["Total Active Policies"], 1) * 100, 2)
+        if not mom_df.empty and "Members Lost" in mom_df.columns and mom_df["Total Members"].sum() > 0:
+            _churn_pct = round(mom_df["Members Lost"].sum() / mom_df["Total Members"].sum() * 100, 2)
+        else:
+            _churn_pct = round(float(kpis["Avg Policies Lost/Month"]) / max(kpis["Total Active Policies"], 1) * 100, 2)
         _churn_sub = f"All history • {_churn_pct}% monthly churn"
     except Exception:
         _churn_sub = "All history"
