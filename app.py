@@ -2546,16 +2546,18 @@ elif page == "Re-Engage (Supp)":
                         chart_head("Quick Text", "Pick a client, copy the message, paste into your CRM", "users"),
                         unsafe_allow_html=True,
                     )
+                    # Reference number clients call to update payment / reinstate.
+                    _SUPP_PAYMENT_NUMBER = "XXX-XXX-XXXX"  # TODO: replace with real call-in number
                     _opts = view["_name"].tolist()
                     _pick = st.selectbox("Client", _opts, key="reengage_supp_msg_pick", label_visibility="collapsed")
                     _prow = view[view["_name"] == _pick].iloc[0]
                     _first = str(_prow.get("first_name") or (_pick.split()[0] if _pick else "")).strip().title()
-                    _prod = str(_prow.get("product") or "").strip().title()
+                    _prod = str(_prow.get("product") or "").strip().lower()
                     _what = _prod if _prod else "supplemental coverage"
                     _msg = (
-                        f"Hey {_first}, it's Ethan, your insurance guy. I noticed your {_what} "
-                        f"recently dropped off. Want me to get it back in place or look at other options? "
-                        f"Let me know!"
+                        f"Hi {_first}, Ethan here — your insurance guy. Heads up: your {_what} "
+                        f"lapsed from a payment issue. To get it back, just call {_SUPP_PAYMENT_NUMBER} "
+                        f"and update your payment. If you have questions, let me know."
                     )
                     st.code(_msg, language=None)
                     st.caption("Tap the copy icon at the top-right of the box, then paste it into your CRM.")
