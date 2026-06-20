@@ -82,6 +82,13 @@ def apply_ambetter_truth(all_clients: pd.DataFrame,
     amb["nm"] = amb.apply(lambda r: _name_key(r["Insured First Name"], r["Insured Last Name"]), axis=1)
     amb["eff"] = pd.to_datetime(amb["Policy Effective Date"], errors="coerce")
     amb["term"] = pd.to_datetime(amb["Policy Term Date"], errors="coerce")
+    # Broker Effective Date = when the agent became broker of record. This is the
+    # TRUE "how long I've had this client" date — the policy can predate the
+    # relationship by years (inherited / agent-of-record transfers).
+    amb["bed"] = pd.to_datetime(amb["Broker Effective Date"], errors="coerce")
+    # Earliest broker date per client (a renewal can produce multiple rows).
+    bed_by_sid = amb[amb["sid"] != ""].groupby("sid")["bed"].min().to_dict()
+    bed_by_nm = amb.groupby("nm")["bed"].min().to_dict()
     amb["termed"] = amb["term"] < today
     amb_active, amb_termed = amb[~amb["termed"]], amb[amb["termed"]]
 
@@ -146,7 +153,16 @@ def apply_ambetter_truth(all_clients: pd.DataFrame,
             "net_premium": pd.to_numeric(r.get("Member Responsibility"), errors="coerce"),
             "applicant_count": pd.to_numeric(r.get("Number of Members"), errors="coerce"),
             "months_on_book": _months_on_book(eff, today),
+            "broker_effective_date": r["bed"],
         })
+
+    # Stamp the broker-of-record date onto existing Ambetter rows (true tenure
+    # start). Match on subscriber ID first, fall back to name.
+    if "broker_effective_date" not in ac.columns:
+        ac["broker_effective_date"] = pd.NaT
+    _bed = ac["_sid"].map(bed_by_sid)
+    _bed = _bed.where(_bed.notna(), ac["_nm"].map(bed_by_nm))
+    ac.loc[is_amb, "broker_effective_date"] = pd.to_datetime(_bed[is_amb], errors="coerce")
 
     ac = ac.drop(columns=["_sid", "_nm", "_eff"])
     if new_rows:

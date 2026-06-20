@@ -185,26 +185,36 @@ def run_report(settings: dict) -> None:
               f"({_ant['protected_new_sales']} new sales protected)")
 
     # Tenure = how long the client has been on YOUR book, NOT the policy's
-    # coverage age. The policy's effective_date can predate our relationship
-    # (inherited / agent-of-record business starts as far back as 2018), so we
-    # measure from when the client first appears in our data (first_seen).
-    # Inherited / portal-only business with no snapshot history is floored at the
-    # earliest snapshot month — we can only prove tenure back to when tracking
-    # began (May 2025).
+    # coverage age. The policy's effective_date can predate the relationship by
+    # years (inherited / agent-of-record transfers start as far back as 2018).
+    # Tenure start, best source first:
+    #   1. broker_effective_date — the carrier's "broker of record since" date
+    #      (authoritative; Ambetter provides it for the whole book)
+    #   2. first_seen — first month the client appears in our HealthSherpa data
+    #   3. earliest snapshot month — floor for portal-only business with neither
     _earliest_month = min(months.keys())
     _latest_month   = max(months.keys())
+    _latest_y, _latest_m = int(_latest_month[:4]), int(_latest_month[5:7])
 
-    def _book_tenure(first_seen) -> int:
-        fs = first_seen if isinstance(first_seen, str) and first_seen else _earliest_month
-        try:
-            fy, fm = int(fs[:4]), int(fs[5:7])
-        except Exception:
-            fy, fm = int(_earliest_month[:4]), int(_earliest_month[5:7])
-        ly, lm = int(_latest_month[:4]), int(_latest_month[5:7])
-        return (ly - fy) * 12 + (lm - fm) + 1
+    def _tenure_months(row) -> int:
+        start = None
+        bed = row.get("broker_effective_date")
+        if pd.notna(bed):
+            start = pd.Timestamp(bed)
+        else:
+            fs = row.get("first_seen")
+            if isinstance(fs, str) and fs:
+                try:
+                    start = pd.Timestamp(fs + "-01")
+                except Exception:
+                    start = None
+        if start is None or pd.isna(start):
+            start = pd.Timestamp(_earliest_month + "-01")
+        months_n = (_latest_y - start.year) * 12 + (_latest_m - start.month) + 1
+        return max(months_n, 1)
 
-    if not all_clients.empty and "first_seen" in all_clients.columns:
-        all_clients["months_on_book"] = all_clients["first_seen"].apply(_book_tenure)
+    if not all_clients.empty:
+        all_clients["months_on_book"] = all_clients.apply(_tenure_months, axis=1)
 
     # Cancellation reason for the Re-Engage view: use HealthSherpa's own notes
     # ("Canceled at member's request" etc.) when present, else a derived
