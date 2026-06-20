@@ -2547,7 +2547,7 @@ elif page == "Re-Engage (Supp)":
                         unsafe_allow_html=True,
                     )
                     # Reference number clients call to update payment / reinstate.
-                    _SUPP_PAYMENT_NUMBER = "XXX-XXX-XXXX"  # TODO: replace with real call-in number
+                    _SUPP_PAYMENT_NUMBER = "(800) 657-8205"  # call-in number to update payment / reinstate
                     _opts = view["_name"].tolist()
                     _pick = st.selectbox("Client", _opts, key="reengage_supp_msg_pick", label_visibility="collapsed")
                     _prow = view[view["_name"] == _pick].iloc[0]
