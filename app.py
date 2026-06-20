@@ -732,7 +732,9 @@ def _load_from_parquet():
     months = load_all_snapshots(Path("snapshots"))
     all_clients = build_all_clients(months)
     dashboard_data = build_dashboard_data(months, all_clients)
-    dashboard_data["supp"] = summarize_supplemental(load_supplemental())
+    _supp = load_supplemental()
+    dashboard_data["supp"] = summarize_supplemental(_supp)
+    dashboard_data["supp_df"] = _supp
     return months, all_clients, dashboard_data
 
 
@@ -795,32 +797,101 @@ def _read_daily_tab_from_sheet(spreadsheet, tab_name: str) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def _read_supplemental_summary_from_sheet(spreadsheet) -> dict:
-    """Read the Supplemental tab and summarize active premium per carrier for the
-    dashboard boxes. Returns {} if the tab is missing/empty."""
+def _read_supplemental_df_from_sheet(spreadsheet) -> pd.DataFrame:
+    """Read the Supplemental tab into the normalized roster shape used elsewhere
+    (first_name, last_name, carrier, product, premium, status, term_date, ...).
+    Empty frame if the tab is missing/empty."""
+    cols = ["first_name", "last_name", "carrier", "product", "premium",
+            "status", "status_detail", "term_date", "state", "email", "phone"]
     try:
         ws = spreadsheet.worksheet("Supplemental")
         rows = ws.get_all_records()
     except Exception:
-        return {}
+        return pd.DataFrame(columns=cols)
     if not rows:
-        return {}
+        return pd.DataFrame(columns=cols)
     df = pd.DataFrame(rows)
-    if "Carrier" not in df.columns or "Monthly Premium" not in df.columns:
-        return {}
-    df["_prem"] = pd.to_numeric(
-        df["Monthly Premium"].astype(str).str.replace(r"[$,]", "", regex=True),
-        errors="coerce").fillna(0.0)
-    df["_active"] = df.get("Status", "").astype(str).str.strip().eq("Active")
-    summary: dict = {}
-    for carrier, grp in df.groupby("Carrier"):
-        act = grp[grp["_active"]]
-        summary[str(carrier)] = {
-            "active_premium": float(act["_prem"].sum()),
-            "active_policies": int(len(act)),
-            "inactive_policies": int((~grp["_active"]).sum()),
-        }
-    return summary
+    if "Carrier" not in df.columns:
+        return pd.DataFrame(columns=cols)
+    out = pd.DataFrame({
+        "first_name": df.get("First Name"),
+        "last_name": df.get("Last Name"),
+        "carrier": df.get("Carrier"),
+        "product": df.get("Product"),
+        "premium": pd.to_numeric(
+            df.get("Monthly Premium", "").astype(str).str.replace(r"[$,]", "", regex=True),
+            errors="coerce").fillna(0.0),
+        "status": df.get("Status", "").astype(str).str.strip(),
+        "status_detail": df.get("Status Detail"),
+        "term_date": pd.to_datetime(df.get("Term Date"), errors="coerce"),
+        "state": df.get("State"),
+        "email": df.get("Email"),
+        "phone": df.get("Phone"),
+    })
+    return out
+
+
+def _read_supplemental_summary_from_sheet(spreadsheet) -> dict:
+    """Per-carrier active-premium summary for the dashboard boxes."""
+    from tracker.supplemental import summarize_supplemental
+    return summarize_supplemental(_read_supplemental_df_from_sheet(spreadsheet))
+
+
+def _supp_name_key(first, last) -> str:
+    import re, unicodedata
+    s = f"{first} {last}".lower()
+    s = unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode()
+    return re.sub(r"[^a-z]", "", s)
+
+
+def _attach_supplemental(df: pd.DataFrame, supp_df) -> pd.DataFrame:
+    """Add supplemental-coverage columns to a client roster, matched by name:
+      _supp_products  comma list of products held (active if any, else lapsed)
+      _supp_premium   total active monthly premium (blank if none active)
+      _supp_status    Active / Inactive / "" (none)
+      _supp_term      latest termination date when inactive
+    """
+    out = df.copy()
+    if supp_df is None or len(supp_df) == 0 or out.empty:
+        out["_supp_products"] = ""
+        out["_supp_premium"] = pd.NA
+        out["_supp_status"] = ""
+        out["_supp_term"] = pd.NaT
+        return out
+    idx: dict = {}
+    for r in supp_df.itertuples(index=False):
+        key = _supp_name_key(getattr(r, "first_name", ""), getattr(r, "last_name", ""))
+        if key:
+            idx.setdefault(key, []).append(r)
+    prods, prems, stats, terms = [], [], [], []
+    for fr, lr in zip(out["first_name"].fillna(""), out["last_name"].fillna("")):
+        rows = idx.get(_supp_name_key(fr, lr), [])
+        if not rows:
+            prods.append(""); prems.append(pd.NA); stats.append(""); terms.append(pd.NaT)
+            continue
+        active = [r for r in rows if str(getattr(r, "status", "")).strip() == "Active"]
+        use = active if active else rows
+        names: list = []
+        for r in use:
+            p = str(getattr(r, "product", "") or "").strip()
+            if p and p not in names:
+                names.append(p)
+        prods.append(", ".join(names))
+        if active:
+            prems.append(round(sum(float(getattr(r, "premium", 0) or 0) for r in active), 2))
+            stats.append("Active")
+            terms.append(pd.NaT)
+        else:
+            prems.append(pd.NA)
+            stats.append("Inactive")
+            tt = [pd.to_datetime(getattr(r, "term_date", None), errors="coerce") for r in rows]
+            tt = [t for t in tt if pd.notna(t)]
+            terms.append(max(tt) if tt else pd.NaT)
+    out["_supp_products"] = prods
+    out["_supp_premium"] = prems
+    out["_supp_status"] = stats
+    out["_supp_term"] = terms
+    return out
 
 
 def _load_from_sheets():
@@ -916,9 +987,11 @@ def _load_from_sheets():
         .sort_values("Policies", ascending=False)
     ) if "state" in active_df.columns else pd.DataFrame(columns=["State", "Policies"])
 
+    from tracker.supplemental import summarize_supplemental
+    _supp_df = _read_supplemental_df_from_sheet(spreadsheet)
     dashboard_data = {"kpis": kpis, "carrier_df": carrier_df, "state_df": state_df, "mom_df": mom_df,
                       "raw_state_carrier_map": _raw_state_carrier_map,
-                      "supp": _read_supplemental_summary_from_sheet(spreadsheet)}
+                      "supp": summarize_supplemental(_supp_df), "supp_df": _supp_df}
 
     # Read all Daily Tracker tabs dynamically
     daily_months: dict = {}
@@ -1838,6 +1911,13 @@ elif page == "Book of Business":
     disp = disp.rename(columns={"status_display": "status"})
     disp.columns = [c.replace("_", " ").title() for c in disp.columns]
 
+    # Supplemental coverage columns (dental/vision/STM/etc.), matched by name.
+    _enriched = _attach_supplemental(df, dd.get("supp_df"))
+    disp["Supplemental"]    = _enriched["_supp_products"].values
+    disp["Supp Premium"]    = _enriched["_supp_premium"].values
+    disp["Supp Status"]     = _enriched["_supp_status"].values
+    disp["Supp Term Date"]  = pd.to_datetime(_enriched["_supp_term"], errors="coerce").values
+
     with st.container(border=True):
         st.markdown(chart_head("Client Roster", f"{len(df):,} policies in current view", "book"),
                     unsafe_allow_html=True)
@@ -1852,6 +1932,8 @@ elif page == "Book of Business":
                 "Net Premium":     st.column_config.NumberColumn("Net Premium", format="$%.2f"),
                 "Applicant Count": st.column_config.NumberColumn("Members"),
                 "Months On Book":  st.column_config.NumberColumn("Mo. on Book"),
+                "Supp Premium":    st.column_config.NumberColumn("Supp Premium", format="$%.2f"),
+                "Supp Term Date":  st.column_config.DateColumn("Supp Term Date", format="MMM D, YYYY"),
             },
         )
 

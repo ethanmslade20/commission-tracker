@@ -144,6 +144,7 @@ def _build_supplemental_display(supp: pd.DataFrame) -> pd.DataFrame:
         "Monthly Premium": df["premium"].round(2),
         "Status":          df["status"],
         "Status Detail":   df["status_detail"],
+        "Term Date":       pd.to_datetime(df.get("term_date"), errors="coerce"),
         "State":           df["state"],
         "Email":           df["email"],
         "Phone":           df["phone"],

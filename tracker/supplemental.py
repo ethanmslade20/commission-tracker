@@ -32,6 +32,15 @@ def _money(series: pd.Series) -> pd.Series:
     ).fillna(0.0)
 
 
+def _term(series) -> pd.Series:
+    """Parse a termination-date column. NatGen uses 12/31/9999 as an 'active /
+    no end date' sentinel — collapse any far-future date to NaT."""
+    if series is None:
+        return pd.Series(pd.NaT, dtype="datetime64[ns]")
+    t = pd.to_datetime(series, errors="coerce")
+    return t.mask(t.dt.year >= 2900)
+
+
 def _load_uhc(path: Path) -> pd.DataFrame:
     """UHC ancillary export. Dependents have a blank Plan Name and share the
     primary's policy, so we drop them (premium lives on the primary row)."""
@@ -46,6 +55,7 @@ def _load_uhc(path: Path) -> pd.DataFrame:
         "product": df["Plan Name"],
         "premium": _money(df["Premium"]),
         "status_detail": df["Status"].astype(str).str.strip(),
+        "term_date": _term(df.get("Termination Date")),
         "state": df.get("State"),
         "email": df.get("Email"),
         "phone": df.get("Phone Number"),
@@ -70,6 +80,7 @@ def _load_natgen(path: Path) -> pd.DataFrame:
         "product": df["Product Name"],
         "premium": _money(df["Premium Amount"]),
         "status_detail": df["Policy Status"].astype(str).str.strip(),
+        "term_date": _term(df.get("Term Date")),
         "state": df.get("State"),
         "email": df.get("Email"),
         "phone": df.get("Phone"),
@@ -89,7 +100,7 @@ def load_supplemental(carrier_books_dir: str = "carrier_books") -> pd.DataFrame:
     ]
     frames = [f for f in frames if not f.empty]
     cols = ["first_name", "last_name", "carrier", "product", "premium",
-            "status", "status_detail", "state", "email", "phone"]
+            "status", "status_detail", "term_date", "state", "email", "phone"]
     if not frames:
         return pd.DataFrame(columns=cols)
     out = pd.concat(frames, ignore_index=True)
