@@ -177,8 +177,16 @@ def _build_mom_from_all_clients(
 
     eff   = pd.to_datetime(all_clients.get("effective_date"), errors="coerce")
     term  = pd.to_datetime(all_clients.get("term_date"),      errors="coerce")
+    # term_estimated may arrive as real booleans (local parquet) or as text
+    # ("TRUE"/"FALSE") when read back from Google Sheets. A plain .astype(bool)
+    # would treat the string "FALSE" as True (non-empty string), wrongly flagging
+    # every row as estimated and zeroing out all losses. Parse text explicitly.
+    def _as_bool(v) -> bool:
+        if isinstance(v, bool):
+            return v
+        return str(v).strip().lower() in ("true", "1", "yes", "t")
     _est  = (all_clients.get("term_estimated", pd.Series(False, index=all_clients.index))
-             .fillna(False).astype(bool))
+             .apply(_as_bool))
     count = pd.to_numeric(
         all_clients.get("applicant_count", pd.Series([1] * len(all_clients))),
         errors="coerce",
