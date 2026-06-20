@@ -879,8 +879,13 @@ def _attach_supplemental(df: pd.DataFrame, supp_df) -> pd.DataFrame:
         if not rows:
             prods.append(""); prems.append(pd.NA); stats.append(""); terms.append(pd.NaT)
             continue
-        active = [r for r in rows if str(getattr(r, "status", "")).strip() == "Active"]
-        use = active if active else rows
+        def _st(r): return str(getattr(r, "status", "")).strip()
+        active = [r for r in rows if _st(r) == "Active"]
+        grace  = [r for r in rows if _st(r) == "Grace Period"]
+        # Status priority: any clean-active -> Active; else any grace -> Grace
+        # Period (in force but behind); else Inactive (lapsed).
+        in_force = active + grace
+        use = in_force if in_force else rows
         names: list = []
         for r in use:
             c = _supp_carrier_label(getattr(r, "carrier", ""))
@@ -890,6 +895,10 @@ def _attach_supplemental(df: pd.DataFrame, supp_df) -> pd.DataFrame:
         if active:
             prems.append(round(sum(float(getattr(r, "premium", 0) or 0) for r in active), 2))
             stats.append("Active")
+            terms.append(pd.NaT)
+        elif grace:
+            prems.append(round(sum(float(getattr(r, "premium", 0) or 0) for r in grace), 2))
+            stats.append("Grace Period")
             terms.append(pd.NaT)
         else:
             prems.append(pd.NA)
@@ -2449,118 +2458,173 @@ elif page == "Re-Engage":
 # ══════════════════════════════════════════════════════════════════════════════
 elif page == "Re-Engage (Supp)":
     st.title("Re-Engage — Supplemental")
-    st.caption("Lapsed supplemental policies (dental, vision, STM, accident…) — sorted by most recently lost. "
-               "Win these back the same way you do medical.")
+    st.caption("Two categories: clients past due (still active, behind on payment — save them before they cancel) "
+               "and lapsed policies to win back.")
     st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 
     today_ts = pd.Timestamp(dt.date.today())
     supp_df  = dd.get("supp_df")
+    _SUPP_PAYMENT_NUMBER = "(800) 657-8205"   # call-in number to update payment / reinstate
+
+    def _supp_quick_text(_view, _key):
+        """Copy/paste win-back text pointing the client to the payment line."""
+        st.markdown("<br>", unsafe_allow_html=True)
+        with st.container(border=True):
+            st.markdown(chart_head("Quick Text", "Pick a client, copy the message, paste into your CRM", "users"),
+                        unsafe_allow_html=True)
+            _opts = _view["_name"].tolist()
+            if not _opts:
+                return
+            _pick = st.selectbox("Client", _opts, key=_key, label_visibility="collapsed")
+            _prow = _view[_view["_name"] == _pick].iloc[0]
+            _first = str(_prow.get("first_name") or (_pick.split()[0] if _pick else "")).strip().title()
+            _prod = str(_prow.get("product") or "").strip().lower()
+            _what = _prod if _prod else "supplemental coverage"
+            _msg = (
+                f"Hi {_first}, Ethan here — your insurance guy. Heads up: your {_what} "
+                f"lapsed from a payment issue. To get it back, just call {_SUPP_PAYMENT_NUMBER} "
+                f"and update your payment. If you have questions, let me know."
+            )
+            st.code(_msg, language=None)
+            st.caption("Tap the copy icon at the top-right of the box, then paste it into your CRM.")
 
     if supp_df is None or len(supp_df) == 0:
         st.info("No supplemental data found. Drop your UHOne and Allstate exports in carrier_books and run a report.")
     else:
-        lost = supp_df[supp_df["status"].astype(str).str.strip() == "Inactive"].copy()
-        if lost.empty:
-            st.success("No lapsed supplemental policies — your supplemental book is fully active. 🎉")
-        else:
-            lost["term_date"]       = pd.to_datetime(lost.get("term_date"), errors="coerce")
-            lost["days_since_lost"] = (today_ts - lost["term_date"]).dt.days.clip(lower=0)
-            lost["_name"]           = (lost["first_name"].fillna("").astype(str).str.strip() + " "
-                                       + lost["last_name"].fillna("").astype(str).str.strip()).str.strip()
-            lost["_carrier"]        = lost["carrier"].apply(_supp_carrier_label)
-            lost["premium"]         = pd.to_numeric(lost["premium"], errors="coerce")
+        sdf = supp_df.copy()
+        sdf["status"]   = sdf["status"].astype(str).str.strip()
+        sdf["_name"]    = (sdf["first_name"].fillna("").astype(str).str.strip() + " "
+                           + sdf["last_name"].fillna("").astype(str).str.strip()).str.strip()
+        sdf["_carrier"] = sdf["carrier"].apply(_supp_carrier_label)
+        sdf["premium"]  = pd.to_numeric(sdf["premium"], errors="coerce")
 
-            def _urgency(days):
-                if pd.isna(days): return "Unknown"
-                if days <= 30:    return "🔴 <30 days"
-                if days <= 60:    return "🟡 30-60 days"
-                if days <= 90:    return "🟠 60-90 days"
-                return "⚪ 90+ days"
-            lost["Urgency"] = lost["days_since_lost"].apply(_urgency)
+        grace  = sdf[sdf["status"] == "Grace Period"].copy()
+        lapsed = sdf[sdf["status"] == "Inactive"].copy()
 
-            last_30 = int((lost["days_since_lost"] <= 30).sum())
-            last_60 = int((lost["days_since_lost"] <= 60).sum())
-            _lost_prem = float(lost["premium"].fillna(0).sum())
+        tab_grace, tab_lapsed = st.tabs([
+            f"⚠️ Past Due — Grace Period ({len(grace)})",
+            f"Lapsed ({len(lapsed)})",
+        ])
 
-            k1, k2, k3, k4 = st.columns(4)
-            with k1:
-                st.markdown(stat_card("Lapsed Policies", f"{len(lost):,}", "users", ELEC), unsafe_allow_html=True)
-            with k2:
-                st.markdown(stat_card("Lost < 30 Days", f"{last_30:,}", "clock", RED), unsafe_allow_html=True)
-            with k3:
-                st.markdown(stat_card("Lost < 60 Days", f"{last_60:,}", "clock", GOLD), unsafe_allow_html=True)
-            with k4:
-                st.markdown(stat_card("Lapsed Premium / Mo", f"${_lost_prem:,.0f}", "dollar", GREEN), unsafe_allow_html=True)
-
-            st.markdown("<br>", unsafe_allow_html=True)
-
-            f1, f2, f3 = st.columns(3)
-            with f1:
-                window_opts  = {"Last 30 days": 30, "Last 60 days": 60, "Last 90 days": 90, "All time": 99999}
-                window_label = st.selectbox("Show lost in", list(window_opts.keys()), index=3)
-                window_days  = window_opts[window_label]
-            with f2:
-                carriers = ["All"] + sorted(lost["_carrier"].dropna().unique().tolist())
-                carrier_filter = st.selectbox("Carrier", carriers)
-            with f3:
-                states = ["All"] + sorted(lost["state"].dropna().unique().tolist()) if "state" in lost.columns else ["All"]
-                state_filter = st.selectbox("State", states)
-
-            view = lost[(lost["days_since_lost"] <= window_days) | (lost["days_since_lost"].isna() & (window_days >= 99999))].copy()
-            if carrier_filter != "All":
-                view = view[view["_carrier"] == carrier_filter]
-            if state_filter != "All" and "state" in view.columns:
-                view = view[view["state"] == state_filter]
-            view = view.sort_values("days_since_lost", ascending=True, na_position="last").reset_index(drop=True)
-
-            st.caption(f"Showing **{len(view)}** lapsed policies · {window_label.lower()}"
-                       + (f" · {carrier_filter}" if carrier_filter != "All" else "")
-                       + (f" · {state_filter}" if state_filter != "All" else ""))
-
-            if view.empty:
-                st.info("No lapsed supplemental policies match the current filters.")
+        # ── CATEGORY 1: Grace Period (still active, behind on payment) ─────────
+        with tab_grace:
+            if grace.empty:
+                st.success("No supplemental policies are past due right now. 🎉")
             else:
-                disp = pd.DataFrame()
-                disp["Name"]            = view["_name"]
-                disp["Carrier"]         = view["_carrier"]
-                disp["Product"]         = view["product"]
-                disp["Term Date"]       = view["term_date"].dt.strftime("%b %d, %Y").where(view["term_date"].notna(), "Unknown")
-                disp["Days Since Lost"] = view["days_since_lost"].fillna(0).astype(int)
-                disp["Premium"]         = view["premium"].apply(lambda v: f"${v:,.2f}" if pd.notna(v) else "—")
-                disp["State"]           = view["state"] if "state" in view.columns else ""
-                disp["Urgency"]         = view["Urgency"]
+                st.caption("Still active but behind on payment — a quick call to update payment keeps the policy "
+                           "without re-enrolling. Work these first.")
+                _gp = grace["premium"].fillna(0).sum()
+                k1, k2, k3 = st.columns(3)
+                with k1:
+                    st.markdown(stat_card("Past-Due Policies", f"{len(grace):,}", "clock", GOLD), unsafe_allow_html=True)
+                with k2:
+                    st.markdown(stat_card("Premium at Risk / Mo", f"${_gp:,.0f}", "dollar", RED), unsafe_allow_html=True)
+                with k3:
+                    st.markdown(stat_card("Clients", f"{grace['_name'].nunique():,}", "users", ELEC), unsafe_allow_html=True)
 
-                def _row_color(row):
-                    u = str(row.get("Urgency", ""))
-                    if "🔴" in u: return ["background-color: rgba(231,76,60,0.15)"] * len(row)
-                    if "🟡" in u: return ["background-color: rgba(243,156,18,0.15)"] * len(row)
-                    if "🟠" in u: return ["background-color: rgba(230,126,34,0.10)"] * len(row)
-                    return [""] * len(row)
-
-                st.dataframe(disp.style.apply(_row_color, axis=1), use_container_width=True, hide_index=True, height=520)
-
-                # ── Quick Text — copy & paste into your CRM ────────────────
                 st.markdown("<br>", unsafe_allow_html=True)
-                with st.container(border=True):
-                    st.markdown(
-                        chart_head("Quick Text", "Pick a client, copy the message, paste into your CRM", "users"),
-                        unsafe_allow_html=True,
-                    )
-                    # Reference number clients call to update payment / reinstate.
-                    _SUPP_PAYMENT_NUMBER = "(800) 657-8205"  # call-in number to update payment / reinstate
-                    _opts = view["_name"].tolist()
-                    _pick = st.selectbox("Client", _opts, key="reengage_supp_msg_pick", label_visibility="collapsed")
-                    _prow = view[view["_name"] == _pick].iloc[0]
-                    _first = str(_prow.get("first_name") or (_pick.split()[0] if _pick else "")).strip().title()
-                    _prod = str(_prow.get("product") or "").strip().lower()
-                    _what = _prod if _prod else "supplemental coverage"
-                    _msg = (
-                        f"Hi {_first}, Ethan here — your insurance guy. Heads up: your {_what} "
-                        f"lapsed from a payment issue. To get it back, just call {_SUPP_PAYMENT_NUMBER} "
-                        f"and update your payment. If you have questions, let me know."
-                    )
-                    st.code(_msg, language=None)
-                    st.caption("Tap the copy icon at the top-right of the box, then paste it into your CRM.")
+                gf1, gf2 = st.columns(2)
+                with gf1:
+                    g_carriers = ["All"] + sorted(grace["_carrier"].dropna().unique().tolist())
+                    g_carrier = st.selectbox("Carrier", g_carriers, key="supp_grace_carrier")
+                with gf2:
+                    g_states = ["All"] + sorted(grace["state"].dropna().unique().tolist()) if "state" in grace.columns else ["All"]
+                    g_state = st.selectbox("State", g_states, key="supp_grace_state")
+
+                gview = grace.copy()
+                if g_carrier != "All":
+                    gview = gview[gview["_carrier"] == g_carrier]
+                if g_state != "All" and "state" in gview.columns:
+                    gview = gview[gview["state"] == g_state]
+                gview = gview.sort_values(["_carrier", "_name"]).reset_index(drop=True)
+
+                gdisp = pd.DataFrame()
+                gdisp["Name"]    = gview["_name"]
+                gdisp["Carrier"] = gview["_carrier"]
+                gdisp["Product"] = gview["product"]
+                gdisp["Premium"] = gview["premium"].apply(lambda v: f"${v:,.2f}" if pd.notna(v) else "—")
+                gdisp["Detail"]  = gview["status_detail"] if "status_detail" in gview.columns else ""
+                gdisp["State"]   = gview["state"] if "state" in gview.columns else ""
+                st.dataframe(gdisp, use_container_width=True, hide_index=True, height=440)
+
+                _supp_quick_text(gview, "supp_grace_pick")
+
+        # ── CATEGORY 2: Lapsed (cancelled — win back) ──────────────────────────
+        with tab_lapsed:
+            if lapsed.empty:
+                st.success("No lapsed supplemental policies. 🎉")
+            else:
+                lapsed["term_date"]       = pd.to_datetime(lapsed.get("term_date"), errors="coerce")
+                lapsed["days_since_lost"] = (today_ts - lapsed["term_date"]).dt.days.clip(lower=0)
+
+                def _urgency(days):
+                    if pd.isna(days): return "Unknown"
+                    if days <= 30:    return "🔴 <30 days"
+                    if days <= 60:    return "🟡 30-60 days"
+                    if days <= 90:    return "🟠 60-90 days"
+                    return "⚪ 90+ days"
+                lapsed["Urgency"] = lapsed["days_since_lost"].apply(_urgency)
+
+                last_30 = int((lapsed["days_since_lost"] <= 30).sum())
+                last_60 = int((lapsed["days_since_lost"] <= 60).sum())
+                _lost_prem = float(lapsed["premium"].fillna(0).sum())
+
+                k1, k2, k3, k4 = st.columns(4)
+                with k1:
+                    st.markdown(stat_card("Lapsed Policies", f"{len(lapsed):,}", "users", ELEC), unsafe_allow_html=True)
+                with k2:
+                    st.markdown(stat_card("Lost < 30 Days", f"{last_30:,}", "clock", RED), unsafe_allow_html=True)
+                with k3:
+                    st.markdown(stat_card("Lost < 60 Days", f"{last_60:,}", "clock", GOLD), unsafe_allow_html=True)
+                with k4:
+                    st.markdown(stat_card("Lapsed Premium / Mo", f"${_lost_prem:,.0f}", "dollar", GREEN), unsafe_allow_html=True)
+
+                st.markdown("<br>", unsafe_allow_html=True)
+                f1, f2, f3 = st.columns(3)
+                with f1:
+                    window_opts  = {"Last 30 days": 30, "Last 60 days": 60, "Last 90 days": 90, "All time": 99999}
+                    window_label = st.selectbox("Show lost in", list(window_opts.keys()), index=3, key="supp_lapsed_window")
+                    window_days  = window_opts[window_label]
+                with f2:
+                    carriers = ["All"] + sorted(lapsed["_carrier"].dropna().unique().tolist())
+                    carrier_filter = st.selectbox("Carrier", carriers, key="supp_lapsed_carrier")
+                with f3:
+                    states = ["All"] + sorted(lapsed["state"].dropna().unique().tolist()) if "state" in lapsed.columns else ["All"]
+                    state_filter = st.selectbox("State", states, key="supp_lapsed_state")
+
+                view = lapsed[(lapsed["days_since_lost"] <= window_days) | (lapsed["days_since_lost"].isna() & (window_days >= 99999))].copy()
+                if carrier_filter != "All":
+                    view = view[view["_carrier"] == carrier_filter]
+                if state_filter != "All" and "state" in view.columns:
+                    view = view[view["state"] == state_filter]
+                view = view.sort_values("days_since_lost", ascending=True, na_position="last").reset_index(drop=True)
+
+                st.caption(f"Showing **{len(view)}** lapsed policies · {window_label.lower()}"
+                           + (f" · {carrier_filter}" if carrier_filter != "All" else "")
+                           + (f" · {state_filter}" if state_filter != "All" else ""))
+
+                if view.empty:
+                    st.info("No lapsed supplemental policies match the current filters.")
+                else:
+                    disp = pd.DataFrame()
+                    disp["Name"]            = view["_name"]
+                    disp["Carrier"]         = view["_carrier"]
+                    disp["Product"]         = view["product"]
+                    disp["Term Date"]       = view["term_date"].dt.strftime("%b %d, %Y").where(view["term_date"].notna(), "Unknown")
+                    disp["Days Since Lost"] = view["days_since_lost"].fillna(0).astype(int)
+                    disp["Premium"]         = view["premium"].apply(lambda v: f"${v:,.2f}" if pd.notna(v) else "—")
+                    disp["State"]           = view["state"] if "state" in view.columns else ""
+                    disp["Urgency"]         = view["Urgency"]
+
+                    def _row_color(row):
+                        u = str(row.get("Urgency", ""))
+                        if "🔴" in u: return ["background-color: rgba(231,76,60,0.15)"] * len(row)
+                        if "🟡" in u: return ["background-color: rgba(243,156,18,0.15)"] * len(row)
+                        if "🟠" in u: return ["background-color: rgba(230,126,34,0.10)"] * len(row)
+                        return [""] * len(row)
+
+                    st.dataframe(disp.style.apply(_row_color, axis=1), use_container_width=True, hide_index=True, height=520)
+                    _supp_quick_text(view, "supp_lapsed_pick")
 
 
 # ══════════════════════════════════════════════════════════════════════════════

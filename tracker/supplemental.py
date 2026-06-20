@@ -60,10 +60,14 @@ def _load_uhc(path: Path) -> pd.DataFrame:
         "email": df.get("Email"),
         "phone": df.get("Phone Number"),
     })
-    # "Active", "Active (Grace Period) (Payment Error)", "Active (Payment Error)"
-    # are all still in force. "Withdrawn", "Sub Self Term ..." are gone.
-    out["status"] = out["status_detail"].str.startswith("Active").map(
-        {True: "Active", False: "Inactive"})
+    # In force but behind on payment ("Active (Grace Period) (Payment Error)",
+    # "Active (Payment Error)") -> Grace Period. Clean "Active" -> Active.
+    # "Withdrawn", "Sub Self Term ..." -> Inactive (gone).
+    def _st(d: str) -> str:
+        if not d.startswith("Active"):
+            return "Inactive"
+        return "Grace Period" if ("Grace" in d or "Payment Error" in d) else "Active"
+    out["status"] = out["status_detail"].apply(_st)
     return out
 
 
@@ -85,8 +89,14 @@ def _load_natgen(path: Path) -> pd.DataFrame:
         "email": df.get("Email"),
         "phone": df.get("Phone"),
     })
-    out["status"] = out["status_detail"].eq("Active").map(
-        {True: "Active", False: "Inactive"})
+    # Active + Paid=No -> Grace Period (in force but behind). Active + Paid=Yes ->
+    # Active. Anything else -> Inactive.
+    _paid = (df.get("Paid", pd.Series("", index=df.index))
+             .astype(str).str.strip().str.lower())
+    _active = out["status_detail"].eq("Active")
+    out["status"] = "Inactive"
+    out.loc[_active, "status"] = "Active"
+    out.loc[_active & _paid.eq("no"), "status"] = "Grace Period"
     return out
 
 
@@ -117,10 +127,14 @@ def summarize_supplemental(supp: pd.DataFrame) -> dict:
     if supp is None or supp.empty:
         return summary
     for carrier, grp in supp.groupby("carrier"):
-        active = grp[grp["status"] == "Active"]
+        # In force = Active OR Grace Period (grace policies haven't cancelled,
+        # they're just behind on payment), so premium reflects current book.
+        in_force = grp[grp["status"].isin(["Active", "Grace Period"])]
+        grace = grp[grp["status"] == "Grace Period"]
         summary[carrier] = {
-            "active_premium": float(active["premium"].sum()),
-            "active_policies": int(len(active)),
-            "inactive_policies": int((grp["status"] != "Active").sum()),
+            "active_premium": float(in_force["premium"].sum()),
+            "active_policies": int(len(in_force)),
+            "grace_policies": int(len(grace)),
+            "inactive_policies": int((grp["status"] == "Inactive").sum()),
         }
     return summary
