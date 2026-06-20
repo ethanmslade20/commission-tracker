@@ -718,6 +718,7 @@ def update_sheet(
     cancelled_missing_df: pd.DataFrame,
     months: Optional[Dict[str, pd.DataFrame]] = None,
     supplemental_df: Optional[pd.DataFrame] = None,
+    health_pastdue_df: Optional[pd.DataFrame] = None,
 ) -> None:
     spreadsheet = _open_sheet(sheet_url, impersonation_target)
 
@@ -730,6 +731,7 @@ def update_sheet(
 
     dashboard_title = tab_names.get("dashboard", "Dashboard")
     supp_title = tab_names.get("supplemental", "Supplemental")
+    pastdue_title = tab_names.get("health_pastdue", "Health Past Due")
 
     # Daily tracker tabs — one per ingested month, all history included.
     daily_tracker_tabs: Dict[str, str] = {}   # month_str → tab title
@@ -739,9 +741,12 @@ def update_sheet(
             daily_tracker_tabs[m] = f"Daily Tracker - {m_label}"
 
     _has_supp = supplemental_df is not None and not supplemental_df.empty
+    _has_pastdue = health_pastdue_df is not None and not health_pastdue_df.empty
     all_titles = {dashboard_title} | {t for t, *_ in data_tabs} | set(daily_tracker_tabs.values())
     if _has_supp:
         all_titles |= {supp_title}
+    if _has_pastdue:
+        all_titles |= {pastdue_title}
 
     # Remove any tabs that no longer belong
     _delete_stale_tabs(spreadsheet, keep=all_titles)
@@ -781,6 +786,15 @@ def update_sheet(
             print(f"  Updated tab: {supp_title} ({len(supplemental_df)} rows)")
         except Exception as e:
             print(f"  Warning: supplemental write failed: {e}")
+
+    # ── Health Past Due tab (active medical plans behind on payment) ──────────
+    if _has_pastdue:
+        try:
+            pastdue_ws = _ensure_tab(spreadsheet, pastdue_title)
+            _write_tab(pastdue_ws, health_pastdue_df)
+            print(f"  Updated tab: {pastdue_title} ({len(health_pastdue_df)} rows)")
+        except Exception as e:
+            print(f"  Warning: health past-due write failed: {e}")
 
     # ── Daily tracker tabs (one per month) ───────────────────────────────────
     # Pause between tabs to avoid hitting the Sheets API write-per-minute quota.

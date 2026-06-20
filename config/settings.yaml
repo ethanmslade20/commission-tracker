@@ -20,3 +20,4 @@ tabs:
   active_pending:    "All Active"
   cancelled_missing: "All Missing/Cancelled"
   supplemental:      "Supplemental"
+  health_pastdue:    "Health Past Due"

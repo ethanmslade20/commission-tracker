@@ -152,6 +152,30 @@ def _build_supplemental_display(supp: pd.DataFrame) -> pd.DataFrame:
     return out.reset_index(drop=True)
 
 
+def _build_pastdue_display(pastdue: pd.DataFrame) -> pd.DataFrame:
+    """Format the health past-due roster for its sheet tab: friendly headers,
+    most overdue first."""
+    if pastdue is None or pastdue.empty:
+        return pd.DataFrame()
+    df = pastdue.copy()
+    df["_overdue"] = pd.to_numeric(df.get("days_overdue"), errors="coerce")
+    df = df.sort_values(["_overdue", "carrier"], ascending=[False, True], na_position="last")
+    out = pd.DataFrame({
+        "First Name":   df["first_name"],
+        "Last Name":    df["last_name"],
+        "Carrier":      df["carrier"],
+        "State":        df["state"],
+        "Premium":      pd.to_numeric(df["premium"], errors="coerce").round(2),
+        "Paid Through": pd.to_datetime(df.get("paid_through"), errors="coerce"),
+        "Balance":      pd.to_numeric(df.get("balance"), errors="coerce").round(2),
+        "Days Overdue": pd.to_numeric(df.get("days_overdue"), errors="coerce"),
+        "Reason":       df["reason"],
+        "Phone":        df["phone"],
+        "Email":        df["email"],
+    })
+    return out.reset_index(drop=True)
+
+
 def run_report(settings: dict) -> None:
     snapshot_dir = Path(settings["snapshot_dir"])
     months = load_all_snapshots(snapshot_dir)
@@ -318,6 +342,14 @@ def run_report(settings: dict) -> None:
         print(f"  Supplemental book: {len(supp_display)} policies "
               f"({(supp['status'] == 'Active').sum()} active)")
 
+    # Health-plan policies behind on payment (Ambetter paid-through passed /
+    # Oscar balance owed) — active but in grace, savable with a payment call.
+    from tracker.pastdue import load_health_pastdue
+    pastdue = load_health_pastdue()
+    pastdue_display = _build_pastdue_display(pastdue)
+    if not pastdue_display.empty:
+        print(f"  Health past-due: {len(pastdue_display)} active policies behind on payment")
+
     print("Pushing to Google Sheets...")
     update_sheet(
         sheet_url=sheet_url,
@@ -328,5 +360,6 @@ def run_report(settings: dict) -> None:
         cancelled_missing_df=_sort_by_term_date_desc(_select(cancelled_missing, _ALL_CLIENTS_COLS)),
         months=months_appointed,
         supplemental_df=supp_display,
+        health_pastdue_df=pastdue_display,
     )
     print("Done.")

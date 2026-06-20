@@ -729,6 +729,7 @@ def _load_from_parquet():
     from tracker.dashboard import build_dashboard_data
 
     from tracker.supplemental import load_supplemental, summarize_supplemental
+    from tracker.pastdue import load_health_pastdue
 
     months = load_all_snapshots(Path("snapshots"))
     all_clients = build_all_clients(months)
@@ -736,6 +737,7 @@ def _load_from_parquet():
     _supp = load_supplemental()
     dashboard_data["supp"] = summarize_supplemental(_supp)
     dashboard_data["supp_df"] = _supp
+    dashboard_data["health_pastdue_df"] = load_health_pastdue()
     return months, all_clients, dashboard_data
 
 
@@ -836,6 +838,41 @@ def _read_supplemental_summary_from_sheet(spreadsheet) -> dict:
     """Per-carrier active-premium summary for the dashboard boxes."""
     from tracker.supplemental import summarize_supplemental
     return summarize_supplemental(_read_supplemental_df_from_sheet(spreadsheet))
+
+
+def _read_pastdue_df_from_sheet(spreadsheet) -> pd.DataFrame:
+    """Read the Health Past Due tab into the normalized roster shape. Empty frame
+    if the tab is missing/empty."""
+    cols = ["first_name", "last_name", "carrier", "state", "premium",
+            "paid_through", "balance", "days_overdue", "reason", "phone", "email"]
+    try:
+        ws = spreadsheet.worksheet("Health Past Due")
+        rows = ws.get_all_records()
+    except Exception:
+        return pd.DataFrame(columns=cols)
+    if not rows:
+        return pd.DataFrame(columns=cols)
+    df = pd.DataFrame(rows)
+    if "Carrier" not in df.columns:
+        return pd.DataFrame(columns=cols)
+    out = pd.DataFrame({
+        "first_name": df.get("First Name"),
+        "last_name": df.get("Last Name"),
+        "carrier": df.get("Carrier"),
+        "state": df.get("State"),
+        "premium": pd.to_numeric(
+            df.get("Premium", "").astype(str).str.replace(r"[$,]", "", regex=True),
+            errors="coerce"),
+        "paid_through": pd.to_datetime(df.get("Paid Through"), errors="coerce"),
+        "balance": pd.to_numeric(
+            df.get("Balance", "").astype(str).str.replace(r"[$,]", "", regex=True),
+            errors="coerce"),
+        "days_overdue": pd.to_numeric(df.get("Days Overdue"), errors="coerce"),
+        "reason": df.get("Reason"),
+        "phone": df.get("Phone"),
+        "email": df.get("Email"),
+    })
+    return out
 
 
 def _supp_name_key(first, last) -> str:
@@ -1010,7 +1047,8 @@ def _load_from_sheets():
     _supp_df = _read_supplemental_df_from_sheet(spreadsheet)
     dashboard_data = {"kpis": kpis, "carrier_df": carrier_df, "state_df": state_df, "mom_df": mom_df,
                       "raw_state_carrier_map": _raw_state_carrier_map,
-                      "supp": summarize_supplemental(_supp_df), "supp_df": _supp_df}
+                      "supp": summarize_supplemental(_supp_df), "supp_df": _supp_df,
+                      "health_pastdue_df": _read_pastdue_df_from_sheet(spreadsheet)}
 
     # Read all Daily Tracker tabs dynamically
     daily_months: dict = {}
@@ -2306,10 +2344,81 @@ elif page == "Re-Engage":
     else:
         lost_df = pd.DataFrame()
 
-    tab_outreach, tab_saved = st.tabs([
+    # Health-plan policies behind on payment but still active (grace period).
+    _pd_df = dd.get("health_pastdue_df")
+    _pd_df = _pd_df.copy() if (_pd_df is not None and len(_pd_df)) else pd.DataFrame()
+
+    tab_outreach, tab_pastdue, tab_saved = st.tabs([
         f"Need Outreach ({max(len(lost_df) - len(winbacks), 0)})",
+        f"⚠️ Past Due — Grace Period ({len(_pd_df)})",
         f"Won Back ✅ ({len(winbacks)})"
     ])
+
+    # ── TAB: Past Due — Grace Period (active medical, behind on payment) ───────
+    with tab_pastdue:
+        if _pd_df.empty:
+            st.success("No health plans are flagged past due right now. "
+                       "(Detectable for Ambetter & Oscar; Anthem and UHC-medical exports don't include payment data.)")
+        else:
+            _pd_df["_name"]    = (_pd_df["first_name"].fillna("").astype(str).str.strip() + " "
+                                  + _pd_df["last_name"].fillna("").astype(str).str.strip()).str.strip()
+            _pd_df["premium"]  = pd.to_numeric(_pd_df.get("premium"), errors="coerce")
+            _pd_df["days_overdue"] = pd.to_numeric(_pd_df.get("days_overdue"), errors="coerce")
+            st.caption("Still active but behind on payment — call to update payment before the carrier cancels them. "
+                       "Covers Ambetter (paid-through passed) and Oscar (balance owed).")
+            _prem_risk = float(_pd_df["premium"].fillna(0).sum())
+            pk1, pk2, pk3 = st.columns(3)
+            with pk1:
+                st.markdown(stat_card("Past-Due Policies", f"{len(_pd_df):,}", "clock", GOLD), unsafe_allow_html=True)
+            with pk2:
+                st.markdown(stat_card("Premium at Risk / Mo", f"${_prem_risk:,.0f}", "dollar", RED), unsafe_allow_html=True)
+            with pk3:
+                st.markdown(stat_card("Clients", f"{_pd_df['_name'].nunique():,}", "users", ELEC), unsafe_allow_html=True)
+
+            st.markdown("<br>", unsafe_allow_html=True)
+            pf1, pf2 = st.columns(2)
+            with pf1:
+                _pc = ["All"] + sorted(_pd_df["carrier"].dropna().unique().tolist())
+                _pcf = st.selectbox("Carrier", _pc, key="pastdue_carrier")
+            with pf2:
+                _ps = ["All"] + sorted(_pd_df["state"].dropna().unique().tolist()) if "state" in _pd_df.columns else ["All"]
+                _psf = st.selectbox("State", _ps, key="pastdue_state")
+
+            _pv = _pd_df.copy()
+            if _pcf != "All":
+                _pv = _pv[_pv["carrier"] == _pcf]
+            if _psf != "All" and "state" in _pv.columns:
+                _pv = _pv[_pv["state"] == _psf]
+            _pv = _pv.sort_values("days_overdue", ascending=False, na_position="last").reset_index(drop=True)
+
+            _pdisp = pd.DataFrame()
+            _pdisp["Name"]         = _pv["_name"]
+            _pdisp["Carrier"]      = _pv["carrier"]
+            _pdisp["State"]        = _pv["state"] if "state" in _pv.columns else ""
+            _pdisp["Premium"]      = _pv["premium"].apply(lambda v: f"${v:,.2f}" if pd.notna(v) else "—")
+            _pdisp["Days Overdue"] = _pv["days_overdue"].apply(lambda v: str(int(v)) if pd.notna(v) else "—")
+            _pdisp["Reason"]       = _pv["reason"] if "reason" in _pv.columns else ""
+            st.dataframe(_pdisp, use_container_width=True, hide_index=True, height=500)
+
+            # Quick Text — generic carrier-payment nudge (no carrier pay-line on file).
+            st.markdown("<br>", unsafe_allow_html=True)
+            with st.container(border=True):
+                st.markdown(chart_head("Quick Text", "Pick a client, copy the message, paste into your CRM", "users"),
+                            unsafe_allow_html=True)
+                _opts = _pv["_name"].tolist()
+                if _opts:
+                    _pick = st.selectbox("Client", _opts, key="pastdue_msg_pick", label_visibility="collapsed")
+                    _prow = _pv[_pv["_name"] == _pick].iloc[0]
+                    _first = str(_prow.get("first_name") or (_pick.split()[0] if _pick else "")).strip().title()
+                    _carr = str(_prow.get("carrier") or "").strip()
+                    _plan = f"{_carr} plan" if _carr else "health plan"
+                    _msg = (
+                        f"Hey {_first}, it's Ethan, your insurance guy. I got a notice that your {_plan} "
+                        f"is past due and at risk of cancelling for non-payment. Let's get your payment "
+                        f"updated so you don't lose coverage — call me or let me know a good time. Thanks!"
+                    )
+                    st.code(_msg, language=None)
+                    st.caption("Tap the copy icon at the top-right of the box, then paste it into your CRM.")
 
     if lost_df.empty:
         with tab_outreach:
