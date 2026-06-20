@@ -184,6 +184,28 @@ def run_report(settings: dict) -> None:
               f"{_ant['cancelled_lapsed'] + _ant['cancelled_dropped']} marked cancelled "
               f"({_ant['protected_new_sales']} new sales protected)")
 
+    # Tenure = how long the client has been on YOUR book, NOT the policy's
+    # coverage age. The policy's effective_date can predate our relationship
+    # (inherited / agent-of-record business starts as far back as 2018), so we
+    # measure from when the client first appears in our data (first_seen).
+    # Inherited / portal-only business with no snapshot history is floored at the
+    # earliest snapshot month — we can only prove tenure back to when tracking
+    # began (May 2025).
+    _earliest_month = min(months.keys())
+    _latest_month   = max(months.keys())
+
+    def _book_tenure(first_seen) -> int:
+        fs = first_seen if isinstance(first_seen, str) and first_seen else _earliest_month
+        try:
+            fy, fm = int(fs[:4]), int(fs[5:7])
+        except Exception:
+            fy, fm = int(_earliest_month[:4]), int(_earliest_month[5:7])
+        ly, lm = int(_latest_month[:4]), int(_latest_month[5:7])
+        return (ly - fy) * 12 + (lm - fm) + 1
+
+    if not all_clients.empty and "first_seen" in all_clients.columns:
+        all_clients["months_on_book"] = all_clients["first_seen"].apply(_book_tenure)
+
     # Cancellation reason for the Re-Engage view: use HealthSherpa's own notes
     # ("Canceled at member's request" etc.) when present, else a derived
     # "Lapsed — <carrier>" for carrier-truth lapses.

@@ -1313,16 +1313,20 @@ if page == "Dashboard":
         net_str = f"+{net}" if net >= 0 else str(net)
     except Exception:
         net_str = "N/A"
-    g1, g2, g3 = st.columns(3)
+    g1, g2, g3, g4 = st.columns(4)
     with g1:
         st.markdown(metric_card("Avg Policies Added / Month", kpis["Avg Policies Added/Month"], sub="Feb 2026 – present",
                                 icon_key="plus", spark=sparkline(_spark_vals(mom_df["New Policies"]) if "New Policies" in mom_df.columns else [], color=GREEN)),
                     unsafe_allow_html=True)
     with g2:
+        st.markdown(metric_card("Avg Members Added / Month", kpis["Avg Members Added/Month"], sub="Feb 2026 – present",
+                                icon_key="plus", spark=sparkline(_spark_vals(mom_df["New Members"]) if "New Members" in mom_df.columns else [], color=GREEN)),
+                    unsafe_allow_html=True)
+    with g3:
         st.markdown(metric_card("Avg Policies Lost / Month", kpis["Avg Policies Lost/Month"], sub=_churn_sub,
                                 icon_key="minus", spark=sparkline(_spark_vals(mom_df["Policies Lost"]) if "Policies Lost" in mom_df.columns else [], color=RED)),
                     unsafe_allow_html=True)
-    with g3:
+    with g4:
         st.markdown(metric_card("Avg Net Growth / Month", net_str, sub="Added (Feb+) minus Lost (all-time)",
                                 icon_key="trend", spark=sparkline(_spark_vals(mom_df["Net Change"]) if "Net Change" in mom_df.columns else [], color=ELEC)),
                     unsafe_allow_html=True)
