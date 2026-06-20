@@ -844,6 +844,15 @@ def _supp_name_key(first, last) -> str:
     return re.sub(r"[^a-z]", "", s)
 
 
+# How supplemental carriers are labeled in the UI (agent's preferred names).
+_SUPP_CARRIER_LABEL = {"UnitedHealthcare": "UHOne", "Allstate": "Allstate"}
+
+
+def _supp_carrier_label(carrier) -> str:
+    c = str(carrier or "").strip()
+    return _SUPP_CARRIER_LABEL.get(c, c)
+
+
 def _attach_supplemental(df: pd.DataFrame, supp_df) -> pd.DataFrame:
     """Add supplemental-coverage columns to a client roster, matched by name:
       _supp_products  comma list of products held (active if any, else lapsed)
@@ -873,9 +882,9 @@ def _attach_supplemental(df: pd.DataFrame, supp_df) -> pd.DataFrame:
         use = active if active else rows
         names: list = []
         for r in use:
-            p = str(getattr(r, "product", "") or "").strip()
-            if p and p not in names:
-                names.append(p)
+            c = _supp_carrier_label(getattr(r, "carrier", ""))
+            if c and c not in names:
+                names.append(c)
         prods.append(", ".join(names))
         if active:
             prems.append(round(sum(float(getattr(r, "premium", 0) or 0) for r in active), 2))
@@ -1498,7 +1507,7 @@ if page == "Dashboard":
             _ni = _info.get("inactive_policies", 0)
             with _col:
                 st.markdown(metric_card(
-                    f"{_carrier} — Monthly Premium",
+                    f"{_supp_carrier_label(_carrier)} — Monthly Premium",
                     f"${_prem:,.0f}",
                     sub=f"{_np} active policies · {_ni} lapsed · ${_prem*12:,.0f}/yr",
                     icon_key="dollar"), unsafe_allow_html=True)
