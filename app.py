@@ -552,6 +552,7 @@ def _nav_icon_css():
         "<rect x='2' y='7' width='20' height='14' rx='2'/><path d='M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16'/>",  # Book of Business (briefcase)
         "<circle cx='12' cy='12' r='10'/><circle cx='12' cy='12' r='6'/><circle cx='12' cy='12' r='2'/>",  # Goals (target)
         "<path d='M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2'/><circle cx='9' cy='7' r='4'/><path d='M23 21v-2a4 4 0 0 0-3-3.87'/><path d='M16 3.13a4 4 0 0 1 0 7.75'/>",  # Re-Engage (users)
+        "<polyline points='23 4 23 10 17 10'/><polyline points='1 20 1 14 7 14'/><path d='M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15'/>",  # Re-Engage (Supp) (refresh)
         "<path d='M12 2l8 4v6c0 5-3.5 8.5-8 10-4.5-1.5-8-5-8-10V6l8-4z'/>",  # AEP Tracker (shield)
         "<circle cx='12' cy='12' r='3'/><path d='M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z'/>",  # Settings (gear)
     ]
@@ -1352,7 +1353,7 @@ with st.sidebar:
 
     page = st.radio(
         "Navigation",
-        ["Dashboard", "Month-over-Month", "Daily Tracker", "Book of Business", "Goals", "Re-Engage", "AEP Tracker", "Settings"],
+        ["Dashboard", "Month-over-Month", "Daily Tracker", "Book of Business", "Goals", "Re-Engage", "Re-Engage (Supp)", "AEP Tracker", "Settings"],
         label_visibility="collapsed",
     )
 
@@ -2441,6 +2442,123 @@ elif page == "Re-Engage":
 
                 wb_df = pd.DataFrame(wb_rows)
                 st.dataframe(wb_df, use_container_width=True, hide_index=True, height=min(80 + len(wb_rows) * 35, 480))
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# RE-ENGAGE (SUPPLEMENTAL)
+# ══════════════════════════════════════════════════════════════════════════════
+elif page == "Re-Engage (Supp)":
+    st.title("Re-Engage — Supplemental")
+    st.caption("Lapsed supplemental policies (dental, vision, STM, accident…) — sorted by most recently lost. "
+               "Win these back the same way you do medical.")
+    st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
+
+    today_ts = pd.Timestamp(dt.date.today())
+    supp_df  = dd.get("supp_df")
+
+    if supp_df is None or len(supp_df) == 0:
+        st.info("No supplemental data found. Drop your UHOne and Allstate exports in carrier_books and run a report.")
+    else:
+        lost = supp_df[supp_df["status"].astype(str).str.strip() == "Inactive"].copy()
+        if lost.empty:
+            st.success("No lapsed supplemental policies — your supplemental book is fully active. 🎉")
+        else:
+            lost["term_date"]       = pd.to_datetime(lost.get("term_date"), errors="coerce")
+            lost["days_since_lost"] = (today_ts - lost["term_date"]).dt.days.clip(lower=0)
+            lost["_name"]           = (lost["first_name"].fillna("").astype(str).str.strip() + " "
+                                       + lost["last_name"].fillna("").astype(str).str.strip()).str.strip()
+            lost["_carrier"]        = lost["carrier"].apply(_supp_carrier_label)
+            lost["premium"]         = pd.to_numeric(lost["premium"], errors="coerce")
+
+            def _urgency(days):
+                if pd.isna(days): return "Unknown"
+                if days <= 30:    return "🔴 <30 days"
+                if days <= 60:    return "🟡 30-60 days"
+                if days <= 90:    return "🟠 60-90 days"
+                return "⚪ 90+ days"
+            lost["Urgency"] = lost["days_since_lost"].apply(_urgency)
+
+            last_30 = int((lost["days_since_lost"] <= 30).sum())
+            last_60 = int((lost["days_since_lost"] <= 60).sum())
+            _lost_prem = float(lost["premium"].fillna(0).sum())
+
+            k1, k2, k3, k4 = st.columns(4)
+            with k1:
+                st.markdown(stat_card("Lapsed Policies", f"{len(lost):,}", "users", ELEC), unsafe_allow_html=True)
+            with k2:
+                st.markdown(stat_card("Lost < 30 Days", f"{last_30:,}", "clock", RED), unsafe_allow_html=True)
+            with k3:
+                st.markdown(stat_card("Lost < 60 Days", f"{last_60:,}", "clock", GOLD), unsafe_allow_html=True)
+            with k4:
+                st.markdown(stat_card("Lapsed Premium / Mo", f"${_lost_prem:,.0f}", "dollar", GREEN), unsafe_allow_html=True)
+
+            st.markdown("<br>", unsafe_allow_html=True)
+
+            f1, f2, f3 = st.columns(3)
+            with f1:
+                window_opts  = {"Last 30 days": 30, "Last 60 days": 60, "Last 90 days": 90, "All time": 99999}
+                window_label = st.selectbox("Show lost in", list(window_opts.keys()), index=3)
+                window_days  = window_opts[window_label]
+            with f2:
+                carriers = ["All"] + sorted(lost["_carrier"].dropna().unique().tolist())
+                carrier_filter = st.selectbox("Carrier", carriers)
+            with f3:
+                states = ["All"] + sorted(lost["state"].dropna().unique().tolist()) if "state" in lost.columns else ["All"]
+                state_filter = st.selectbox("State", states)
+
+            view = lost[(lost["days_since_lost"] <= window_days) | (lost["days_since_lost"].isna() & (window_days >= 99999))].copy()
+            if carrier_filter != "All":
+                view = view[view["_carrier"] == carrier_filter]
+            if state_filter != "All" and "state" in view.columns:
+                view = view[view["state"] == state_filter]
+            view = view.sort_values("days_since_lost", ascending=True, na_position="last").reset_index(drop=True)
+
+            st.caption(f"Showing **{len(view)}** lapsed policies · {window_label.lower()}"
+                       + (f" · {carrier_filter}" if carrier_filter != "All" else "")
+                       + (f" · {state_filter}" if state_filter != "All" else ""))
+
+            if view.empty:
+                st.info("No lapsed supplemental policies match the current filters.")
+            else:
+                disp = pd.DataFrame()
+                disp["Name"]            = view["_name"]
+                disp["Carrier"]         = view["_carrier"]
+                disp["Product"]         = view["product"]
+                disp["Term Date"]       = view["term_date"].dt.strftime("%b %d, %Y").where(view["term_date"].notna(), "Unknown")
+                disp["Days Since Lost"] = view["days_since_lost"].fillna(0).astype(int)
+                disp["Premium"]         = view["premium"].apply(lambda v: f"${v:,.2f}" if pd.notna(v) else "—")
+                disp["State"]           = view["state"] if "state" in view.columns else ""
+                disp["Urgency"]         = view["Urgency"]
+
+                def _row_color(row):
+                    u = str(row.get("Urgency", ""))
+                    if "🔴" in u: return ["background-color: rgba(231,76,60,0.15)"] * len(row)
+                    if "🟡" in u: return ["background-color: rgba(243,156,18,0.15)"] * len(row)
+                    if "🟠" in u: return ["background-color: rgba(230,126,34,0.10)"] * len(row)
+                    return [""] * len(row)
+
+                st.dataframe(disp.style.apply(_row_color, axis=1), use_container_width=True, hide_index=True, height=520)
+
+                # ── Quick Text — copy & paste into your CRM ────────────────
+                st.markdown("<br>", unsafe_allow_html=True)
+                with st.container(border=True):
+                    st.markdown(
+                        chart_head("Quick Text", "Pick a client, copy the message, paste into your CRM", "users"),
+                        unsafe_allow_html=True,
+                    )
+                    _opts = view["_name"].tolist()
+                    _pick = st.selectbox("Client", _opts, key="reengage_supp_msg_pick", label_visibility="collapsed")
+                    _prow = view[view["_name"] == _pick].iloc[0]
+                    _first = str(_prow.get("first_name") or (_pick.split()[0] if _pick else "")).strip().title()
+                    _prod = str(_prow.get("product") or "").strip().title()
+                    _what = _prod if _prod else "supplemental coverage"
+                    _msg = (
+                        f"Hey {_first}, it's Ethan, your insurance guy. I noticed your {_what} "
+                        f"recently dropped off. Want me to get it back in place or look at other options? "
+                        f"Let me know!"
+                    )
+                    st.code(_msg, language=None)
+                    st.caption("Tap the copy icon at the top-right of the box, then paste it into your CRM.")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
