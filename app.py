@@ -727,9 +727,12 @@ def _load_from_parquet():
     from tracker.diff import build_all_clients
     from tracker.dashboard import build_dashboard_data
 
+    from tracker.supplemental import load_supplemental, summarize_supplemental
+
     months = load_all_snapshots(Path("snapshots"))
     all_clients = build_all_clients(months)
     dashboard_data = build_dashboard_data(months, all_clients)
+    dashboard_data["supp"] = summarize_supplemental(load_supplemental())
     return months, all_clients, dashboard_data
 
 
@@ -790,6 +793,34 @@ def _read_daily_tab_from_sheet(spreadsheet, tab_name: str) -> pd.DataFrame:
         except Exception:
             continue
     return pd.DataFrame(rows)
+
+
+def _read_supplemental_summary_from_sheet(spreadsheet) -> dict:
+    """Read the Supplemental tab and summarize active premium per carrier for the
+    dashboard boxes. Returns {} if the tab is missing/empty."""
+    try:
+        ws = spreadsheet.worksheet("Supplemental")
+        rows = ws.get_all_records()
+    except Exception:
+        return {}
+    if not rows:
+        return {}
+    df = pd.DataFrame(rows)
+    if "Carrier" not in df.columns or "Monthly Premium" not in df.columns:
+        return {}
+    df["_prem"] = pd.to_numeric(
+        df["Monthly Premium"].astype(str).str.replace(r"[$,]", "", regex=True),
+        errors="coerce").fillna(0.0)
+    df["_active"] = df.get("Status", "").astype(str).str.strip().eq("Active")
+    summary: dict = {}
+    for carrier, grp in df.groupby("Carrier"):
+        act = grp[grp["_active"]]
+        summary[str(carrier)] = {
+            "active_premium": float(act["_prem"].sum()),
+            "active_policies": int(len(act)),
+            "inactive_policies": int((~grp["_active"]).sum()),
+        }
+    return summary
 
 
 def _load_from_sheets():
@@ -886,7 +917,8 @@ def _load_from_sheets():
     ) if "state" in active_df.columns else pd.DataFrame(columns=["State", "Policies"])
 
     dashboard_data = {"kpis": kpis, "carrier_df": carrier_df, "state_df": state_df, "mom_df": mom_df,
-                      "raw_state_carrier_map": _raw_state_carrier_map}
+                      "raw_state_carrier_map": _raw_state_carrier_map,
+                      "supp": _read_supplemental_summary_from_sheet(spreadsheet)}
 
     # Read all Daily Tracker tabs dynamically
     daily_months: dict = {}
@@ -1377,6 +1409,27 @@ if page == "Dashboard":
         st.markdown(metric_card("Expected Annual Commission", f"${_arr:,.0f}", icon_key="calendar"), unsafe_allow_html=True)
     with r3:
         st.markdown(metric_card("Commission per Policy / Mo", _per_policy, icon_key="file"), unsafe_allow_html=True)
+
+    # ── SUPPLEMENTAL PREMIUM ──────────────────────────────────────────────────
+    # Dental / vision / STM / accident etc., split by carrier so each carrier's
+    # contribution is visible. Premium only for now — commission once rates known.
+    _supp = dd.get("supp") or {}
+    if _supp:
+        st.markdown(section_header("Supplemental Premium (Active)", "dollar"), unsafe_allow_html=True)
+        # Stable order: largest active premium first.
+        _supp_order = sorted(_supp.items(), key=lambda kv: kv[1].get("active_premium", 0), reverse=True)
+        _supp_cols = st.columns(max(len(_supp_order), 1))
+        for _col, (_carrier, _info) in zip(_supp_cols, _supp_order):
+            _prem = _info.get("active_premium", 0.0)
+            _np = _info.get("active_policies", 0)
+            _ni = _info.get("inactive_policies", 0)
+            with _col:
+                st.markdown(metric_card(
+                    f"{_carrier} — Monthly Premium",
+                    f"${_prem:,.0f}",
+                    sub=f"{_np} active policies · {_ni} lapsed · ${_prem*12:,.0f}/yr",
+                    icon_key="dollar"), unsafe_allow_html=True)
+        st.caption("Premium shown — commission will appear once per-carrier comp rates are added.")
 
     st.markdown("<br>", unsafe_allow_html=True)
     st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)

@@ -19,3 +19,4 @@ tabs:
   all_clients:       "All Clients"
   active_pending:    "All Active"
   cancelled_missing: "All Missing/Cancelled"
+  supplemental:      "Supplemental"

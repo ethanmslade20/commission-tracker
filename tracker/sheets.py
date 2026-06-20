@@ -717,6 +717,7 @@ def update_sheet(
     active_pending_df: pd.DataFrame,
     cancelled_missing_df: pd.DataFrame,
     months: Optional[Dict[str, pd.DataFrame]] = None,
+    supplemental_df: Optional[pd.DataFrame] = None,
 ) -> None:
     spreadsheet = _open_sheet(sheet_url, impersonation_target)
 
@@ -728,6 +729,7 @@ def update_sheet(
     ]
 
     dashboard_title = tab_names.get("dashboard", "Dashboard")
+    supp_title = tab_names.get("supplemental", "Supplemental")
 
     # Daily tracker tabs — one per ingested month, all history included.
     daily_tracker_tabs: Dict[str, str] = {}   # month_str → tab title
@@ -736,7 +738,10 @@ def update_sheet(
             m_label = pd.Timestamp(m + "-01").strftime("%b %Y")
             daily_tracker_tabs[m] = f"Daily Tracker - {m_label}"
 
+    _has_supp = supplemental_df is not None and not supplemental_df.empty
     all_titles = {dashboard_title} | {t for t, *_ in data_tabs} | set(daily_tracker_tabs.values())
+    if _has_supp:
+        all_titles |= {supp_title}
 
     # Remove any tabs that no longer belong
     _delete_stale_tabs(spreadsheet, keep=all_titles)
@@ -767,6 +772,15 @@ def update_sheet(
         ws = _ensure_tab(spreadsheet, tab_title)
         _write_all_clients_tab(ws, df, show_active_row=show_active, show_inactive_row=show_inactive)
         print(f"  Updated tab: {tab_title} ({len(df)} rows)")
+
+    # ── Supplemental tab (dental/vision/STM/accident across carriers) ─────────
+    if _has_supp:
+        try:
+            supp_ws = _ensure_tab(spreadsheet, supp_title)
+            _write_tab(supp_ws, supplemental_df)
+            print(f"  Updated tab: {supp_title} ({len(supplemental_df)} rows)")
+        except Exception as e:
+            print(f"  Warning: supplemental write failed: {e}")
 
     # ── Daily tracker tabs (one per month) ───────────────────────────────────
     # Pause between tabs to avoid hitting the Sheets API write-per-minute quota.

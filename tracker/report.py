@@ -126,6 +126,31 @@ def _filter_by_appointments(df: pd.DataFrame, appointments: dict) -> pd.DataFram
     return df[df.apply(_is_appointed, axis=1)].copy()
 
 
+def _build_supplemental_display(supp: pd.DataFrame) -> pd.DataFrame:
+    """Format the normalized supplemental roster for the Supplemental sheet tab:
+    friendly headers, active policies first, premium rounded. Commission is
+    omitted until the agent provides per-carrier comp rates."""
+    if supp is None or supp.empty:
+        return pd.DataFrame()
+    df = supp.copy()
+    df["_active_rank"] = (df["status"] == "Active").map({True: 0, False: 1})
+    df = df.sort_values(["_active_rank", "carrier", "last_name", "first_name"],
+                        key=lambda s: s.str.lower() if s.dtype == object else s)
+    out = pd.DataFrame({
+        "First Name":      df["first_name"],
+        "Last Name":       df["last_name"],
+        "Carrier":         df["carrier"],
+        "Product":         df["product"],
+        "Monthly Premium": df["premium"].round(2),
+        "Status":          df["status"],
+        "Status Detail":   df["status_detail"],
+        "State":           df["state"],
+        "Email":           df["email"],
+        "Phone":           df["phone"],
+    })
+    return out.reset_index(drop=True)
+
+
 def run_report(settings: dict) -> None:
     snapshot_dir = Path(settings["snapshot_dir"])
     months = load_all_snapshots(snapshot_dir)
@@ -283,6 +308,15 @@ def run_report(settings: dict) -> None:
         m: _filter_by_appointments(df, appointments) for m, df in months.items()
     }
 
+    # Supplemental / ancillary book (dental, vision, STM, accident, …) across
+    # carriers. Premium only for now — commission rates TBD.
+    from tracker.supplemental import load_supplemental
+    supp = load_supplemental()
+    supp_display = _build_supplemental_display(supp)
+    if not supp_display.empty:
+        print(f"  Supplemental book: {len(supp_display)} policies "
+              f"({(supp['status'] == 'Active').sum()} active)")
+
     print("Pushing to Google Sheets...")
     update_sheet(
         sheet_url=sheet_url,
@@ -292,5 +326,6 @@ def run_report(settings: dict) -> None:
         active_pending_df=_sort_by_date(_select(active_pending, _ACTIVE_COLS)),
         cancelled_missing_df=_sort_by_term_date_desc(_select(cancelled_missing, _ALL_CLIENTS_COLS)),
         months=months_appointed,
+        supplemental_df=supp_display,
     )
     print("Done.")
