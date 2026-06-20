@@ -1313,22 +1313,44 @@ if page == "Dashboard":
         net_str = f"+{net}" if net >= 0 else str(net)
     except Exception:
         net_str = "N/A"
-    g1, g2, g3, g4 = st.columns(4)
+    g1, g2, g3 = st.columns(3)
     with g1:
         st.markdown(metric_card("Avg Policies Added / Month", kpis["Avg Policies Added/Month"], sub="Feb 2026 – present",
                                 icon_key="plus", spark=sparkline(_spark_vals(mom_df["New Policies"]) if "New Policies" in mom_df.columns else [], color=GREEN)),
                     unsafe_allow_html=True)
     with g2:
-        st.markdown(metric_card("Avg Members Added / Month", kpis["Avg Members Added/Month"], sub="Feb 2026 – present",
-                                icon_key="plus", spark=sparkline(_spark_vals(mom_df["New Members"]) if "New Members" in mom_df.columns else [], color=GREEN)),
-                    unsafe_allow_html=True)
-    with g3:
         st.markdown(metric_card("Avg Policies Lost / Month", kpis["Avg Policies Lost/Month"], sub=_churn_sub,
                                 icon_key="minus", spark=sparkline(_spark_vals(mom_df["Policies Lost"]) if "Policies Lost" in mom_df.columns else [], color=RED)),
                     unsafe_allow_html=True)
-    with g4:
+    with g3:
         st.markdown(metric_card("Avg Net Growth / Month", net_str, sub="Added (Feb+) minus Lost (all-time)",
                                 icon_key="trend", spark=sparkline(_spark_vals(mom_df["Net Change"]) if "Net Change" in mom_df.columns else [], color=ELEC)),
+                    unsafe_allow_html=True)
+
+    # ── MEMBER GROWTH ─────────────────────────────────────────────────────────
+    # Same metrics at the member (covered-lives) level rather than per policy.
+    st.markdown(section_header("Member Growth", "trend"), unsafe_allow_html=True)
+    try:
+        net_mem = round(float(kpis["Avg Members Added/Month"]) - float(kpis["Avg Members Lost/Month"]), 1)
+        net_mem_str = f"+{net_mem}" if net_mem >= 0 else str(net_mem)
+    except Exception:
+        net_mem_str = "N/A"
+    if {"New Members", "Members Lost"}.issubset(mom_df.columns):
+        _net_mem_series = (mom_df["New Members"] - mom_df["Members Lost"])
+    else:
+        _net_mem_series = pd.Series(dtype=float)
+    m1, m2, m3 = st.columns(3)
+    with m1:
+        st.markdown(metric_card("Avg Members Added / Month", kpis["Avg Members Added/Month"], sub="Feb 2026 – present",
+                                icon_key="plus", spark=sparkline(_spark_vals(mom_df["New Members"]) if "New Members" in mom_df.columns else [], color=GREEN)),
+                    unsafe_allow_html=True)
+    with m2:
+        st.markdown(metric_card("Avg Members Lost / Month", kpis["Avg Members Lost/Month"], sub="All history",
+                                icon_key="minus", spark=sparkline(_spark_vals(mom_df["Members Lost"]) if "Members Lost" in mom_df.columns else [], color=RED)),
+                    unsafe_allow_html=True)
+    with m3:
+        st.markdown(metric_card("Net Members Gained / Month", net_mem_str, sub="Added (Feb+) minus Lost (all-time)",
+                                icon_key="trend", spark=sparkline(_spark_vals(_net_mem_series), color=ELEC)),
                     unsafe_allow_html=True)
 
     # ── COMMISSION FORECAST ───────────────────────────────────────────────────
