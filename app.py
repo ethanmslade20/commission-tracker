@@ -557,6 +557,7 @@ def _nav_icon_css():
         "<polyline points='23 6 13.5 15.5 8.5 10.5 1 18'/><polyline points='17 6 23 6 23 12'/>",  # Month-over-Month (trend)
         "<rect x='3' y='4' width='18' height='18' rx='2'/><line x1='16' y1='2' x2='16' y2='6'/><line x1='8' y1='2' x2='8' y2='6'/><line x1='3' y1='10' x2='21' y2='10'/>",  # Daily Tracker (calendar)
         "<rect x='2' y='7' width='20' height='14' rx='2'/><path d='M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16'/>",  # Book of Business (briefcase)
+        "<line x1='12' y1='1' x2='12' y2='23'/><path d='M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6'/>",  # Commissions (dollar)
         "<circle cx='12' cy='12' r='10'/><circle cx='12' cy='12' r='6'/><circle cx='12' cy='12' r='2'/>",  # Goals (target)
         "<path d='M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2'/><circle cx='9' cy='7' r='4'/><path d='M23 21v-2a4 4 0 0 0-3-3.87'/><path d='M16 3.13a4 4 0 0 1 0 7.75'/>",  # Re-Engage (users)
         "<polyline points='23 4 23 10 17 10'/><polyline points='1 20 1 14 7 14'/><path d='M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15'/>",  # Re-Engage (Supp) (refresh)
@@ -1105,6 +1106,35 @@ def _gspread_client():
     return client
 
 
+@st.cache_data(ttl=300)
+def _load_payments() -> pd.DataFrame:
+    """Read the Insurance PAYMENTS sheet into commission line items. Works in
+    cloud (service account from secrets) and local (ADC impersonation)."""
+    import yaml
+    from tracker.commissions import parse_payments_sheet
+    url = imp = None
+    try:
+        cfg = yaml.safe_load(open(Path(__file__).parent / "config" / "settings.yaml"))
+        url, imp = cfg.get("payments_sheet_url"), cfg.get("impersonation_target")
+    except Exception:
+        pass
+    try:
+        url = st.secrets.get("payments_sheet_url", url)
+    except Exception:
+        pass
+    if not url:
+        return pd.DataFrame()
+    try:
+        if _running_in_cloud():
+            ss = _gspread_client().open_by_url(url)
+        else:
+            from tracker.sheets import _open_sheet
+            ss = _open_sheet(url, imp)
+        return parse_payments_sheet(ss)
+    except Exception:
+        return pd.DataFrame()
+
+
 _AEP_STATUSES   = ["Not Started", "Contacted", "Renewed", "Lost"]
 _AEP_COLS       = ["First Name", "Last Name", "State", "Carrier", "Members", "Monthly Premium", "Effective Date", "Status", "Notes"]
 _AEP_TAB_PREFIX = "AEP "
@@ -1413,7 +1443,7 @@ with st.sidebar:
 
     page = st.radio(
         "Navigation",
-        ["Dashboard", "Month-over-Month", "Daily Tracker", "Book of Business", "Goals", "Re-Engage", "Re-Engage (Supp)", "AEP Tracker", "Settings"],
+        ["Dashboard", "Month-over-Month", "Daily Tracker", "Book of Business", "Commissions", "Goals", "Re-Engage", "Re-Engage (Supp)", "AEP Tracker", "Settings"],
         label_visibility="collapsed",
     )
 
@@ -2006,6 +2036,107 @@ elif page == "Book of Business":
                 "Supp Term Date":  st.column_config.DateColumn("Supp Term Date", format="MMM D, YYYY"),
             },
         )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# COMMISSIONS
+# ══════════════════════════════════════════════════════════════════════════════
+elif page == "Commissions":
+    from tracker.commissions import (carrier_timing, monthly_summary,
+                                     carrier_summary, reconcile_book)
+    st.title("Commissions")
+    st.caption("Actual payments from your Insurance PAYMENTS sheet — income, when each carrier pays, "
+               "and clients who've stopped getting paid.")
+    st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
+
+    pay = _load_payments()
+    if pay is None or pay.empty:
+        st.info("Couldn't read the Insurance PAYMENTS sheet. Make sure it's shared (Viewer) with "
+                "the service account, then hit Refresh data.")
+    else:
+        msum = monthly_summary(pay)
+        latest = msum.iloc[-1]
+        _lm = latest["Month"]
+        ytd = pay[pay["payment_month"].dt.year == _lm.year]["amount"].sum()
+        avg = msum["Net"].mean()
+
+        # ── KPIs ──────────────────────────────────────────────────────────────
+        st.markdown(section_header("Income", "dollar"), unsafe_allow_html=True)
+        k1, k2, k3, k4 = st.columns(4)
+        with k1:
+            st.markdown(stat_card(f"{_lm.strftime('%b %Y')} Net", f"${latest['Net']:,.0f}", "dollar", GREEN), unsafe_allow_html=True)
+        with k2:
+            st.markdown(stat_card(f"{_lm.year} YTD", f"${ytd:,.0f}", "calendar", ELEC), unsafe_allow_html=True)
+        with k3:
+            st.markdown(stat_card("Avg / Month", f"${avg:,.0f}", "trend", CYAN), unsafe_allow_html=True)
+        with k4:
+            st.markdown(stat_card("Chargebacks (mo)", f"${latest['Chargebacks']:,.0f}", "minus", RED), unsafe_allow_html=True)
+
+        # ── Monthly net chart ────────────────────────────────────────────────
+        st.markdown("<br>", unsafe_allow_html=True)
+        with st.container(border=True):
+            st.markdown(chart_head("Commission by month", "Net paid (after chargebacks)", "trend"), unsafe_allow_html=True)
+            mc = msum.copy()
+            mc["Label"] = mc["Month"].dt.strftime("%b %Y")
+            fig = px.bar(mc, x="Label", y="Net", text="Net")
+            fig.update_traces(marker_color=GREEN, marker_cornerradius=8,
+                              texttemplate="$%{text:,.0f}", textposition="outside")
+            fig.update_layout(height=320, margin=dict(l=10, r=10, t=10, b=10),
+                              paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                              xaxis_title=None, yaxis_title=None, font_color="#cbd5e1")
+            show_chart(fig)
+
+        # ── Carrier breakdown + payment timing ────────────────────────────────
+        cc1, cc2 = st.columns(2)
+        with cc1:
+            with st.container(border=True):
+                st.markdown(chart_head("By carrier", "Net commission, all months", "shield"), unsafe_allow_html=True)
+                cs = carrier_summary(pay).copy()
+                cs["Net"] = cs["Net"].map(lambda v: f"${v:,.0f}")
+                st.dataframe(cs[["Carrier", "Net", "Payments"]], use_container_width=True, hide_index=True, height=380)
+        with cc2:
+            with st.container(border=True):
+                st.markdown(chart_head("When each carrier pays", "Lag from coverage month to payment", "calendar"), unsafe_allow_html=True)
+                tim = carrier_timing(pay)
+                trows = [{"Carrier": c, "Pays": ("Same month" if lag == 0 else f"+{lag} month" + ("s" if lag > 1 else ""))}
+                         for c, lag in sorted(tim.items())]
+                st.dataframe(pd.DataFrame(trows), use_container_width=True, hide_index=True, height=380)
+
+        # ── Missing payments + chargebacks ────────────────────────────────────
+        _ACTIVE = {"Effectuated", "PendingEffectuation", "PendingFollowups"}
+        _active = all_clients[all_clients["status"].isin(_ACTIVE)] if "status" in all_clients.columns else pd.DataFrame()
+        rec = reconcile_book(_active, pay)
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.markdown(section_header("Stopped Getting Paid", "minus"), unsafe_allow_html=True)
+        st.caption("Active clients who were being paid but haven't shown up in the last 2 statement months — "
+                   "could be a lapse (commission rightly stopped) or a missing payment to chase. Review each.")
+        miss = rec["missing"]
+        if miss is None or miss.empty:
+            st.success("Every active client that's ever been paid showed up in a recent statement. 🎉")
+        else:
+            md = pd.DataFrame({
+                "Name": (miss["first_name"].fillna("") + " " + miss["last_name"].fillna("")).str.strip().str.title(),
+                "Carrier": miss["carrier"],
+                "State": miss.get("state", ""),
+                "Last Paid": miss["Last Paid"],
+                "Mo. Since": miss["Months Since Paid"],
+            }).sort_values("Mo. Since", ascending=False)
+            st.dataframe(md, use_container_width=True, hide_index=True, height=min(80 + len(md) * 35, 460))
+
+        cb = rec["chargebacks"]
+        if cb is not None and not cb.empty:
+            st.markdown("<br>", unsafe_allow_html=True)
+            with st.expander(f"Recent chargebacks / clawbacks ({len(cb)})"):
+                cbd = pd.DataFrame({
+                    "Member": cb["member"].str.title(),
+                    "Carrier": cb["carrier"],
+                    "Month": cb["payment_month"].dt.strftime("%b %Y"),
+                    "Amount": cb["amount"].map(lambda v: f"-${abs(v):,.2f}"),
+                })
+                st.dataframe(cbd, use_container_width=True, hide_index=True, height=min(80 + len(cbd) * 35, 400))
+
+        st.caption(f"Matched {rec['matched']} of {len(_active)} active clients to a payment "
+                   f"({len(_active) - rec['matched']} unmatched — mostly new business not yet paid or name variants).")
 
 
 # ══════════════════════════════════════════════════════════════════════════════

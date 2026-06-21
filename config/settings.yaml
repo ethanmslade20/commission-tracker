@@ -2,6 +2,9 @@
 
 sheet_url: "https://docs.google.com/spreadsheets/d/1vezg60VBcsZRrQDmVAWJwb3MUiRp9EYBiAzwALCryv8/edit?gid=0"
 
+# Actual commission payments (the "Insurance PAYMENTS" sheet Ethan maintains).
+payments_sheet_url: "https://docs.google.com/spreadsheets/d/1GYPHyfLKVsB2Ri87Ep3qsm3KngskNRgLm0KpMrzPRSw/edit"
+
 # ADC impersonation - no JSON key needed.
 # Your personal gcloud login (Owner) mints short-lived tokens for this SA.
 impersonation_target: "commission-tracker-bot@project-80de9266-031e-4099-826.iam.gserviceaccount.com"
