@@ -55,7 +55,7 @@ def _filter_excluded(df: pd.DataFrame, exclusions: list) -> pd.DataFrame:
 
 _ALL_CLIENTS_COLS = ["first_name", "last_name", "carrier", "effective_date", "term_date",
                      "status", "state", "ffm_app_id", "net_premium", "applicant_count", "months_on_book",
-                     "cancel_reason", "term_estimated"]
+                     "client_since", "cancel_reason", "term_estimated"]
 
 _ACTIVE_COLS = ["first_name", "last_name", "carrier", "effective_date",
                 "status", "state", "ffm_app_id", "net_premium", "applicant_count", "months_on_book"]
@@ -248,25 +248,24 @@ def run_report(settings: dict) -> None:
     _latest_month   = max(months.keys())
     _latest_y, _latest_m = int(_latest_month[:4]), int(_latest_month[5:7])
 
-    def _tenure_months(row) -> int:
-        start = None
+    def _tenure_start(row):
+        """The date the client became OURS (broker-of-record / first seen)."""
         bed = row.get("broker_effective_date")
         if pd.notna(bed):
-            start = pd.Timestamp(bed)
-        else:
-            fs = row.get("first_seen")
-            if isinstance(fs, str) and fs:
-                try:
-                    start = pd.Timestamp(fs + "-01")
-                except Exception:
-                    start = None
-        if start is None or pd.isna(start):
-            start = pd.Timestamp(_earliest_month + "-01")
-        months_n = (_latest_y - start.year) * 12 + (_latest_m - start.month) + 1
-        return max(months_n, 1)
+            return pd.Timestamp(bed)
+        fs = row.get("first_seen")
+        if isinstance(fs, str) and fs:
+            try:
+                return pd.Timestamp(fs + "-01")
+            except Exception:
+                pass
+        return pd.Timestamp(_earliest_month + "-01")
 
     if not all_clients.empty:
-        all_clients["months_on_book"] = all_clients.apply(_tenure_months, axis=1)
+        all_clients["client_since"] = all_clients.apply(_tenure_start, axis=1)
+        _cs = pd.to_datetime(all_clients["client_since"], errors="coerce")
+        all_clients["months_on_book"] = ((_latest_y - _cs.dt.year) * 12
+                                         + (_latest_m - _cs.dt.month) + 1).clip(lower=1)
 
     # Cancellation reason for the Re-Engage view: use HealthSherpa's own notes
     # ("Canceled at member's request" etc.) when present, else a derived

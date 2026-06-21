@@ -241,9 +241,15 @@ def build_gaps(active: pd.DataFrame, payments: pd.DataFrame, today=None) -> pd.D
     def _row(r, gap):
         k = _person_key(r.get("first_name", ""), r.get("last_name", ""))
         h = hist.get(k)
+        # "Client Since" = when they became OUR client (broker-of-record / first
+        # seen), not the policy's original coverage date.
+        client_since = r.get("client_since")
+        if client_since is None or (hasattr(pd, "isna") and pd.isna(client_since)):
+            client_since = r.get("broker_effective_date") or r.get("effective_date", "")
         return {
             "First Name": r.get("first_name", ""), "Last Name": r.get("last_name", ""),
             "Carrier": r.get("carrier", ""), "State": r.get("state", ""),
+            "Client Since": client_since,
             "Effective Date": r.get("effective_date", ""),
             "Mo. on Book": r.get("months_on_book", ""),
             "Premium": r.get("net_premium", ""), "Gap": gap,
@@ -265,6 +271,7 @@ def build_gaps(active: pd.DataFrame, payments: pd.DataFrame, today=None) -> pd.D
     df = pd.DataFrame(rows)
     if not df.empty:
         df["Effective Date"] = pd.to_datetime(df["Effective Date"], errors="coerce")
+        df["Client Since"] = pd.to_datetime(df["Client Since"], errors="coerce")
         df = (df.sort_values(["Gap", "Carrier", "Last Name"])
               .drop(columns=["_key"]).reset_index(drop=True))
     return df

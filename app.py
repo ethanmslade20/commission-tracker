@@ -767,7 +767,7 @@ def _read_all_clients_from_sheet(spreadsheet) -> pd.DataFrame:
     data    = all_values[3:]
     df = pd.DataFrame(data, columns=headers).replace("", None)
 
-    for col in ["effective_date", "term_date"]:
+    for col in ["effective_date", "term_date", "client_since"]:
         if col in df.columns:
             df[col] = pd.to_datetime(df[col], errors="coerce")
     for col in ["applicant_count", "net_premium", "months_on_book"]:
@@ -2139,7 +2139,7 @@ elif page == "Commissions":
             st.markdown("<br>", unsafe_allow_html=True)
             # Reindex so a missing column (e.g. an older cached module) can't crash the page.
             gx = gaps.reindex(columns=["First Name", "Last Name", "Carrier", "State", "Gap",
-                                       "Months Paid", "Last Paid", "Total Paid", "Premium"])
+                                       "Client Since", "Months Paid", "Last Paid", "Total Paid", "Premium"])
             gx["_prem"] = pd.to_numeric(gx["Premium"], errors="coerce").fillna(0)
 
             # ── Filters ───────────────────────────────────────────────────────
@@ -2167,11 +2167,13 @@ elif page == "Commissions":
             # Group by $0 vs paying (paying first, highest premium on top), then carrier.
             gv = gv.sort_values(["_prem", "Carrier"], ascending=[False, True])
 
+            _cs = pd.to_datetime(gv["Client Since"], errors="coerce")
             gd = pd.DataFrame({
                 "Name": (gv["First Name"].fillna("") + " " + gv["Last Name"].fillna("")).str.strip().str.title(),
                 "Carrier": gv["Carrier"],
                 "State": gv["State"],
                 "Gap": gv["Gap"],
+                "Client Since": _cs.dt.strftime("%b %Y").where(_cs.notna(), "—"),
                 "Months Paid": gv["Months Paid"].fillna("—"),
                 "Last Paid": gv["Last Paid"].fillna("—"),
                 "Total Paid": pd.to_numeric(gv["Total Paid"], errors="coerce").fillna(0).map(lambda v: f"${v:,.0f}"),
