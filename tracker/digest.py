@@ -86,9 +86,8 @@ def build_digest(today=None) -> str:
 
     pdue = load_health_pastdue(today=today)
     pdue_n = len(pdue)
-    pdue_prem = float(pd.to_numeric(pdue.get("premium"), errors="coerce").fillna(0).sum()) if pdue_n else 0.0
-
-    total_risk = grace_prem + pdue_prem
+    pdue_mem = int(pd.to_numeric(pdue.get("members"), errors="coerce").fillna(1).sum()) if pdue_n else 0
+    pdue_comm = pdue_mem * 23   # flat $23/member commission at risk
 
     lines = [
         f"📊 Weekly Digest — {today.strftime('%b %d')}",
@@ -98,9 +97,8 @@ def build_digest(today=None) -> str:
         f"❌ Lapses: {lapse_pol} policies / {lapse_mem} members",
         "",
         "AT RISK NOW",
-        f"⚠️ Health past due: {pdue_n} · ${pdue_prem:,.0f}/mo",
-        f"⚠️ Supp grace: {grace_n} · ${grace_prem:,.0f}/mo",
-        f"💰 Premium at risk: ${total_risk:,.0f}/mo",
+        f"⚠️ Health past due: {pdue_n} policies / {pdue_mem} members (~${pdue_comm:,}/mo comm)",
+        f"⚠️ Supp grace: {grace_n} policies · ${grace_prem:,.0f}/mo premium",
     ]
     return "\n".join(lines)
 

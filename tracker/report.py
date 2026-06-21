@@ -160,11 +160,14 @@ def _build_pastdue_display(pastdue: pd.DataFrame) -> pd.DataFrame:
     df = pastdue.copy()
     df["_overdue"] = pd.to_numeric(df.get("days_overdue"), errors="coerce")
     df = df.sort_values(["_overdue", "carrier"], ascending=[False, True], na_position="last")
+    _members = pd.to_numeric(df.get("members"), errors="coerce").fillna(1).astype(int)
     out = pd.DataFrame({
         "First Name":   df["first_name"],
         "Last Name":    df["last_name"],
         "Carrier":      df["carrier"],
         "State":        df["state"],
+        "Members":      _members,
+        "Commission/Mo": (_members * 23).astype(int),   # flat $23 per member
         "Premium":      pd.to_numeric(df["premium"], errors="coerce").round(2),
         "Paid Through": pd.to_datetime(df.get("paid_through"), errors="coerce"),
         "Balance":      pd.to_numeric(df.get("balance"), errors="coerce").round(2),

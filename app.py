@@ -855,7 +855,7 @@ def _read_supplemental_summary_from_sheet(spreadsheet) -> dict:
 def _read_pastdue_df_from_sheet(spreadsheet) -> pd.DataFrame:
     """Read the Health Past Due tab into the normalized roster shape. Empty frame
     if the tab is missing/empty."""
-    cols = ["first_name", "last_name", "carrier", "state", "premium",
+    cols = ["first_name", "last_name", "carrier", "state", "premium", "members",
             "paid_through", "balance", "days_overdue", "reason", "phone", "email"]
     try:
         ws = spreadsheet.worksheet("Health Past Due")
@@ -872,6 +872,7 @@ def _read_pastdue_df_from_sheet(spreadsheet) -> pd.DataFrame:
         "last_name": df.get("Last Name"),
         "carrier": df.get("Carrier"),
         "state": df.get("State"),
+        "members": pd.to_numeric(df.get("Members"), errors="coerce").fillna(1).astype(int),
         "premium": pd.to_numeric(
             df.get("Premium", "").astype(str).str.replace(r"[$,]", "", regex=True),
             errors="coerce"),
@@ -2375,17 +2376,19 @@ elif page == "Re-Engage":
             _pd_df["_name"]    = (_pd_df["first_name"].fillna("").astype(str).str.strip() + " "
                                   + _pd_df["last_name"].fillna("").astype(str).str.strip()).str.strip()
             _pd_df["premium"]  = pd.to_numeric(_pd_df.get("premium"), errors="coerce")
+            _pd_df["members"]  = pd.to_numeric(_pd_df.get("members"), errors="coerce").fillna(1).astype(int)
             _pd_df["days_overdue"] = pd.to_numeric(_pd_df.get("days_overdue"), errors="coerce")
             st.caption("Still active but behind on payment — call to update payment before the carrier cancels them. "
+                       "Every policy with a premium over $0 is shown (flat $23/member, so premium size doesn't matter). "
                        "Covers Ambetter (paid-through passed) and Oscar (balance owed).")
-            _prem_risk = float(_pd_df["premium"].fillna(0).sum())
+            _comm_risk = int(_pd_df["members"].fillna(1).sum()) * 23
             pk1, pk2, pk3 = st.columns(3)
             with pk1:
                 st.markdown(stat_card("Past-Due Policies", f"{len(_pd_df):,}", "clock", GOLD), unsafe_allow_html=True)
             with pk2:
-                st.markdown(stat_card("Premium at Risk / Mo", f"${_prem_risk:,.0f}", "dollar", RED), unsafe_allow_html=True)
+                st.markdown(stat_card("Commission at Risk / Mo", f"${_comm_risk:,.0f}", "dollar", RED), unsafe_allow_html=True)
             with pk3:
-                st.markdown(stat_card("Clients", f"{_pd_df['_name'].nunique():,}", "users", ELEC), unsafe_allow_html=True)
+                st.markdown(stat_card("Members at Risk", f"{int(_pd_df['members'].sum()):,}", "users", ELEC), unsafe_allow_html=True)
 
             st.markdown("<br>", unsafe_allow_html=True)
             pf1, pf2 = st.columns(2)
@@ -2407,9 +2410,11 @@ elif page == "Re-Engage":
             _pdisp["Name"]         = _pv["_name"]
             _pdisp["Carrier"]      = _pv["carrier"]
             _pdisp["State"]        = _pv["state"] if "state" in _pv.columns else ""
-            _pdisp["Premium"]      = _pv["premium"].apply(lambda v: f"${v:,.2f}" if pd.notna(v) else "—")
+            _pdisp["Members"]      = _pv["members"]
+            _pdisp["Comm/Mo"]      = (_pv["members"].fillna(1).astype(int) * 23).apply(lambda v: f"${v:,}")
             _pdisp["Days Overdue"] = _pv["days_overdue"].apply(lambda v: str(int(v)) if pd.notna(v) else "—")
             _pdisp["Reason"]       = _pv["reason"] if "reason" in _pv.columns else ""
+            _pdisp["Phone"]        = _pv["phone"] if "phone" in _pv.columns else ""
             st.dataframe(_pdisp, use_container_width=True, hide_index=True, height=500)
 
             # Quick Text — generic carrier-payment nudge (no carrier pay-line on file).

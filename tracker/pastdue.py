@@ -13,6 +13,7 @@ Normalized columns:
   balance, days_overdue, reason, phone, email
 """
 
+import re
 from pathlib import Path
 
 import pandas as pd
@@ -21,13 +22,30 @@ _ROOT = Path(__file__).resolve().parent.parent
 _DEFAULT_BOOKS = str(_ROOT / "carrier_books")
 
 _COLS = ["first_name", "last_name", "carrier", "state", "product", "premium",
-         "paid_through", "balance", "days_overdue", "reason", "phone", "email"]
+         "members", "paid_through", "balance", "days_overdue", "reason", "phone", "email"]
 
 
 def _money(series) -> pd.Series:
     return pd.to_numeric(
         series.astype(str).str.replace(r"[$,]", "", regex=True).str.strip(),
         errors="coerce")
+
+
+def _members(series) -> pd.Series:
+    return pd.to_numeric(series, errors="coerce").fillna(1).clip(lower=1).astype(int)
+
+
+def _phone(series) -> pd.Series:
+    """Clean phone display: strip a trailing '.0' (CSVs read numbers as floats)
+    and format the 10 digits as (xxx) xxx-xxxx."""
+    def fmt(x):
+        x = re.sub(r"\D", "", str(x))
+        if len(x) == 11 and x.startswith("1"):
+            x = x[1:]
+        return f"({x[:3]}) {x[3:6]}-{x[6:]}" if len(x) == 10 else re.sub(r"\.0$", "", str(x))
+    if series is None:
+        return pd.Series(dtype=str)
+    return series.map(fmt)
 
 
 def _ambetter_pastdue(path: Path, today: pd.Timestamp) -> pd.DataFrame:
@@ -52,24 +70,28 @@ def _ambetter_pastdue(path: Path, today: pd.Timestamp) -> pd.DataFrame:
         "state":      d.get("State"),
         "product":    "Medical",
         "premium":    _money(d.get("Member Responsibility")),
+        "members":    _members(d.get("Number of Members")),
         "paid_through": d["ptd"],
         "balance":    pd.NA,
         "days_overdue": (today - d["ptd"]).dt.days,
         "reason":     "Paid through " + d["ptd"].dt.strftime("%b %d, %Y"),
-        "phone":      d.get("Member Phone Number"),
+        "phone":      _phone(d.get("Member Phone Number")),
         "email":      d.get("Member Email"),
     })
     return out
 
 
-def _oscar_pastdue(path: Path, today: pd.Timestamp, balance_min: float) -> pd.DataFrame:
+def _oscar_pastdue(path: Path, today: pd.Timestamp) -> pd.DataFrame:
     if not path.exists():
         return pd.DataFrame(columns=_COLS)
     o = pd.read_csv(path)
     o["bal"] = _money(o.get("Balance"))
+    o["prem"] = _money(o.get("Premium amount"))
     in_force = ~o.get("Policy status", pd.Series("", index=o.index)).astype(str).str.contains(
         "Inactive", case=False, na=False)
-    pastdue = in_force & o["bal"].notna() & (o["bal"] > balance_min)
+    # Behind on payment = any balance owed. Exclude $0-premium (fully subsidized,
+    # nothing to miss); premium size is otherwise irrelevant (flat $/member comp).
+    pastdue = in_force & o["bal"].notna() & (o["bal"] >= 0.01) & (o["prem"] > 0)
     d = o[pastdue].copy()
     if d.empty:
         return pd.DataFrame(columns=_COLS)
@@ -80,26 +102,29 @@ def _oscar_pastdue(path: Path, today: pd.Timestamp, balance_min: float) -> pd.Da
         "carrier":    "Oscar",
         "state":      d.get("State"),
         "product":    "Medical",
-        "premium":    _money(d.get("Premium amount")),
+        "premium":    d["prem"],
+        "members":    _members(d.get("Lives")),
         "paid_through": pd.NaT,
         "balance":    d["bal"],
         "days_overdue": pd.NA,
         "reason":     "Balance owed $" + d["bal"].round(2).astype(str),
-        "phone":      d.get("Phone number"),
+        "phone":      _phone(d.get("Phone number")),
         "email":      d.get("Email"),
     })
     return out
 
 
 def load_health_pastdue(carrier_books_dir: str = _DEFAULT_BOOKS,
-                        oscar_balance_min: float = 10.0,
                         today=None) -> pd.DataFrame:
-    """Active health-plan policies behind on payment, across detectable carriers."""
+    """Active health-plan policies behind on payment, across detectable carriers.
+    Includes every policy with a member premium > $0 (commission is a flat rate
+    per member, so premium size doesn't matter); only $0-premium plans are
+    excluded since there's nothing to miss."""
     today = pd.Timestamp(today) if today else pd.Timestamp.today().normalize()
     base = Path(carrier_books_dir)
     frames = [
         _ambetter_pastdue(base / "ambetter.csv", today),
-        _oscar_pastdue(base / "oscar.csv", today, oscar_balance_min),
+        _oscar_pastdue(base / "oscar.csv", today),
     ]
     frames = [f for f in frames if not f.empty]
     if not frames:
