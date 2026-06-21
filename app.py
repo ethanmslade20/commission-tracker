@@ -363,6 +363,13 @@ st.markdown(f"""
     box-shadow: 0 0 0 1px rgba(124,58,237,0.42), 0 0 42px rgba(124,58,237,0.28);
   }}
   .metric-card.highlight:hover {{ box-shadow: 0 0 0 1px rgba(124,58,237,0.6), 0 0 54px rgba(124,58,237,0.4); }}
+  .metric-card.highlight.green {{
+    border-color: rgba(34,197,94,0.6);
+    background: linear-gradient(160deg, rgba(20,60,40,0.92), rgba(14,30,28,0.9));
+    box-shadow: 0 0 0 1px rgba(34,197,94,0.42), 0 0 42px rgba(34,197,94,0.28);
+  }}
+  .metric-card.highlight.green:hover {{ box-shadow: 0 0 0 1px rgba(34,197,94,0.6), 0 0 54px rgba(34,197,94,0.4); }}
+  .metric-card.highlight.green .mc-icon svg {{ stroke: {GREEN}; }}
   .mc-icon {{
     width: 42px; height: 42px; border-radius: 12px; display: flex; align-items: center; justify-content: center;
     background: linear-gradient(145deg, rgba(59,130,246,0.18), rgba(124,58,237,0.13));
@@ -667,7 +674,12 @@ def section_header(title, icon_key):
 
 
 def metric_card(label, value, sub="", icon_key="", spark="", highlight=False):
-    cls = "metric-card highlight" if highlight else "metric-card"
+    # highlight=True -> purple accent; highlight="green" (or any class string) ->
+    # that color variant.
+    if highlight:
+        cls = "metric-card highlight" + (f" {highlight}" if isinstance(highlight, str) else "")
+    else:
+        cls = "metric-card"
     icon_html = f'<div class="mc-icon">{ICONS.get(icon_key, "")}</div>' if icon_key else ""
     sub_html = f'<div class="mc-sub">{sub}</div>' if sub else ""
     return (
@@ -1534,7 +1546,7 @@ if page == "Dashboard":
     r1, r2, r3 = st.columns(3)
     with r1:
         st.markdown(metric_card("Expected Monthly Commission", f"${_mrr:,.0f}", icon_key="dollar",
-                                spark=_mem_spark, highlight=True), unsafe_allow_html=True)
+                                spark=_mem_spark, highlight="green"), unsafe_allow_html=True)
     with r2:
         st.markdown(metric_card("Expected Annual Commission", f"${_arr:,.0f}", icon_key="calendar"), unsafe_allow_html=True)
     with r3:
