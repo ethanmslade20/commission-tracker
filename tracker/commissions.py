@@ -147,6 +147,14 @@ def reconcile_book(active: pd.DataFrame, payments: pd.DataFrame, today=None) -> 
     if payments.empty or active is None or active.empty:
         return result
 
+    # Ignore the current calendar month — its statements are still incomplete
+    # (the agent gets two checks a month, ~20th and ~27th), so a missing payment
+    # there isn't real yet. Base everything on the last COMPLETE month.
+    cur = pd.Timestamp(today.year, today.month, 1)
+    payments = payments[payments["payment_month"] < cur]
+    if payments.empty:
+        return result
+
     latest = payments["payment_month"].max()
     result["latest_month"] = latest
     prev = (latest.to_period("M") - 1).to_timestamp()
@@ -185,19 +193,30 @@ def reconcile_book(active: pd.DataFrame, payments: pd.DataFrame, today=None) -> 
     return result
 
 
-def unpaid_active(active: pd.DataFrame, payments: pd.DataFrame, min_months: int = 2) -> pd.DataFrame:
-    """Active clients with NO matching commission payment (positive) anywhere in
-    the statements. Filtered to clients on the book at least `min_months` months
-    (brand-new business may not have hit a statement yet given carrier lag).
-    These are 'active but I'm not getting paid' — verify each (genuine gap vs a
-    name the carrier spells differently)."""
+def unpaid_active(active: pd.DataFrame, payments: pd.DataFrame, today=None,
+                  min_months: int = 2) -> pd.DataFrame:
+    """Active clients with NO matching commission payment in any COMPLETE month.
+    Excludes the current (incomplete) month and anyone whose coverage started too
+    recently to have a payment due in a complete month yet (so June signups
+    waiting on a carrier-lag payment aren't false-flagged). These are 'active but
+    I'm not getting paid' — verify each (genuine gap vs a name spelled differently)."""
     if active is None or active.empty or payments is None or payments.empty:
         return pd.DataFrame()
-    paid = set(payments[payments["amount"] > 0]["name_key"])
+    today = pd.Timestamp(today) if today else pd.Timestamp.today().normalize()
+    cur = pd.Timestamp(today.year, today.month, 1)
+    complete = payments[payments["payment_month"] < cur]
+    if complete.empty:
+        return pd.DataFrame()
+    paid = set(complete[complete["amount"] > 0]["name_key"])
     a = active.copy()
     a["name_key"] = a.apply(lambda r: _person_key(r.get("first_name", ""), r.get("last_name", "")), axis=1)
+    a["_eff"] = pd.to_datetime(a.get("effective_date"), errors="coerce")
     mob = pd.to_numeric(a.get("months_on_book"), errors="coerce").fillna(0)
-    return a[(~a["name_key"].isin(paid)) & (mob >= min_months)].copy()
+    # coverage must have started before last month, so a payment was due in a
+    # complete month even allowing for a +1-month carrier lag.
+    eff_cutoff = cur - pd.DateOffset(months=1)
+    elig = (~a["name_key"].isin(paid)) & (mob >= min_months) & (a["_eff"] < eff_cutoff)
+    return a[elig].drop(columns=["_eff"], errors="ignore").copy()
 
 
 def build_gaps(active: pd.DataFrame, payments: pd.DataFrame, today=None) -> pd.DataFrame:
@@ -205,7 +224,7 @@ def build_gaps(active: pd.DataFrame, payments: pd.DataFrame, today=None) -> pd.D
     but either never paid or stopped getting paid. One row per client."""
     rec = reconcile_book(active, payments, today)
     rows = []
-    for _, r in unpaid_active(active, payments).iterrows():
+    for _, r in unpaid_active(active, payments, today).iterrows():
         rows.append({"First Name": r.get("first_name", ""), "Last Name": r.get("last_name", ""),
                      "Carrier": r.get("carrier", ""), "State": r.get("state", ""),
                      "Effective Date": r.get("effective_date", ""),
