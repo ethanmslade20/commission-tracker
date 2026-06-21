@@ -2051,8 +2051,19 @@ elif page == "Commissions":
 
     pay = _load_payments()
     if pay is None or pay.empty:
-        st.info("Couldn't read the Insurance PAYMENTS sheet. Make sure it's shared (Viewer) with "
-                "the service account, then hit Refresh data.")
+        _sa_email = None
+        try:
+            _sa_email = dict(st.secrets["gcp_service_account"]).get("client_email")
+        except Exception:
+            pass
+        st.warning("Couldn't read the **Insurance PAYMENTS** sheet yet.")
+        if _sa_email:
+            st.markdown("Share that Google Sheet — **Viewer** access — with this exact account, then hit **Refresh data**:")
+            st.code(_sa_email, language=None)
+        else:
+            st.markdown("Open your **main** Commission Tracker sheet → **Share** to find the "
+                        "`…@…iam.gserviceaccount.com` account that has access, then share the **Insurance "
+                        "PAYMENTS** sheet with that same email (Viewer) and hit **Refresh data**.")
     else:
         msum = monthly_summary(pay)
         latest = msum.iloc[-1]
