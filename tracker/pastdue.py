@@ -56,10 +56,13 @@ def _ambetter_pastdue(path: Path, today: pd.Timestamp) -> pd.DataFrame:
     a["term"] = pd.to_datetime(a.get("Policy Term Date"), errors="coerce")
     a["resp"] = _money(a.get("Member Responsibility"))
     in_force = a["term"].isna() | (a["term"] > today)
-    # Only flag plans with a member premium > $0. A $0-responsibility (fully
-    # subsidized) plan has nothing to pay, so a stale paid-through date is not a
-    # real missed payment.
-    pastdue  = in_force & a["ptd"].notna() & (a["ptd"] < today) & (a["resp"] > 0)
+    # Months behind = how many month-boundaries between the paid-through month and
+    # the current month. "Paid through end of LAST month" (=1) just means this
+    # month's premium is still expected (autopay posts mid-cycle) — NOT a missed
+    # payment. Only flag 2+ months behind (a fully-elapsed month went unpaid).
+    months_behind = (today.year - a["ptd"].dt.year) * 12 + (today.month - a["ptd"].dt.month)
+    # Skip $0-responsibility (fully subsidized) plans — nothing to miss.
+    pastdue = in_force & a["ptd"].notna() & (months_behind >= 2) & (a["resp"] > 0)
     d = a[pastdue].copy()
     if d.empty:
         return pd.DataFrame(columns=_COLS)
@@ -89,9 +92,10 @@ def _oscar_pastdue(path: Path, today: pd.Timestamp) -> pd.DataFrame:
     o["prem"] = _money(o.get("Premium amount"))
     in_force = ~o.get("Policy status", pd.Series("", index=o.index)).astype(str).str.contains(
         "Inactive", case=False, na=False)
-    # Behind on payment = any balance owed. Exclude $0-premium (fully subsidized,
-    # nothing to miss); premium size is otherwise irrelevant (flat $/member comp).
-    pastdue = in_force & o["bal"].notna() & (o["bal"] >= 0.01) & (o["prem"] > 0)
+    # Oscar has no paid-through date, just a balance owed. A balance up to ~one
+    # month's premium is the current cycle (still expected to pay), so only flag
+    # when they owe MORE than one month (genuinely behind). Exclude $0-premium.
+    pastdue = in_force & o["bal"].notna() & (o["prem"] > 0) & (o["bal"] > o["prem"])
     d = o[pastdue].copy()
     if d.empty:
         return pd.DataFrame(columns=_COLS)
