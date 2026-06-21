@@ -719,6 +719,7 @@ def update_sheet(
     months: Optional[Dict[str, pd.DataFrame]] = None,
     supplemental_df: Optional[pd.DataFrame] = None,
     health_pastdue_df: Optional[pd.DataFrame] = None,
+    commission_gaps_df: Optional[pd.DataFrame] = None,
 ) -> None:
     spreadsheet = _open_sheet(sheet_url, impersonation_target)
 
@@ -732,6 +733,7 @@ def update_sheet(
     dashboard_title = tab_names.get("dashboard", "Dashboard")
     supp_title = tab_names.get("supplemental", "Supplemental")
     pastdue_title = tab_names.get("health_pastdue", "Health Past Due")
+    gaps_title = tab_names.get("commission_gaps", "Commission Gaps")
 
     # Daily tracker tabs — one per ingested month, all history included.
     daily_tracker_tabs: Dict[str, str] = {}   # month_str → tab title
@@ -742,11 +744,14 @@ def update_sheet(
 
     _has_supp = supplemental_df is not None and not supplemental_df.empty
     _has_pastdue = health_pastdue_df is not None and not health_pastdue_df.empty
+    _has_gaps = commission_gaps_df is not None and not commission_gaps_df.empty
     all_titles = {dashboard_title} | {t for t, *_ in data_tabs} | set(daily_tracker_tabs.values())
     if _has_supp:
         all_titles |= {supp_title}
     if _has_pastdue:
         all_titles |= {pastdue_title}
+    if _has_gaps:
+        all_titles |= {gaps_title}
 
     # Remove any tabs that no longer belong
     _delete_stale_tabs(spreadsheet, keep=all_titles)
@@ -795,6 +800,15 @@ def update_sheet(
             print(f"  Updated tab: {pastdue_title} ({len(health_pastdue_df)} rows)")
         except Exception as e:
             print(f"  Warning: health past-due write failed: {e}")
+
+    # ── Commission Gaps tab (active clients not being paid / stopped) ─────────
+    if _has_gaps:
+        try:
+            gaps_ws = _ensure_tab(spreadsheet, gaps_title)
+            _write_tab(gaps_ws, commission_gaps_df)
+            print(f"  Updated tab: {gaps_title} ({len(commission_gaps_df)} rows)")
+        except Exception as e:
+            print(f"  Warning: commission gaps write failed: {e}")
 
     # ── Daily tracker tabs (one per month) ───────────────────────────────────
     # Pause between tabs to avoid hitting the Sheets API write-per-minute quota.

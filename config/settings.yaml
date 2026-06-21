@@ -24,3 +24,4 @@ tabs:
   cancelled_missing: "All Missing/Cancelled"
   supplemental:      "Supplemental"
   health_pastdue:    "Health Past Due"
+  commission_gaps:   "Commission Gaps"

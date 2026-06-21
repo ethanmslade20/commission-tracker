@@ -47,10 +47,27 @@ def _tab_month(title):
     return pd.Timestamp(int(m.group(2)), mon, 1)
 
 
-def _name_key(s):
-    """Order-insensitive name key so 'WHEELER, ROEANNA' == 'Roeanna Wheeler'."""
-    s = unicodedata.normalize("NFKD", str(s)).encode("ascii", "ignore").decode().lower()
-    return "".join(sorted(re.findall(r"[a-z]+", s)))
+def _norm(s):
+    return unicodedata.normalize("NFKD", str(s)).encode("ascii", "ignore").decode().lower()
+
+
+def _person_key(first, last):
+    """Match key from a (first, last) pair: last[:4]+first[:3]. Tolerant of
+    truncated/abbreviated names in the statements (e.g. 'GONZALEZ, ALL')."""
+    f = re.sub(r"[^a-z]", "", _norm(first))
+    l = re.sub(r"[^a-z]", "", _norm(last))
+    return l[:4] + f[:3]
+
+
+def _member_key(member):
+    """Match key for a statement member name, handling 'LAST, FIRST' and 'First Last'."""
+    m = _norm(member)
+    if "," in m:
+        last, first = m.split(",", 1)
+    else:
+        p = m.split()
+        first, last = (p[0] if p else ""), (p[-1] if len(p) > 1 else "")
+    return _person_key(first, last)
 
 
 def parse_payments_sheet(spreadsheet) -> pd.DataFrame:
@@ -76,7 +93,7 @@ def parse_payments_sheet(spreadsheet) -> pd.DataFrame:
                 description=r[10].strip(), amount=amt))
     df = pd.DataFrame(rows)
     if not df.empty:
-        df["name_key"] = df["member"].apply(_name_key)
+        df["name_key"] = df["member"].apply(_member_key)
     return df
 
 
@@ -140,7 +157,7 @@ def reconcile_book(active: pd.DataFrame, payments: pd.DataFrame, today=None) -> 
     paid_keys = set(last_paid)
 
     a = active.copy()
-    a["name_key"] = a.apply(lambda r: _name_key(f"{r.get('first_name','')} {r.get('last_name','')}"), axis=1)
+    a["name_key"] = a.apply(lambda r: _person_key(r.get("first_name", ""), r.get("last_name", "")), axis=1)
     a["_matched"] = a["name_key"].isin(paid_keys)
     result["matched"] = int(a["_matched"].sum())
     result["unmatched"] = int((~a["_matched"]).sum())
@@ -166,3 +183,44 @@ def reconcile_book(active: pd.DataFrame, payments: pd.DataFrame, today=None) -> 
     cb = payments[(payments["amount"] < 0) & (payments["payment_month"] >= prev)].copy()
     result["chargebacks"] = cb
     return result
+
+
+def unpaid_active(active: pd.DataFrame, payments: pd.DataFrame, min_months: int = 2) -> pd.DataFrame:
+    """Active clients with NO matching commission payment (positive) anywhere in
+    the statements. Filtered to clients on the book at least `min_months` months
+    (brand-new business may not have hit a statement yet given carrier lag).
+    These are 'active but I'm not getting paid' — verify each (genuine gap vs a
+    name the carrier spells differently)."""
+    if active is None or active.empty or payments is None or payments.empty:
+        return pd.DataFrame()
+    paid = set(payments[payments["amount"] > 0]["name_key"])
+    a = active.copy()
+    a["name_key"] = a.apply(lambda r: _person_key(r.get("first_name", ""), r.get("last_name", "")), axis=1)
+    mob = pd.to_numeric(a.get("months_on_book"), errors="coerce").fillna(0)
+    return a[(~a["name_key"].isin(paid)) & (mob >= min_months)].copy()
+
+
+def build_gaps(active: pd.DataFrame, payments: pd.DataFrame, today=None) -> pd.DataFrame:
+    """Combined commission-gap report for the sheet: clients active on the book
+    but either never paid or stopped getting paid. One row per client."""
+    rec = reconcile_book(active, payments, today)
+    rows = []
+    for _, r in unpaid_active(active, payments).iterrows():
+        rows.append({"First Name": r.get("first_name", ""), "Last Name": r.get("last_name", ""),
+                     "Carrier": r.get("carrier", ""), "State": r.get("state", ""),
+                     "Effective Date": r.get("effective_date", ""),
+                     "Mo. on Book": r.get("months_on_book", ""),
+                     "Premium": r.get("net_premium", ""), "Gap": "Never paid", "Last Paid": ""})
+    miss = rec.get("missing")
+    if miss is not None and not miss.empty:
+        for _, r in miss.iterrows():
+            rows.append({"First Name": r.get("first_name", ""), "Last Name": r.get("last_name", ""),
+                         "Carrier": r.get("carrier", ""), "State": r.get("state", ""),
+                         "Effective Date": r.get("effective_date", ""),
+                         "Mo. on Book": r.get("months_on_book", ""),
+                         "Premium": r.get("net_premium", ""), "Gap": "Stopped", "Last Paid": r.get("Last Paid", "")})
+    df = pd.DataFrame(rows)
+    if not df.empty:
+        df["Effective Date"] = pd.to_datetime(df["Effective Date"], errors="coerce")
+        df = df.sort_values(["Gap", "Carrier", "Last Name"]).reset_index(drop=True)
+    return df

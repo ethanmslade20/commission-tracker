@@ -2043,7 +2043,7 @@ elif page == "Book of Business":
 # ══════════════════════════════════════════════════════════════════════════════
 elif page == "Commissions":
     from tracker.commissions import (carrier_timing, monthly_summary,
-                                     carrier_summary, reconcile_book)
+                                     carrier_summary, reconcile_book, unpaid_active)
     st.title("Commissions")
     st.caption("Actual payments from your Insurance PAYMENTS sheet — income, when each carrier pays, "
                "and clients who've stopped getting paid.")
@@ -2117,6 +2117,31 @@ elif page == "Commissions":
         _ACTIVE = {"Effectuated", "PendingEffectuation", "PendingFollowups"}
         _active = all_clients[all_clients["status"].isin(_ACTIVE)] if "status" in all_clients.columns else pd.DataFrame()
         rec = reconcile_book(_active, pay)
+
+        # ── Active but NOT getting paid (never matched to any payment) ─────────
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.markdown(section_header("Active — Not Getting Paid", "shield"), unsafe_allow_html=True)
+        st.caption("Clients active in your book of business with **no commission payment found** in any "
+                   "statement (on the book 2+ months, so it's not just new business waiting on carrier lag). "
+                   "Each is worth verifying — a genuine missing commission, or a name the carrier spells differently.")
+        up = unpaid_active(_active, pay)
+        if up is None or up.empty:
+            st.success("Every active client 2+ months on the book matches a commission payment. 🎉")
+        else:
+            uk1, uk2 = st.columns([1, 3])
+            with uk1:
+                _up_prem = pd.to_numeric(up.get("net_premium"), errors="coerce").fillna(0).sum()
+                st.markdown(stat_card("Active, Not Paid", f"{len(up):,}", "minus", RED), unsafe_allow_html=True)
+            ud = pd.DataFrame({
+                "Name": (up["first_name"].fillna("") + " " + up["last_name"].fillna("")).str.strip().str.title(),
+                "Carrier": up["carrier"],
+                "State": up.get("state", ""),
+                "Mo. on Book": pd.to_numeric(up.get("months_on_book"), errors="coerce").fillna(0).astype(int),
+                "Premium": pd.to_numeric(up.get("net_premium"), errors="coerce").apply(lambda v: f"${v:,.2f}" if pd.notna(v) else "—"),
+            }).sort_values(["Carrier", "Name"])
+            st.dataframe(ud, use_container_width=True, hide_index=True, height=min(120 + len(ud) * 35, 520))
+            st.caption("📄 Also saved to the **Commission Gaps** tab in your Google Sheet (refreshed each report run).")
+
         st.markdown("<br>", unsafe_allow_html=True)
         st.markdown(section_header("Stopped Getting Paid", "minus"), unsafe_allow_html=True)
         st.caption("Active clients who were being paid but haven't shown up in the last 2 statement months — "

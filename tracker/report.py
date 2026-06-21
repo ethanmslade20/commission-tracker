@@ -352,6 +352,23 @@ def run_report(settings: dict) -> None:
     if not pastdue_display.empty:
         print(f"  Health past-due: {len(pastdue_display)} active policies behind on payment")
 
+    # Commission gaps: active clients with no / stopped commission payments,
+    # by reading the actual payments sheet and reconciling against the book.
+    commission_gaps = None
+    _pay_url = settings.get("payments_sheet_url")
+    if _pay_url:
+        try:
+            from tracker.commissions import parse_payments_sheet, build_gaps
+            from tracker.sheets import _open_sheet
+            _payments = parse_payments_sheet(_open_sheet(_pay_url, impersonation_target))
+            commission_gaps = build_gaps(active_pending, _payments)
+            if commission_gaps is not None and not commission_gaps.empty:
+                print(f"  Commission gaps: {len(commission_gaps)} active clients with a payment gap "
+                      f"({(commission_gaps['Gap'] == 'Never paid').sum()} never paid, "
+                      f"{(commission_gaps['Gap'] == 'Stopped').sum()} stopped)")
+        except Exception as e:
+            print(f"  (commission gaps skipped: {e})")
+
     print("Pushing to Google Sheets...")
     update_sheet(
         sheet_url=sheet_url,
@@ -363,5 +380,6 @@ def run_report(settings: dict) -> None:
         months=months_appointed,
         supplemental_df=supp_display,
         health_pastdue_df=pastdue_display,
+        commission_gaps_df=commission_gaps,
     )
     print("Done.")
