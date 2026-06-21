@@ -212,6 +212,23 @@ def report():
     run_report(settings)
 
 
+@cli.command()
+@click.option("--to", default=None, help="Phone number to text the digest to (e.g. +18015551234).")
+@click.option("--dry-run", is_flag=True, help="Print the digest instead of sending it.")
+def digest(to, dry_run):
+    """Build the weekly digest (new sales, lapses, at-risk) and text it via iMessage."""
+    from tracker.digest import build_digest, send_imessage
+
+    msg = build_digest()
+    if dry_run or not to:
+        click.echo(msg)
+        if not to and not dry_run:
+            click.echo("\n(no --to provided — not sent)")
+        return
+    send_imessage(msg, to)
+    click.echo(f"Digest sent to {to}.")
+
+
 @cli.command("reconcile-ambetter")
 @click.argument("path", required=False)
 @click.option("--out", "-o", default=None, help="Output folder for the CSV lists (default: ~/Desktop/Carrier Reports).")
