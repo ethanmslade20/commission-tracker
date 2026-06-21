@@ -2411,7 +2411,6 @@ elif page == "Re-Engage":
             _pdisp["Carrier"]      = _pv["carrier"]
             _pdisp["State"]        = _pv["state"] if "state" in _pv.columns else ""
             _pdisp["Members"]      = _pv["members"]
-            _pdisp["Comm/Mo"]      = (_pv["members"].fillna(1).astype(int) * 23).apply(lambda v: f"${v:,}")
             _pdisp["Days Overdue"] = _pv["days_overdue"].apply(lambda v: str(int(v)) if pd.notna(v) else "—")
             _pdisp["Reason"]       = _pv["reason"] if "reason" in _pv.columns else ""
             _pdisp["Phone"]        = _pv["phone"] if "phone" in _pv.columns else ""
