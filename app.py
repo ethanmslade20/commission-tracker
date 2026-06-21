@@ -2137,15 +2137,18 @@ elif page == "Commissions":
             with gk3:
                 st.markdown(stat_card("Stopped", f"{_stop:,}", "clock", ELEC), unsafe_allow_html=True)
             st.markdown("<br>", unsafe_allow_html=True)
+            # Reindex so a missing column (e.g. an older cached module) can't crash the page.
+            gx = gaps.reindex(columns=["First Name", "Last Name", "Carrier", "State", "Gap",
+                                       "Months Paid", "Last Paid", "Total Paid", "Premium"])
             gd = pd.DataFrame({
-                "Name": (gaps["First Name"].fillna("") + " " + gaps["Last Name"].fillna("")).str.strip().str.title(),
-                "Carrier": gaps["Carrier"],
-                "State": gaps["State"],
-                "Gap": gaps["Gap"],
-                "Months Paid": gaps["Months Paid"],
-                "Last Paid": gaps["Last Paid"],
-                "Total Paid": pd.to_numeric(gaps["Total Paid"], errors="coerce").fillna(0).map(lambda v: f"${v:,.0f}"),
-                "Premium": pd.to_numeric(gaps["Premium"], errors="coerce").map(lambda v: f"${v:,.2f}" if pd.notna(v) else "—"),
+                "Name": (gx["First Name"].fillna("") + " " + gx["Last Name"].fillna("")).str.strip().str.title(),
+                "Carrier": gx["Carrier"],
+                "State": gx["State"],
+                "Gap": gx["Gap"],
+                "Months Paid": gx["Months Paid"].fillna("—"),
+                "Last Paid": gx["Last Paid"].fillna("—"),
+                "Total Paid": pd.to_numeric(gx["Total Paid"], errors="coerce").fillna(0).map(lambda v: f"${v:,.0f}"),
+                "Premium": pd.to_numeric(gx["Premium"], errors="coerce").map(lambda v: f"${v:,.2f}" if pd.notna(v) else "—"),
             })
             st.dataframe(gd, use_container_width=True, hide_index=True, height=min(120 + len(gd) * 34, 560))
             st.caption("📄 Also saved to the **Commission Gaps** tab in your Google Sheet — export or share that with "
