@@ -2140,16 +2140,48 @@ elif page == "Commissions":
             # Reindex so a missing column (e.g. an older cached module) can't crash the page.
             gx = gaps.reindex(columns=["First Name", "Last Name", "Carrier", "State", "Gap",
                                        "Months Paid", "Last Paid", "Total Paid", "Premium"])
+            gx["_prem"] = pd.to_numeric(gx["Premium"], errors="coerce").fillna(0)
+
+            # ── Filters ───────────────────────────────────────────────────────
+            ff1, ff2, ff3, ff4 = st.columns(4)
+            with ff1:
+                f_gap = st.selectbox("Gap type", ["All", "Never paid", "Stopped"], key="gap_type")
+            with ff2:
+                f_carrier = st.selectbox("Carrier", ["All"] + sorted(gx["Carrier"].dropna().unique().tolist()), key="gap_carrier")
+            with ff3:
+                f_state = st.selectbox("State", ["All"] + sorted(gx["State"].dropna().astype(str).unique().tolist()), key="gap_state")
+            with ff4:
+                f_prem = st.selectbox("Premium", ["All", "Paying ($0+ premium)", "$0 (fully subsidized)"], key="gap_prem")
+
+            gv = gx.copy()
+            if f_gap != "All":
+                gv = gv[gv["Gap"] == f_gap]
+            if f_carrier != "All":
+                gv = gv[gv["Carrier"] == f_carrier]
+            if f_state != "All":
+                gv = gv[gv["State"].astype(str) == f_state]
+            if f_prem == "$0 (fully subsidized)":
+                gv = gv[gv["_prem"] <= 0]
+            elif f_prem == "Paying ($0+ premium)":
+                gv = gv[gv["_prem"] > 0]
+            # Group by $0 vs paying (paying first, highest premium on top), then carrier.
+            gv = gv.sort_values(["_prem", "Carrier"], ascending=[False, True])
+
             gd = pd.DataFrame({
-                "Name": (gx["First Name"].fillna("") + " " + gx["Last Name"].fillna("")).str.strip().str.title(),
-                "Carrier": gx["Carrier"],
-                "State": gx["State"],
-                "Gap": gx["Gap"],
-                "Months Paid": gx["Months Paid"].fillna("—"),
-                "Last Paid": gx["Last Paid"].fillna("—"),
-                "Total Paid": pd.to_numeric(gx["Total Paid"], errors="coerce").fillna(0).map(lambda v: f"${v:,.0f}"),
-                "Premium": pd.to_numeric(gx["Premium"], errors="coerce").map(lambda v: f"${v:,.2f}" if pd.notna(v) else "—"),
+                "Name": (gv["First Name"].fillna("") + " " + gv["Last Name"].fillna("")).str.strip().str.title(),
+                "Carrier": gv["Carrier"],
+                "State": gv["State"],
+                "Gap": gv["Gap"],
+                "Months Paid": gv["Months Paid"].fillna("—"),
+                "Last Paid": gv["Last Paid"].fillna("—"),
+                "Total Paid": pd.to_numeric(gv["Total Paid"], errors="coerce").fillna(0).map(lambda v: f"${v:,.0f}"),
+                "Premium": gv["_prem"].map(lambda v: f"${v:,.2f}" if v > 0 else "$0"),
             })
+            st.caption(f"Showing **{len(gd)}** of {len(gx)} gaps"
+                       + (f" · {f_gap}" if f_gap != "All" else "")
+                       + (f" · {f_carrier}" if f_carrier != "All" else "")
+                       + (f" · {f_state}" if f_state != "All" else "")
+                       + (f" · {f_prem}" if f_prem != "All" else ""))
             st.dataframe(gd, use_container_width=True, hide_index=True, height=min(120 + len(gd) * 34, 560))
             st.caption("📄 Also saved to the **Commission Gaps** tab in your Google Sheet — export or share that with "
                        "your commissions team as the dispute report.")
