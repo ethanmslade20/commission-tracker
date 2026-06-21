@@ -2043,7 +2043,7 @@ elif page == "Book of Business":
 # ══════════════════════════════════════════════════════════════════════════════
 elif page == "Commissions":
     from tracker.commissions import (carrier_timing, monthly_summary,
-                                     carrier_summary, reconcile_book, unpaid_active)
+                                     carrier_summary, reconcile_book, build_gaps)
     st.title("Commissions")
     st.caption("Actual payments from your Insurance PAYMENTS sheet — income, when each carrier pays, "
                "and clients who've stopped getting paid.")
@@ -2113,51 +2113,43 @@ elif page == "Commissions":
                          for c, lag in sorted(tim.items())]
                 st.dataframe(pd.DataFrame(trows), use_container_width=True, hide_index=True, height=380)
 
-        # ── Missing payments + chargebacks ────────────────────────────────────
+        # ── Commission gaps: active but not getting paid (with pay history) ───
         _ACTIVE = {"Effectuated", "PendingEffectuation", "PendingFollowups"}
         _active = all_clients[all_clients["status"].isin(_ACTIVE)] if "status" in all_clients.columns else pd.DataFrame()
         rec = reconcile_book(_active, pay)
+        gaps = build_gaps(_active, pay)
 
-        # ── Active but NOT getting paid (never matched to any payment) ─────────
         st.markdown("<br>", unsafe_allow_html=True)
         st.markdown(section_header("Active — Not Getting Paid", "shield"), unsafe_allow_html=True)
-        st.caption("Clients active in your book of business with **no commission payment found** in any "
-                   "statement (on the book 2+ months, so it's not just new business waiting on carrier lag). "
-                   "Each is worth verifying — a genuine missing commission, or a name the carrier spells differently.")
-        up = unpaid_active(_active, pay)
-        if up is None or up.empty:
-            st.success("Every active client 2+ months on the book matches a commission payment. 🎉")
+        st.caption("Clients confirmed **active** on your book (carrier portals + HealthSherpa) that you're **not "
+                   "being paid on**, with each one's full payment history so you can take it to your commissions "
+                   "team. June is excluded (its second check is still pending) — gaps are based on complete months only.")
+        if gaps is None or gaps.empty:
+            st.success("No commission gaps — every active client (past the new-business window) is being paid. 🎉")
         else:
-            uk1, uk2 = st.columns([1, 3])
-            with uk1:
-                _up_prem = pd.to_numeric(up.get("net_premium"), errors="coerce").fillna(0).sum()
-                st.markdown(stat_card("Active, Not Paid", f"{len(up):,}", "minus", RED), unsafe_allow_html=True)
-            ud = pd.DataFrame({
-                "Name": (up["first_name"].fillna("") + " " + up["last_name"].fillna("")).str.strip().str.title(),
-                "Carrier": up["carrier"],
-                "State": up.get("state", ""),
-                "Mo. on Book": pd.to_numeric(up.get("months_on_book"), errors="coerce").fillna(0).astype(int),
-                "Premium": pd.to_numeric(up.get("net_premium"), errors="coerce").apply(lambda v: f"${v:,.2f}" if pd.notna(v) else "—"),
-            }).sort_values(["Carrier", "Name"])
-            st.dataframe(ud, use_container_width=True, hide_index=True, height=min(120 + len(ud) * 35, 520))
-            st.caption("📄 Also saved to the **Commission Gaps** tab in your Google Sheet (refreshed each report run).")
-
-        st.markdown("<br>", unsafe_allow_html=True)
-        st.markdown(section_header("Stopped Getting Paid", "minus"), unsafe_allow_html=True)
-        st.caption("Active clients who were being paid but haven't shown up in the last 2 statement months — "
-                   "could be a lapse (commission rightly stopped) or a missing payment to chase. Review each.")
-        miss = rec["missing"]
-        if miss is None or miss.empty:
-            st.success("Every active client that's ever been paid showed up in a recent statement. 🎉")
-        else:
-            md = pd.DataFrame({
-                "Name": (miss["first_name"].fillna("") + " " + miss["last_name"].fillna("")).str.strip().str.title(),
-                "Carrier": miss["carrier"],
-                "State": miss.get("state", ""),
-                "Last Paid": miss["Last Paid"],
-                "Mo. Since": miss["Months Since Paid"],
-            }).sort_values("Mo. Since", ascending=False)
-            st.dataframe(md, use_container_width=True, hide_index=True, height=min(80 + len(md) * 35, 460))
+            _never = int((gaps["Gap"] == "Never paid").sum())
+            _stop = int((gaps["Gap"] == "Stopped").sum())
+            gk1, gk2, gk3 = st.columns(3)
+            with gk1:
+                st.markdown(stat_card("Total Gaps", f"{len(gaps):,}", "minus", RED), unsafe_allow_html=True)
+            with gk2:
+                st.markdown(stat_card("Never Paid", f"{_never:,}", "shield", GOLD), unsafe_allow_html=True)
+            with gk3:
+                st.markdown(stat_card("Stopped", f"{_stop:,}", "clock", ELEC), unsafe_allow_html=True)
+            st.markdown("<br>", unsafe_allow_html=True)
+            gd = pd.DataFrame({
+                "Name": (gaps["First Name"].fillna("") + " " + gaps["Last Name"].fillna("")).str.strip().str.title(),
+                "Carrier": gaps["Carrier"],
+                "State": gaps["State"],
+                "Gap": gaps["Gap"],
+                "Months Paid": gaps["Months Paid"],
+                "Last Paid": gaps["Last Paid"],
+                "Total Paid": pd.to_numeric(gaps["Total Paid"], errors="coerce").fillna(0).map(lambda v: f"${v:,.0f}"),
+                "Premium": pd.to_numeric(gaps["Premium"], errors="coerce").map(lambda v: f"${v:,.2f}" if pd.notna(v) else "—"),
+            })
+            st.dataframe(gd, use_container_width=True, hide_index=True, height=min(120 + len(gd) * 34, 560))
+            st.caption("📄 Also saved to the **Commission Gaps** tab in your Google Sheet — export or share that with "
+                       "your commissions team as the dispute report.")
 
         cb = rec["chargebacks"]
         if cb is not None and not cb.empty:

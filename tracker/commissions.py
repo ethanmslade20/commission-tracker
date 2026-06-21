@@ -147,19 +147,17 @@ def reconcile_book(active: pd.DataFrame, payments: pd.DataFrame, today=None) -> 
     if payments.empty or active is None or active.empty:
         return result
 
-    # Ignore the current calendar month — its statements are still incomplete
-    # (the agent gets two checks a month, ~20th and ~27th), so a missing payment
-    # there isn't real yet. Base everything on the last COMPLETE month.
+    # The agent gets two checks a month (~20th and ~27th), so the CURRENT month
+    # is incomplete — don't penalize a client for a not-yet-arrived current-month
+    # payment. But a payment that IS present (even in the current month) means
+    # they're being paid. So: "current" = last paid in the latest COMPLETE month
+    # OR later (incl the current month). Only flag if last paid is BEFORE the
+    # latest complete month.
     cur = pd.Timestamp(today.year, today.month, 1)
-    payments = payments[payments["payment_month"] < cur]
-    if payments.empty:
-        return result
+    complete_latest = (cur.to_period("M") - 1).to_timestamp()   # last fully-paid month
+    result["latest_month"] = complete_latest
 
-    latest = payments["payment_month"].max()
-    result["latest_month"] = latest
-    prev = (latest.to_period("M") - 1).to_timestamp()
-
-    # last payment month per person (positive payments only)
+    # last payment month per person over ALL months (incl the current one)
     pos = payments[payments["amount"] > 0]
     last_paid = pos.groupby("name_key")["payment_month"].max().to_dict()
     paid_keys = set(last_paid)
@@ -170,44 +168,40 @@ def reconcile_book(active: pd.DataFrame, payments: pd.DataFrame, today=None) -> 
     result["matched"] = int(a["_matched"].sum())
     result["unmatched"] = int((~a["_matched"]).sum())
 
-    # Missing = matched to a payment history, but not paid in the latest OR prior
-    # month (an active client on a monthly carrier should appear every month).
+    # Stopped = was paid before, but last payment is older than the latest
+    # complete month (so it's not just the pending current-month check).
     def _status(row):
         lp = last_paid.get(row["name_key"])
-        if lp is None:
-            return None          # never matched — could be new / name mismatch; don't false-flag
-        if lp >= prev:
-            return None          # paid recently
+        if lp is None or lp >= complete_latest:
+            return None
         return lp
     a["_last_paid"] = a.apply(_status, axis=1)
     miss = a[a["_last_paid"].notna()].copy()
     if not miss.empty:
         miss["Last Paid"] = pd.to_datetime(miss["_last_paid"]).dt.strftime("%b %Y")
-        miss["Months Since Paid"] = ((latest.to_period("M").ordinal)
+        miss["Months Since Paid"] = ((complete_latest.to_period("M").ordinal)
                                      - pd.to_datetime(miss["_last_paid"]).dt.to_period("M").apply(lambda p: p.ordinal)).astype(int)
         result["missing"] = miss
 
-    # Recent chargebacks (negative amounts in the latest two months)
-    cb = payments[(payments["amount"] < 0) & (payments["payment_month"] >= prev)].copy()
+    # Recent chargebacks (negative amounts in the latest complete month or later)
+    cb = payments[(payments["amount"] < 0) & (payments["payment_month"] >= complete_latest)].copy()
     result["chargebacks"] = cb
     return result
 
 
 def unpaid_active(active: pd.DataFrame, payments: pd.DataFrame, today=None,
                   min_months: int = 2) -> pd.DataFrame:
-    """Active clients with NO matching commission payment in any COMPLETE month.
-    Excludes the current (incomplete) month and anyone whose coverage started too
-    recently to have a payment due in a complete month yet (so June signups
-    waiting on a carrier-lag payment aren't false-flagged). These are 'active but
-    I'm not getting paid' — verify each (genuine gap vs a name spelled differently)."""
+    """Active clients with NO commission payment EVER (any month, including the
+    current one — a present payment means they ARE being paid). Excludes clients
+    whose coverage started too recently to have a payment due in a complete month
+    yet, so brand-new business isn't false-flagged. These are 'active but I have
+    never been paid' — verify each (genuine gap vs a name spelled differently)."""
     if active is None or active.empty or payments is None or payments.empty:
         return pd.DataFrame()
     today = pd.Timestamp(today) if today else pd.Timestamp.today().normalize()
     cur = pd.Timestamp(today.year, today.month, 1)
-    complete = payments[payments["payment_month"] < cur]
-    if complete.empty:
-        return pd.DataFrame()
-    paid = set(complete[complete["amount"] > 0]["name_key"])
+    # ANY positive payment (incl current month) counts as being paid.
+    paid = set(payments[payments["amount"] > 0]["name_key"])
     a = active.copy()
     a["name_key"] = a.apply(lambda r: _person_key(r.get("first_name", ""), r.get("last_name", "")), axis=1)
     a["_eff"] = pd.to_datetime(a.get("effective_date"), errors="coerce")
@@ -219,27 +213,58 @@ def unpaid_active(active: pd.DataFrame, payments: pd.DataFrame, today=None,
     return a[elig].drop(columns=["_eff"], errors="ignore").copy()
 
 
+def payment_history(payments: pd.DataFrame) -> dict:
+    """name_key -> {months: 'Jan 2026, Feb 2026', last: 'Feb 2026', total: $, count}
+    from all positive payments. The evidence trail for a commissions dispute."""
+    hist = {}
+    if payments is None or payments.empty:
+        return hist
+    pos = payments[payments["amount"] > 0]
+    for k, g in pos.groupby("name_key"):
+        mos = sorted(pd.to_datetime(g["payment_month"]).unique())
+        hist[k] = {
+            "months": ", ".join(pd.Timestamp(m).strftime("%b %Y") for m in mos),
+            "last": pd.Timestamp(mos[-1]).strftime("%b %Y"),
+            "total": float(g["amount"].sum()),
+            "count": int(len(g)),
+        }
+    return hist
+
+
 def build_gaps(active: pd.DataFrame, payments: pd.DataFrame, today=None) -> pd.DataFrame:
-    """Combined commission-gap report for the sheet: clients active on the book
-    but either never paid or stopped getting paid. One row per client."""
+    """Commission-gap report: active clients never paid or stopped, each with
+    their full payment history (which months, last month, total, # payments) so
+    it doubles as a dispute report for the commissions team."""
     rec = reconcile_book(active, payments, today)
-    rows = []
-    for _, r in unpaid_active(active, payments, today).iterrows():
-        rows.append({"First Name": r.get("first_name", ""), "Last Name": r.get("last_name", ""),
-                     "Carrier": r.get("carrier", ""), "State": r.get("state", ""),
-                     "Effective Date": r.get("effective_date", ""),
-                     "Mo. on Book": r.get("months_on_book", ""),
-                     "Premium": r.get("net_premium", ""), "Gap": "Never paid", "Last Paid": ""})
+    hist = payment_history(payments)
+
+    def _row(r, gap):
+        k = _person_key(r.get("first_name", ""), r.get("last_name", ""))
+        h = hist.get(k)
+        return {
+            "First Name": r.get("first_name", ""), "Last Name": r.get("last_name", ""),
+            "Carrier": r.get("carrier", ""), "State": r.get("state", ""),
+            "Effective Date": r.get("effective_date", ""),
+            "Mo. on Book": r.get("months_on_book", ""),
+            "Premium": r.get("net_premium", ""), "Gap": gap,
+            "Months Paid": (h["months"] if h else "(never)"),
+            "Last Paid": (h["last"] if h else "—"),
+            "Total Paid": (round(h["total"], 2) if h else 0.0),
+            "# Pmts": (h["count"] if h else 0),
+            "_key": k,
+        }
+
+    rows = [_row(r, "Never paid") for _, r in unpaid_active(active, payments, today).iterrows()]
+    never_keys = {r["_key"] for r in rows}
     miss = rec.get("missing")
     if miss is not None and not miss.empty:
         for _, r in miss.iterrows():
-            rows.append({"First Name": r.get("first_name", ""), "Last Name": r.get("last_name", ""),
-                         "Carrier": r.get("carrier", ""), "State": r.get("state", ""),
-                         "Effective Date": r.get("effective_date", ""),
-                         "Mo. on Book": r.get("months_on_book", ""),
-                         "Premium": r.get("net_premium", ""), "Gap": "Stopped", "Last Paid": r.get("Last Paid", "")})
+            if _person_key(r.get("first_name", ""), r.get("last_name", "")) not in never_keys:
+                rows.append(_row(r, "Stopped"))
+
     df = pd.DataFrame(rows)
     if not df.empty:
         df["Effective Date"] = pd.to_datetime(df["Effective Date"], errors="coerce")
-        df = df.sort_values(["Gap", "Carrier", "Last Name"]).reset_index(drop=True)
+        df = (df.sort_values(["Gap", "Carrier", "Last Name"])
+              .drop(columns=["_key"]).reset_index(drop=True))
     return df
