@@ -20,6 +20,9 @@ from pathlib import Path
 
 import pandas as pd
 
+_ROOT = Path(__file__).resolve().parent.parent
+_DEFAULT_BOOKS = str(_ROOT / "carrier_books")
+
 # Carrier display labels (what shows on the dashboard / sheet).
 _UHC = "UnitedHealthcare"
 _ALLSTATE = "Allstate"
@@ -100,7 +103,7 @@ def _load_natgen(path: Path) -> pd.DataFrame:
     return out
 
 
-def load_supplemental(carrier_books_dir: str = "carrier_books") -> pd.DataFrame:
+def load_supplemental(carrier_books_dir: str = _DEFAULT_BOOKS) -> pd.DataFrame:
     """Combined, normalized supplemental roster across all carriers. Empty frame
     (with the right columns) if no books are present."""
     base = Path(carrier_books_dir)

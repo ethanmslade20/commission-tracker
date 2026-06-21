@@ -22,6 +22,12 @@ from pathlib import Path
 
 import pandas as pd
 
+# Anchor data/carrier-book paths to the repo root so the pipeline works no matter
+# what the current working directory is (launchd watchers can run from anywhere;
+# a relative "carrier_books" would silently not load and skip carrier truth).
+_ROOT = Path(__file__).resolve().parent.parent
+_DEFAULT_BOOKS = str(_ROOT / "carrier_books")
+
 _ACTIVE = {"Effectuated", "PendingEffectuation", "PendingFollowups"}
 
 # Remembers when each "dropped off the portal" client was FIRST detected missing,
@@ -69,7 +75,7 @@ def _months_on_book(eff, today) -> float:
 
 
 def apply_ambetter_truth(all_clients: pd.DataFrame,
-                         carrier_books_dir: str = "carrier_books",
+                         carrier_books_dir: str = _DEFAULT_BOOKS,
                          today=None):
     """Return (adjusted_all_clients, summary_dict). No-op if no Ambetter book."""
     today = pd.Timestamp(today) if today else pd.Timestamp.today().normalize()
@@ -104,7 +110,7 @@ def apply_ambetter_truth(all_clients: pd.DataFrame,
     is_amb = ac["carrier"].astype(str).str.contains("ambetter", case=False, na=False)
     is_active = ac["status"].isin(_ACTIVE)
 
-    dropped = _load_dropped(Path("data/ambetter_dropped.json"))
+    dropped = _load_dropped((_ROOT / "data" / "ambetter_dropped.json"))
     today_iso = today.strftime("%Y-%m-%d")
 
     n_cancel_termed = n_cancel_dropped = n_protected = 0
@@ -131,7 +137,7 @@ def apply_ambetter_truth(all_clients: pd.DataFrame,
             ac.at[idx, "term_estimated"] = True
             n_cancel_dropped += 1
 
-    _save_dropped(dropped, Path("data/ambetter_dropped.json"))
+    _save_dropped(dropped, (_ROOT / "data" / "ambetter_dropped.json"))
 
     # Add portal-active clients the tracker doesn't have
     t_sid = set(ac.loc[is_amb, "_sid"]) - {""}
@@ -187,7 +193,7 @@ _OSCAR_INACTIVE = {"Inactive"}
 
 
 def apply_oscar_truth(all_clients: pd.DataFrame,
-                      carrier_books_dir: str = "carrier_books",
+                      carrier_books_dir: str = _DEFAULT_BOOKS,
                       today=None):
     """Return (adjusted_all_clients, summary_dict). No-op if no Oscar book."""
     today = pd.Timestamp(today) if today else pd.Timestamp.today().normalize()
@@ -223,7 +229,7 @@ def apply_oscar_truth(all_clients: pd.DataFrame,
     def _match(nm, em, ph, S):
         return bool(nm in S or (em in S if em else False) or (ph in S if ph else False))
 
-    dropped = _load_dropped(Path("data/oscar_dropped.json"))
+    dropped = _load_dropped((_ROOT / "data" / "oscar_dropped.json"))
     today_iso = today.strftime("%Y-%m-%d")
     n_cancel_inactive = n_cancel_dropped = n_protected = 0
 
@@ -249,7 +255,7 @@ def apply_oscar_truth(all_clients: pd.DataFrame,
             ac.at[idx, "term_estimated"] = True
             n_cancel_dropped += 1
 
-    _save_dropped(dropped, Path("data/oscar_dropped.json"))
+    _save_dropped(dropped, (_ROOT / "data" / "oscar_dropped.json"))
 
     # Add Oscar-active clients the tracker lacks
     t_keys = set(ac.loc[is_osc, "_nm"]) | (set(ac.loc[is_osc, "_em"]) - {""}) | (set(ac.loc[is_osc, "_ph"]) - {""})
@@ -297,7 +303,7 @@ def apply_oscar_truth(all_clients: pd.DataFrame,
 # HealthSherpa and no coverage dates, so match by name/phone and use the
 # tracker's own effective date for the new-sale safety net.
 def apply_uhc_truth(all_clients: pd.DataFrame,
-                    carrier_books_dir: str = "carrier_books",
+                    carrier_books_dir: str = _DEFAULT_BOOKS,
                     today=None):
     """Return (adjusted_all_clients, summary_dict). No-op if no UHC book."""
     today = pd.Timestamp(today) if today else pd.Timestamp.today().normalize()
@@ -326,7 +332,7 @@ def apply_uhc_truth(all_clients: pd.DataFrame,
     def _m(nm, ph, S):
         return bool(nm in S or (ph in S if ph else False))
 
-    dropped = _load_dropped(Path("data/uhc_dropped.json"))
+    dropped = _load_dropped((_ROOT / "data" / "uhc_dropped.json"))
     today_iso = today.strftime("%Y-%m-%d")
     n_lapsed = n_dropped = n_protected = 0
 
@@ -354,7 +360,7 @@ def apply_uhc_truth(all_clients: pd.DataFrame,
             ac.at[idx, "term_estimated"] = True
             n_dropped += 1
 
-    _save_dropped(dropped, Path("data/uhc_dropped.json"))
+    _save_dropped(dropped, (_ROOT / "data" / "uhc_dropped.json"))
 
     # Add UHC-active business missing from tracker, grouped into policies by App ID
     t_keys = set(ac.loc[is_uhc, "_nm"]) | (set(ac.loc[is_uhc, "_ph"]) - {""})
@@ -406,7 +412,7 @@ def _split_lastfirst(name):
 
 
 def apply_anthem_truth(all_clients: pd.DataFrame,
-                       carrier_books_dir: str = "carrier_books",
+                       carrier_books_dir: str = _DEFAULT_BOOKS,
                        today=None):
     """Return (adjusted_all_clients, summary_dict). No-op if no Anthem book."""
     today = pd.Timestamp(today) if today else pd.Timestamp.today().normalize()
@@ -434,7 +440,7 @@ def apply_anthem_truth(all_clients: pd.DataFrame,
     is_anth = ac["carrier"].astype(str).str.contains("anthem|wellpoint", case=False, na=False, regex=True)
     is_active = ac["status"].isin(_ACTIVE)
 
-    dropped = _load_dropped(Path("data/anthem_dropped.json"))
+    dropped = _load_dropped((_ROOT / "data" / "anthem_dropped.json"))
     today_iso = today.strftime("%Y-%m-%d")
     n_lapsed = n_dropped = n_protected = 0
 
@@ -460,7 +466,7 @@ def apply_anthem_truth(all_clients: pd.DataFrame,
             ac.at[idx, "term_estimated"] = True
             n_dropped += 1
 
-    _save_dropped(dropped, Path("data/anthem_dropped.json"))
+    _save_dropped(dropped, (_ROOT / "data" / "anthem_dropped.json"))
 
     t_keys = set(ac.loc[is_anth, "_k"])
     miss = a_act[~a_act["key"].isin(t_keys)]

@@ -17,6 +17,9 @@ from pathlib import Path
 
 import pandas as pd
 
+_ROOT = Path(__file__).resolve().parent.parent
+_DEFAULT_BOOKS = str(_ROOT / "carrier_books")
+
 _COLS = ["first_name", "last_name", "carrier", "state", "product", "premium",
          "paid_through", "balance", "days_overdue", "reason", "phone", "email"]
 
@@ -88,7 +91,7 @@ def _oscar_pastdue(path: Path, today: pd.Timestamp, balance_min: float) -> pd.Da
     return out
 
 
-def load_health_pastdue(carrier_books_dir: str = "carrier_books",
+def load_health_pastdue(carrier_books_dir: str = _DEFAULT_BOOKS,
                         oscar_balance_min: float = 10.0,
                         today=None) -> pd.DataFrame:
     """Active health-plan policies behind on payment, across detectable carriers."""
