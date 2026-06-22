@@ -1885,6 +1885,45 @@ elif page == "Daily Tracker":
     st.title("Daily Tracker")
     st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 
+    # ── All-time personal bests (best day / week / month, policies & members) ──
+    _det_all = _load_daily_detail()
+    if _det_all is not None and not _det_all.empty:
+        _d = _det_all.copy()
+        _d["_dt"] = pd.to_datetime(_d["Date"], errors="coerce")
+        _d["_mem"] = pd.to_numeric(_d["Members"], errors="coerce").fillna(1)
+        _d = _d.dropna(subset=["_dt"])
+
+        def _record(grouper, fmt):
+            g = _d.groupby(grouper).agg(pol=("_mem", "size"), mem=("_mem", "sum"))
+            if g.empty:
+                return None
+            bp, bm = g["pol"].idxmax(), g["mem"].idxmax()
+            return dict(pol=int(g.loc[bp, "pol"]), pol_when=fmt(bp),
+                        mem=int(g.loc[bm, "mem"]), mem_when=fmt(bm))
+
+        _day = _record(_d["_dt"].dt.date, lambda k: pd.Timestamp(k).strftime("%b %-d, %Y"))
+        _week = _record(_d["_dt"].dt.to_period("W"), lambda k: "week of " + k.start_time.strftime("%b %-d, %Y"))
+        _month = _record(_d["_dt"].dt.to_period("M"), lambda k: k.strftime("%B %Y"))
+
+        st.markdown(section_header("🏆 Personal Bests — All Time", "trend"), unsafe_allow_html=True)
+        _rc = st.columns(3)
+        for _col, _title, _rec in zip(_rc, ["Best Day", "Best Week", "Best Month"], [_day, _week, _month]):
+            with _col:
+                with st.container(border=True):
+                    st.markdown(f"<div style='font-size:.72rem;letter-spacing:.09em;color:#94a3b8;"
+                                f"text-transform:uppercase;font-weight:700'>{_title}</div>", unsafe_allow_html=True)
+                    if _rec:
+                        st.markdown(f"<div style='font-size:1.9rem;font-weight:800;color:#fff;line-height:1.1;margin-top:6px'>"
+                                    f"{_rec['pol']} <span style='font-size:.85rem;color:#22c55e;font-weight:700'>policies</span></div>"
+                                    f"<div style='font-size:.78rem;color:#94a3b8'>{_rec['pol_when']}</div>"
+                                    f"<div style='font-size:1.5rem;font-weight:800;color:#fff;line-height:1.1;margin-top:10px'>"
+                                    f"{_rec['mem']} <span style='font-size:.85rem;color:#60a5fa;font-weight:700'>members</span></div>"
+                                    f"<div style='font-size:.78rem;color:#94a3b8'>{_rec['mem_when']}</div>",
+                                    unsafe_allow_html=True)
+                    else:
+                        st.markdown("—")
+        st.markdown("<br>", unsafe_allow_html=True)
+
     month_options = {
         pd.Timestamp(m + "-01").strftime("%B %Y"): m
         for m in reversed(sorted(months.keys()))
