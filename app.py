@@ -163,6 +163,18 @@ if not st.session_state.authenticated:
                 inp.setAttribute('autocomplete', 'one-time-code');
                 inp.setAttribute('autofocus', 'autofocus');
                 if (!focused) { try { inp.focus(); } catch (e) {} focused = true; }
+                // Auto-submit the moment 4 digits are entered — no Enter needed.
+                if (!inp.dataset.autowired) {
+                    inp.dataset.autowired = '1';
+                    inp.addEventListener('input', function () {
+                        if (inp.value.length === 4) {
+                            inp.dispatchEvent(new KeyboardEvent('keydown', {
+                                key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true}));
+                            // fallback: blur also commits the value to Streamlit
+                            setTimeout(function () { try { inp.blur(); } catch (e) {} }, 30);
+                        }
+                    });
+                }
             }
         }
         setNumeric();
