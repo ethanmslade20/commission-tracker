@@ -1118,7 +1118,7 @@ def _gspread_client():
     return client
 
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=1800)
 def _load_payments() -> pd.DataFrame:
     """Read the Insurance PAYMENTS sheet into commission line items. Works in
     cloud (service account from secrets) and local (ADC impersonation)."""
@@ -1158,7 +1158,7 @@ def _aep_tab_name(year=None) -> str:
     return f"{_AEP_TAB_PREFIX}{y}"
 
 
-@st.cache_data(ttl=30)
+@st.cache_data(ttl=600)
 def _read_aep_tab(tab_name: str) -> pd.DataFrame:
     """Read the AEP Tracker tab from Google Sheets. Returns empty DF if tab missing."""
     if not _running_in_cloud():
@@ -1247,7 +1247,7 @@ def _read_app_settings_raw() -> dict:
         return {}
 
 
-@st.cache_data(ttl=30)
+@st.cache_data(ttl=600)
 def _read_app_settings() -> dict:
     return _read_app_settings_raw()
 
@@ -1278,7 +1278,9 @@ def _persist_settings(**updates) -> bool:
     return _save_app_settings(current)
 
 
-@st.cache_data(ttl=60)
+# Long TTL: navigation stays instant (no Sheets re-fetch). The "Refresh data"
+# button clears the cache, so the agent pulls fresh data only when they want it.
+@st.cache_data(ttl=1800)
 def load_data():
     if _running_in_cloud():
         return _load_from_sheets()
