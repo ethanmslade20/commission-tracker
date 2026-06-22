@@ -1889,6 +1889,9 @@ elif page == "Daily Tracker":
     _det_all = _load_daily_detail()
     if _det_all is not None and not _det_all.empty:
         _d = _det_all.copy()
+        # New business only — exclude OEP renewals so records reflect real selling.
+        if "Is New" in _d.columns:
+            _d = _d[_d["Is New"].astype(str).str.strip().str.lower().isin(["yes", "true", "1"])]
         _d["_dt"] = pd.to_datetime(_d["Date"], errors="coerce")
         _d["_mem"] = pd.to_numeric(_d["Members"], errors="coerce").fillna(1)
         _d = _d.dropna(subset=["_dt"])
@@ -1905,7 +1908,7 @@ elif page == "Daily Tracker":
         _week = _record(_d["_dt"].dt.to_period("W"), lambda k: "week of " + k.start_time.strftime("%b %-d, %Y"))
         _month = _record(_d["_dt"].dt.to_period("M"), lambda k: k.strftime("%B %Y"))
 
-        st.markdown(section_header("🏆 Personal Bests — All Time", "trend"), unsafe_allow_html=True)
+        st.markdown(section_header("🏆 Personal Bests — New Business (All Time)", "trend"), unsafe_allow_html=True)
         _rc = st.columns(3)
         for _col, _title, _rec in zip(_rc, ["Best Day", "Best Week", "Best Month"], [_day, _week, _month]):
             with _col:
