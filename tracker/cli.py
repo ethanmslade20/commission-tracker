@@ -230,6 +230,16 @@ def digest(to, dry_run):
 
 
 @cli.command()
+@click.option("--to", required=True, help="Phone number to text.")
+@click.option("--message", required=True, help="Reminder text to send.")
+def remind(to, message):
+    """Send a one-off reminder text via iMessage (used by the scheduled reminders)."""
+    from tracker.digest import send_imessage
+    send_imessage(message, to)
+    click.echo(f"Reminder sent to {to}.")
+
+
+@cli.command()
 @click.option("--keep-days", default=30, help="How many days of backups to keep.")
 def backup(keep_days):
     """Back up local state (data/, config/) + export both Google Sheets to iCloud."""
