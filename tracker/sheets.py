@@ -246,6 +246,38 @@ def _build_daily_tracker_data(df: pd.DataFrame, month_str: str) -> pd.DataFrame:
     return result[["Date", "Policies", "Members"]]
 
 
+def _build_daily_detail(months: Dict[str, pd.DataFrame]) -> pd.DataFrame:
+    """Per-policy submission detail across all months (same coalesced-sale-date +
+    Option-A new-business logic as the daily tracker), so the app can show which
+    policies make up each day's bar. Columns: Date, Month, First Name, Last Name,
+    Members, Carrier, State."""
+    cols = ["Date", "Month", "First Name", "Last Name", "Members", "Carrier", "State"]
+    frames = []
+    for m, df in (months or {}).items():
+        if df is None or df.empty:
+            continue
+        d = df.copy()
+        d["_sale"] = _coalesce_sale_date(d)
+        if "effective_date" in d.columns:
+            eff = pd.to_datetime(d["effective_date"], errors="coerce")
+            d = d[(eff > d["_sale"]).fillna(False)]
+        d = d[d["_sale"].notna()]
+        if d.empty:
+            continue
+        frames.append(pd.DataFrame({
+            "Date": d["_sale"].dt.strftime("%Y-%m-%d"),
+            "Month": m,
+            "First Name": d.get("first_name", ""),
+            "Last Name": d.get("last_name", ""),
+            "Members": pd.to_numeric(d.get("applicant_count", 1), errors="coerce").fillna(1).astype(int),
+            "Carrier": d.get("carrier", ""),
+            "State": d.get("state", ""),
+        }))
+    if not frames:
+        return pd.DataFrame(columns=cols)
+    return pd.concat(frames, ignore_index=True).sort_values(["Month", "Date", "Last Name"]).reset_index(drop=True)
+
+
 def _write_daily_tracker_tab(
     spreadsheet: gspread.Spreadsheet,
     ws: gspread.Worksheet,
@@ -734,6 +766,7 @@ def update_sheet(
     supp_title = tab_names.get("supplemental", "Supplemental")
     pastdue_title = tab_names.get("health_pastdue", "Health Past Due")
     gaps_title = tab_names.get("commission_gaps", "Commission Gaps")
+    daily_detail_title = tab_names.get("daily_detail", "Daily Detail")
 
     # Daily tracker tabs — one per ingested month, all history included.
     daily_tracker_tabs: Dict[str, str] = {}   # month_str → tab title
@@ -752,6 +785,10 @@ def update_sheet(
         all_titles |= {pastdue_title}
     if _has_gaps:
         all_titles |= {gaps_title}
+    _daily_detail = _build_daily_detail(months) if months else pd.DataFrame()
+    _has_detail = not _daily_detail.empty
+    if _has_detail:
+        all_titles |= {daily_detail_title}
 
     # Remove any tabs that no longer belong
     _delete_stale_tabs(spreadsheet, keep=all_titles)
@@ -809,6 +846,15 @@ def update_sheet(
             print(f"  Updated tab: {gaps_title} ({len(commission_gaps_df)} rows)")
         except Exception as e:
             print(f"  Warning: commission gaps write failed: {e}")
+
+    # ── Daily Detail tab (per-policy submissions, for the chart drill-down) ───
+    if _has_detail:
+        try:
+            detail_ws = _ensure_tab(spreadsheet, daily_detail_title)
+            _write_tab(detail_ws, _daily_detail)
+            print(f"  Updated tab: {daily_detail_title} ({len(_daily_detail)} rows)")
+        except Exception as e:
+            print(f"  Warning: daily detail write failed: {e}")
 
     # ── Daily tracker tabs (one per month) ───────────────────────────────────
     # Pause between tabs to avoid hitting the Sheets API write-per-minute quota.

@@ -1154,6 +1154,29 @@ def _load_payments() -> pd.DataFrame:
         return pd.DataFrame()
 
 
+@st.cache_data(ttl=1800)
+def _load_daily_detail() -> pd.DataFrame:
+    """Per-policy submission detail (Date, Month, First/Last Name, Members,
+    Carrier, State) for the Daily Tracker drill-down. Cloud reads the Daily
+    Detail tab; local builds it from the raw snapshots."""
+    cols = ["Date", "Month", "First Name", "Last Name", "Members", "Carrier", "State"]
+    try:
+        if _running_in_cloud():
+            ss = _gspread_client().open_by_url(st.secrets["sheet_url"])
+            rows = ss.worksheet("Daily Detail").get_all_records()
+            return pd.DataFrame(rows) if rows else pd.DataFrame(columns=cols)
+        from tracker.ingest import load_all_snapshots
+        from tracker.sheets import _build_daily_detail
+        from tracker.report import (_filter_by_appointments, _load_appointments,
+                                    _filter_excluded, _load_exclusions)
+        months = load_all_snapshots(Path("snapshots"))
+        months = {m: _filter_by_appointments(_filter_excluded(d, _load_exclusions()), _load_appointments())
+                  for m, d in months.items()}
+        return _build_daily_detail(months)
+    except Exception:
+        return pd.DataFrame(columns=cols)
+
+
 _AEP_STATUSES   = ["Not Started", "Contacted", "Renewed", "Lost"]
 _AEP_COLS       = ["First Name", "Last Name", "State", "Carrier", "Members", "Monthly Premium", "Effective Date", "Status", "Notes"]
 _AEP_TAB_PREFIX = "AEP "
@@ -1923,7 +1946,13 @@ elif page == "Daily Tracker":
                 yaxis=dict(title="Policies", gridcolor="rgba(96,165,250,0.10)", showgrid=True, zeroline=False),
                 margin=dict(t=14, b=10, l=10, r=10),
             ))
-            show_chart(fig)
+            # Clickable: capture which bar (day) was clicked for the drill-down below.
+            fig.update_xaxes(fixedrange=True); fig.update_yaxes(fixedrange=True)
+            fig.update_layout(dragmode=False)
+            _evt = st.plotly_chart(fig, use_container_width=True, on_select="rerun",
+                                   key=f"daily_chart_{selected_m}",
+                                   config={"displayModeBar": False, "scrollZoom": False, "doubleClick": False})
+            st.caption("💡 Click any bar to see that day's policies below.")
 
     with col_table:
         with st.container(border=True):
@@ -1953,6 +1982,45 @@ elif page == "Daily Tracker":
                     ),
                 },
             )
+
+    # ── Drill-down: policies for the clicked day ──────────────────────────────
+    _clicked_day = None
+    try:
+        _pts = _evt.selection.points if (_evt and getattr(_evt, "selection", None)) else []
+        if _pts:
+            _clicked_day = _pts[0].get("x")
+    except Exception:
+        _clicked_day = None
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    with st.container(border=True):
+        if not _clicked_day:
+            st.markdown(chart_head("Policies for a Day", "Click a bar above to see who you signed that day", "users"),
+                        unsafe_allow_html=True)
+        else:
+            _det = _load_daily_detail()
+            if _det is None or _det.empty:
+                st.markdown(chart_head(f"Policies — {_clicked_day}", "Detail not generated yet — run a report", "users"),
+                            unsafe_allow_html=True)
+            else:
+                _det = _det[_det["Month"].astype(str) == selected_m].copy()
+                _det["_lbl"] = pd.to_datetime(_det["Date"], errors="coerce").dt.strftime("%b %d")
+                _rows = _det[_det["_lbl"] == _clicked_day]
+                _mem = int(pd.to_numeric(_rows["Members"], errors="coerce").fillna(0).sum())
+                st.markdown(chart_head(f"Policies submitted — {_clicked_day}",
+                                       f"{len(_rows)} policies · {_mem} members", "users"),
+                            unsafe_allow_html=True)
+                if _rows.empty:
+                    st.info("No policies recorded for that day.")
+                else:
+                    _show = pd.DataFrame({
+                        "Name": (_rows["First Name"].fillna("") + " " + _rows["Last Name"].fillna("")).str.strip().str.title(),
+                        "Members": pd.to_numeric(_rows["Members"], errors="coerce").fillna(1).astype(int),
+                        "Carrier": _rows["Carrier"],
+                        "State": _rows["State"],
+                    }).sort_values("Name")
+                    st.dataframe(_show, use_container_width=True, hide_index=True,
+                                 height=min(80 + len(_show) * 35, 460))
 
 
 # ══════════════════════════════════════════════════════════════════════════════
