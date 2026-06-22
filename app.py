@@ -1906,18 +1906,20 @@ elif page == "Daily Tracker":
             chart_df = daily_df.copy()
             chart_df["Day"] = chart_df["Date"].dt.strftime("%b %d")
             max_pol = max(int(daily_df["Policies"].max()), 1)
-            chart_df["Best Day"] = chart_df["Policies"] == max_pol
+            # Single trace, per-bar color (gold = best day) so bars stay in date
+            # order. Using px color= would split into separate traces and push the
+            # gold bars to the end of the axis.
+            _day_order = chart_df["Day"].tolist()
+            _bar_colors = [GOLD if int(p) == max_pol else GREEN for p in chart_df["Policies"]]
 
-            fig = px.bar(
-                chart_df, x="Day", y="Policies",
-                color="Best Day", color_discrete_map={True: GOLD, False: GREEN},
-                text="Policies",
-            )
-            fig.update_traces(marker_cornerradius=4, textposition="outside", textfont_size=9,
+            fig = px.bar(chart_df, x="Day", y="Policies", text="Policies")
+            fig.update_traces(marker_color=_bar_colors, marker_cornerradius=4,
+                              textposition="outside", textfont_size=9,
                               hovertemplate="%{x}: %{y} policies<extra></extra>")
             fig.update_layout(**_chart_layout(
                 showlegend=False, height=430,
-                xaxis=dict(gridcolor="rgba(0,0,0,0)", showgrid=False, tickangle=-45, tickfont=dict(size=9)),
+                xaxis=dict(gridcolor="rgba(0,0,0,0)", showgrid=False, tickangle=-45, tickfont=dict(size=9),
+                           categoryorder="array", categoryarray=_day_order),
                 yaxis=dict(title="Policies", gridcolor="rgba(96,165,250,0.10)", showgrid=True, zeroline=False),
                 margin=dict(t=14, b=10, l=10, r=10),
             ))
