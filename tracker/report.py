@@ -236,6 +236,13 @@ def run_report(settings: dict) -> None:
               f"{_ant['cancelled_lapsed'] + _ant['cancelled_dropped']} marked cancelled "
               f"({_ant['protected_new_sales']} new sales protected)")
 
+    # Canonical carrier names (merge "United Healthcare"/"UnitedHealthcare", the
+    # several Molina forms, "U of U"→University of Utah) so reporting doesn't
+    # split one carrier across spellings. Done AFTER carrier-truth matching.
+    if not all_clients.empty and "carrier" in all_clients.columns:
+        from tracker.carriers import normalize_carrier_series
+        all_clients["carrier"] = normalize_carrier_series(all_clients["carrier"])
+
     # Tenure = how long the client has been on YOUR book, NOT the policy's
     # coverage age. The policy's effective_date can predate the relationship by
     # years (inherited / agent-of-record transfers start as far back as 2018).

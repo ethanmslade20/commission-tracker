@@ -756,8 +756,12 @@ def _load_from_parquet():
     from tracker.supplemental import load_supplemental, summarize_supplemental
     from tracker.pastdue import load_health_pastdue
 
+    from tracker.carriers import normalize_carrier_series
+
     months = load_all_snapshots(Path("snapshots"))
     all_clients = build_all_clients(months)
+    if "carrier" in all_clients.columns:
+        all_clients["carrier"] = normalize_carrier_series(all_clients["carrier"])
     dashboard_data = build_dashboard_data(months, all_clients)
     _supp = load_supplemental()
     dashboard_data["supp"] = summarize_supplemental(_supp)
@@ -995,6 +999,9 @@ def _load_from_sheets():
     spreadsheet  = client.open_by_url(st.secrets["sheet_url"])
 
     all_clients  = _read_all_clients_from_sheet(spreadsheet)
+    if not all_clients.empty and "carrier" in all_clients.columns:
+        from tracker.carriers import normalize_carrier_series
+        all_clients["carrier"] = normalize_carrier_series(all_clients["carrier"])
 
     # Build carrier map from RAW data (before any filtering) for the Settings page
     _raw_state_carrier_map: dict = {}

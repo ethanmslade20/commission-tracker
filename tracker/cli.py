@@ -229,6 +229,14 @@ def digest(to, dry_run):
     click.echo(f"Digest sent to {to}.")
 
 
+@cli.command()
+@click.option("--keep-days", default=30, help="How many days of backups to keep.")
+def backup(keep_days):
+    """Back up local state (data/, config/) + export both Google Sheets to iCloud."""
+    from tracker.backup import run_backup
+    run_backup(keep_days=keep_days)
+
+
 @cli.command("reconcile-ambetter")
 @click.argument("path", required=False)
 @click.option("--out", "-o", default=None, help="Output folder for the CSV lists (default: ~/Desktop/Carrier Reports).")
