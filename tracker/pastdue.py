@@ -21,7 +21,7 @@ import pandas as pd
 _ROOT = Path(__file__).resolve().parent.parent
 _DEFAULT_BOOKS = str(_ROOT / "carrier_books")
 
-_COLS = ["first_name", "last_name", "carrier", "state", "product", "premium",
+_COLS = ["first_name", "last_name", "carrier", "state", "product", "status", "premium",
          "members", "paid_through", "balance", "days_overdue", "reason", "phone", "email"]
 
 
@@ -72,6 +72,9 @@ def _ambetter_pastdue(path: Path, today: pd.Timestamp) -> pd.DataFrame:
         "carrier":    "Ambetter",
         "state":      d.get("State"),
         "product":    "Medical",
+        # Ambetter's export has no status field; in-force + paid-through passed
+        # means the member is in their grace window before cancellation.
+        "status":     "Grace period",
         "premium":    _money(d.get("Member Responsibility")),
         "members":    _members(d.get("Number of Members")),
         "paid_through": d["ptd"],
@@ -106,6 +109,8 @@ def _oscar_pastdue(path: Path, today: pd.Timestamp) -> pd.DataFrame:
         "carrier":    "Oscar",
         "state":      d.get("State"),
         "product":    "Medical",
+        # Oscar reports the real status: Grace period / Delinquent / Unpaid binder.
+        "status":     d.get("Policy status"),
         "premium":    d["prem"],
         "members":    _members(d.get("Lives")),
         "paid_through": pd.NaT,

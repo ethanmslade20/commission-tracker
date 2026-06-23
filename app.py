@@ -872,7 +872,7 @@ def _read_supplemental_summary_from_sheet(spreadsheet) -> dict:
 def _read_pastdue_df_from_sheet(spreadsheet) -> pd.DataFrame:
     """Read the Health Past Due tab into the normalized roster shape. Empty frame
     if the tab is missing/empty."""
-    cols = ["first_name", "last_name", "carrier", "state", "premium", "members",
+    cols = ["first_name", "last_name", "carrier", "state", "status", "premium", "members",
             "paid_through", "balance", "days_overdue", "reason", "phone", "email"]
     try:
         ws = spreadsheet.worksheet("Health Past Due")
@@ -884,11 +884,18 @@ def _read_pastdue_df_from_sheet(spreadsheet) -> pd.DataFrame:
     df = pd.DataFrame(rows)
     if "Carrier" not in df.columns:
         return pd.DataFrame(columns=cols)
+    # Status: use the carrier's real status if the report has written it; otherwise
+    # fall back (Ambetter past-due = grace; anything else = generic "Past due").
+    if "Status" in df.columns:
+        _status = df["Status"]
+    else:
+        _status = df.get("Carrier").map(lambda c: "Grace period" if str(c) == "Ambetter" else "Past due")
     out = pd.DataFrame({
         "first_name": df.get("First Name"),
         "last_name": df.get("Last Name"),
         "carrier": df.get("Carrier"),
         "state": df.get("State"),
+        "status": _status,
         "members": pd.to_numeric(df.get("Members"), errors="coerce").fillna(1).astype(int),
         "premium": pd.to_numeric(
             df.get("Premium", "").astype(str).str.replace(r"[$,]", "", regex=True),
@@ -2435,35 +2442,47 @@ elif page == "Commissions":
                 st.markdown(stat_card("Members at Risk", f"{int(pv['members'].sum()):,}", "users", ELEC), unsafe_allow_html=True)
             st.markdown("<br>", unsafe_allow_html=True)
 
-            qf1, qf2 = st.columns(2)
+            pv["status"] = pv.get("status", pd.Series(index=pv.index, dtype=str)).fillna("Past due").replace("", "Past due")
+            qf1, qf2, qf3 = st.columns(3)
             with qf1:
+                _qst = ["All"] + sorted(pv["status"].dropna().unique().tolist())
+                qstf = st.selectbox("Status", _qst, key="pastdue_comm_status")
+            with qf2:
                 _qc = ["All"] + sorted(pv["carrier"].dropna().unique().tolist())
                 qcf = st.selectbox("Carrier", _qc, key="pastdue_comm_carrier")
-            with qf2:
+            with qf3:
                 _qs = ["All"] + sorted(pv["state"].dropna().astype(str).unique().tolist()) if "state" in pv.columns else ["All"]
                 qsf = st.selectbox("State", _qs, key="pastdue_comm_state")
+            if qstf != "All":
+                pv = pv[pv["status"] == qstf]
             if qcf != "All":
                 pv = pv[pv["carrier"] == qcf]
             if qsf != "All" and "state" in pv.columns:
                 pv = pv[pv["state"].astype(str) == qsf]
-            pv = pv.sort_values("days_overdue", ascending=False, na_position="last").reset_index(drop=True)
+            # Most-urgent lapses first; brand-new unpaid binders last (they're a
+            # different kind of follow-up — activate coverage, not catch up a lapse).
+            _prio = {"Delinquent": 0, "Grace period": 1, "Paid binder": 2, "Unpaid binder": 3}
+            pv["_sp"] = pv["status"].map(lambda s: _prio.get(s, 1))
+            pv = pv.sort_values(["_sp", "days_overdue"], ascending=[True, False], na_position="last").reset_index(drop=True)
 
             qd = pd.DataFrame({
                 "Name": pv["_name"].str.title(),
+                "Status": pv["status"],
                 "Carrier": pv["carrier"],
                 "State": pv["state"] if "state" in pv.columns else "",
                 "Premium": pv["premium"].apply(lambda v: f"${v:,.2f}" if pd.notna(v) else "—"),
                 "Members": pv["members"],
                 "Behind Since / Owed": pv["reason"] if "reason" in pv.columns else "",
-                "Days Overdue": pv["days_overdue"].apply(lambda v: str(int(v)) if pd.notna(v) else "—"),
                 "Phone": pv["phone"] if "phone" in pv.columns else "",
             })
             st.caption(f"Showing **{len(qd)}** past-due paying clients"
+                       + (f" · {qstf}" if qstf != "All" else "")
                        + (f" · {qcf}" if qcf != "All" else "") + (f" · {qsf}" if qsf != "All" else ""))
             st.dataframe(qd, use_container_width=True, hide_index=True, height=min(120 + len(qd) * 34, 560))
-            st.caption("Same data as the Re-Engage page's **Past Due — Grace Period** tab — surfaced here so it's "
-                       "next to your commissions. Anthem and UHC-medical exports don't include payment data, so "
-                       "they can't be detected.")
+            st.caption("**Status** tells you the kind of call: *Grace period / Delinquent* = an existing client "
+                       "lapsing (catch them up before cancellation); *Unpaid binder* = a brand-new sale that hasn't "
+                       "paid to activate yet (call to turn coverage on). Covers Ambetter & Oscar — Anthem and "
+                       "UHC-medical exports don't include payment data.")
 
         cb = rec["chargebacks"]
         if cb is not None and not cb.empty:

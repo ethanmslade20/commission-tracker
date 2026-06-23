@@ -166,6 +166,7 @@ def _build_pastdue_display(pastdue: pd.DataFrame) -> pd.DataFrame:
         "Last Name":    df["last_name"],
         "Carrier":      df["carrier"],
         "State":        df["state"],
+        "Status":       df.get("status"),
         "Members":      _members,
         "Premium":      pd.to_numeric(df["premium"], errors="coerce").round(2),
         "Paid Through": pd.to_datetime(df.get("paid_through"), errors="coerce"),
