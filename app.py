@@ -2379,6 +2379,7 @@ elif page == "Commissions":
                 "Policy #": dv["Policy #"],
                 "Effective": dv["Effective"],
                 "Paid Through": dv["Paid Through"],
+                "Eligible (carrier)": dv.get("Eligible (carrier)", "Yes"),
                 "Last Paid": dv.get("Last Paid", "—"),
                 "Members": pd.to_numeric(dv.get("Members"), errors="coerce").fillna(0).astype(int),
                 "Monthly Premium": pd.to_numeric(dv.get("Monthly Premium"), errors="coerce").fillna(0).map(lambda v: f"${v:,.2f}"),
