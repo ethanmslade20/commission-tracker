@@ -2903,29 +2903,39 @@ elif page == "Re-Engage":
             with pk3:
                 st.markdown(stat_card("Members at Risk", f"{int(_pd_df['members'].sum()):,}", "users", ELEC), unsafe_allow_html=True)
 
+            _pd_df["status"] = _pd_df.get("status", pd.Series(index=_pd_df.index, dtype=str)).fillna("Past due").replace("", "Past due")
             st.markdown("<br>", unsafe_allow_html=True)
-            pf1, pf2 = st.columns(2)
+            pf1, pf2, pf3 = st.columns(3)
             with pf1:
+                _pst = ["All"] + sorted(_pd_df["status"].dropna().unique().tolist())
+                _pstf = st.selectbox("Status", _pst, key="pastdue_status")
+            with pf2:
                 _pc = ["All"] + sorted(_pd_df["carrier"].dropna().unique().tolist())
                 _pcf = st.selectbox("Carrier", _pc, key="pastdue_carrier")
-            with pf2:
+            with pf3:
                 _ps = ["All"] + sorted(_pd_df["state"].dropna().unique().tolist()) if "state" in _pd_df.columns else ["All"]
                 _psf = st.selectbox("State", _ps, key="pastdue_state")
 
             _pv = _pd_df.copy()
+            if _pstf != "All":
+                _pv = _pv[_pv["status"] == _pstf]
             if _pcf != "All":
                 _pv = _pv[_pv["carrier"] == _pcf]
             if _psf != "All" and "state" in _pv.columns:
                 _pv = _pv[_pv["state"] == _psf]
-            _pv = _pv.sort_values("days_overdue", ascending=False, na_position="last").reset_index(drop=True)
+            # Most-recent paid-through month first (freshest, most-savable lapses on
+            # top); Oscar balance-based rows fall to the bottom by balance owed.
+            _pv["_pt"] = pd.to_datetime(_pv.get("paid_through"), errors="coerce")
+            _pv["_bal"] = pd.to_numeric(_pv.get("balance"), errors="coerce")
+            _pv = _pv.sort_values(["_pt", "_bal"], ascending=[False, False], na_position="last").reset_index(drop=True)
 
             _pdisp = pd.DataFrame()
             _pdisp["Name"]         = _pv["_name"]
+            _pdisp["Status"]       = _pv["status"]
             _pdisp["Carrier"]      = _pv["carrier"]
             _pdisp["State"]        = _pv["state"] if "state" in _pv.columns else ""
             _pdisp["Premium"]      = _pv["premium"].apply(lambda v: f"${v:,.2f}" if pd.notna(v) else "—")
             _pdisp["Members"]      = _pv["members"]
-            _pdisp["Days Overdue"] = _pv["days_overdue"].apply(lambda v: str(int(v)) if pd.notna(v) else "—")
             _pdisp["Reason"]       = _pv["reason"] if "reason" in _pv.columns else ""
             _pdisp["Phone"]        = _pv["phone"] if "phone" in _pv.columns else ""
             st.dataframe(_pdisp, use_container_width=True, hide_index=True, height=500)
