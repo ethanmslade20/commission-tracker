@@ -178,6 +178,75 @@ def _build_pastdue_display(pastdue: pd.DataFrame) -> pd.DataFrame:
     return out.reset_index(drop=True)
 
 
+def _alert_new_lapses(all_clients: pd.DataFrame) -> None:
+    """Text the agent the moment a client newly drops into Re-Engage (Cancelled/
+    Terminated). Diffs the current lapsed set against the last run's saved set so
+    each person is alerted exactly once. First run just initializes (no blast)."""
+    import json
+    import re
+    import unicodedata
+
+    if all_clients is None or all_clients.empty or "status" not in all_clients.columns:
+        return
+
+    def _key(f, l):
+        s = unicodedata.normalize("NFKD", f"{f} {l}").encode("ascii", "ignore").decode().lower()
+        return re.sub(r"[^a-z]", "", s)
+
+    _data = Path(__file__).resolve().parent.parent / "data"
+    churn = all_clients[all_clients["status"].isin(["Cancelled", "Terminated"])]
+    cur = {}
+    for _, r in churn.iterrows():
+        k = _key(r.get("first_name", ""), r.get("last_name", ""))
+        if k:
+            cur[k] = f"{r.get('first_name','')} {r.get('last_name','')}".strip().title()
+
+    path = _data / "known_lapsed.json"
+    first_run = not path.exists()
+    prev = {}
+    if path.exists():
+        try:
+            prev = json.loads(path.read_text())
+        except Exception:
+            prev = {}
+
+    new_keys = [k for k in cur if k not in prev]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(cur, indent=2))
+
+    if first_run:
+        print(f"  Lapse alerts: initialized ({len(cur)} already lapsed — no text sent).")
+        return
+    if not new_keys:
+        return
+
+    names = [cur[k] for k in new_keys]
+    print(f"  Lapse alerts: {len(names)} newly dropped → texting")
+
+    cfg = _data / "alert_config.json"
+    phone = None
+    if cfg.exists():
+        try:
+            c = json.loads(cfg.read_text())
+            phone = c.get("phone") if c.get("lapse_alerts", True) else None
+        except Exception:
+            phone = None
+    if not phone:
+        print("  (no alert phone configured — skipping text)")
+        return
+
+    shown = names[:12]
+    more = f"\n…and {len(names) - 12} more" if len(names) > 12 else ""
+    msg = ("🔔 Dropped off your book (now in Re-Engage):\n• "
+           + "\n• ".join(shown) + more + "\nReach out to win them back.")
+    try:
+        from tracker.digest import send_imessage
+        send_imessage(msg, phone)
+        print(f"  Lapse alert texted to {phone}")
+    except Exception as e:
+        print(f"  (lapse text failed: {e})")
+
+
 def run_report(settings: dict) -> None:
     snapshot_dir = Path(settings["snapshot_dir"])
     months = load_all_snapshots(snapshot_dir)
@@ -388,4 +457,11 @@ def run_report(settings: dict) -> None:
         health_pastdue_df=pastdue_display,
         commission_gaps_df=commission_gaps,
     )
+
+    # Text the agent any clients who newly dropped into Re-Engage this run.
+    try:
+        _alert_new_lapses(all_clients)
+    except Exception as e:
+        print(f"  (lapse alert step skipped: {e})")
+
     print("Done.")
