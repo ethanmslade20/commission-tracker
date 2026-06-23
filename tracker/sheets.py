@@ -782,6 +782,7 @@ def update_sheet(
     supplemental_df: Optional[pd.DataFrame] = None,
     health_pastdue_df: Optional[pd.DataFrame] = None,
     commission_gaps_df: Optional[pd.DataFrame] = None,
+    ambetter_disputes_df: Optional[pd.DataFrame] = None,
 ) -> None:
     spreadsheet = _open_sheet(sheet_url, impersonation_target)
 
@@ -796,6 +797,7 @@ def update_sheet(
     supp_title = tab_names.get("supplemental", "Supplemental")
     pastdue_title = tab_names.get("health_pastdue", "Health Past Due")
     gaps_title = tab_names.get("commission_gaps", "Commission Gaps")
+    disputes_title = tab_names.get("ambetter_disputes", "Ambetter Disputes")
     daily_detail_title = tab_names.get("daily_detail", "Daily Detail")
 
     # Daily tracker tabs — one per ingested month, all history included.
@@ -808,6 +810,7 @@ def update_sheet(
     _has_supp = supplemental_df is not None and not supplemental_df.empty
     _has_pastdue = health_pastdue_df is not None and not health_pastdue_df.empty
     _has_gaps = commission_gaps_df is not None and not commission_gaps_df.empty
+    _has_disputes = ambetter_disputes_df is not None and not ambetter_disputes_df.empty
     all_titles = {dashboard_title} | {t for t, *_ in data_tabs} | set(daily_tracker_tabs.values())
     if _has_supp:
         all_titles |= {supp_title}
@@ -815,6 +818,8 @@ def update_sheet(
         all_titles |= {pastdue_title}
     if _has_gaps:
         all_titles |= {gaps_title}
+    if _has_disputes:
+        all_titles |= {disputes_title}
     _daily_detail = _build_daily_detail(months) if months else pd.DataFrame()
     _has_detail = not _daily_detail.empty
     if _has_detail:
@@ -876,6 +881,15 @@ def update_sheet(
             print(f"  Updated tab: {gaps_title} ({len(commission_gaps_df)} rows)")
         except Exception as e:
             print(f"  Warning: commission gaps write failed: {e}")
+
+    # ── Ambetter Disputes tab (carrier says owed + member current, but unpaid) ──
+    if _has_disputes:
+        try:
+            disputes_ws = _ensure_tab(spreadsheet, disputes_title)
+            _write_tab(disputes_ws, ambetter_disputes_df)
+            print(f"  Updated tab: {disputes_title} ({len(ambetter_disputes_df)} rows)")
+        except Exception as e:
+            print(f"  Warning: Ambetter disputes write failed: {e}")
 
     # ── Daily Detail tab (per-policy submissions, for the chart drill-down) ───
     if _has_detail:

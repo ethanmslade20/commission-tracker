@@ -2,6 +2,8 @@
 snapshots/
 input/
 data/*.json
+data/carrier_reports/
+data/
 
 # Python
 .venv/

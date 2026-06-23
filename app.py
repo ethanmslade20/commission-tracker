@@ -1155,6 +1155,33 @@ def _load_payments() -> pd.DataFrame:
 
 
 @st.cache_data(ttl=1800)
+def _load_ambetter_disputes() -> pd.DataFrame:
+    """Ambetter policies the carrier's own export confirms you're owed on
+    (Eligible for Commission = Yes + member paid-through current) but the payments
+    sheet shows no recent payment. Cloud reads the Ambetter Disputes tab the
+    report writes; local builds it live from carrier_books/ambetter.csv."""
+    cols = ["First Name", "Last Name", "Carrier", "State", "Policy #", "Effective",
+            "Paid Through", "Eligible (carrier)", "Last Paid", "Members",
+            "Monthly Premium", "Phone", "Email"]
+    try:
+        if _running_in_cloud():
+            ss = _gspread_client().open_by_url(st.secrets["sheet_url"])
+            rows = ss.worksheet("Ambetter Disputes").get_all_records()
+            return pd.DataFrame(rows) if rows else pd.DataFrame(columns=cols)
+        from tracker.carrier_status import (parse_ambetter_export,
+                                            classify_ambetter, dispute_display)
+        book = Path(__file__).parent / "carrier_books" / "ambetter.csv"
+        pay = _load_payments()
+        if not book.exists() or pay is None or pay.empty:
+            return pd.DataFrame(columns=cols)
+        clf = classify_ambetter(parse_ambetter_export(str(book)), pay)
+        d = dispute_display(clf)
+        return d if d is not None and not d.empty else pd.DataFrame(columns=cols)
+    except Exception:
+        return pd.DataFrame(columns=cols)
+
+
+@st.cache_data(ttl=1800)
 def _load_daily_detail() -> pd.DataFrame:
     """Per-policy submission detail (Date, Month, First/Last Name, Members,
     Carrier, State) for the Daily Tracker drill-down. Cloud reads the Daily
@@ -2320,6 +2347,47 @@ elif page == "Commissions":
             st.dataframe(gd, use_container_width=True, hide_index=True, height=min(120 + len(gd) * 34, 560))
             st.caption("📄 Also saved to the **Commission Gaps** tab in your Google Sheet — export or share that with "
                        "your commissions team as the dispute report.")
+
+        # ── Ambetter disputes: carrier's OWN export confirms owed, but unpaid ──
+        disp = _load_ambetter_disputes()
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.markdown(section_header("Ambetter — Carrier Confirms Owed", "shield"), unsafe_allow_html=True)
+        st.caption("The strongest dispute evidence: Ambetter's **own policy export** marks these "
+                   "**Eligible for Commission = Yes** with the member **paid-through current**, yet your payments "
+                   "sheet shows no recent check. New business (effective this month or later) is held back — "
+                   "Ambetter hasn't turned it on yet.")
+        if disp is None or disp.empty:
+            st.success("No open Ambetter disputes — every commission-eligible, current policy is being paid. 🎉")
+        else:
+            _mem = pd.to_numeric(disp.get("Members"), errors="coerce").fillna(0).astype(int).sum()
+            _prem = pd.to_numeric(disp.get("Monthly Premium"), errors="coerce").fillna(0).sum()
+            dk1, dk2, dk3 = st.columns(3)
+            with dk1:
+                st.markdown(stat_card("Disputes", f"{len(disp):,}", "shield", RED), unsafe_allow_html=True)
+            with dk2:
+                st.markdown(stat_card("Members Owed", f"{_mem:,}", "users", GOLD), unsafe_allow_html=True)
+            with dk3:
+                st.markdown(stat_card("Monthly Premium", f"${_prem:,.0f}", "dollar", GREEN), unsafe_allow_html=True)
+            st.markdown("<br>", unsafe_allow_html=True)
+
+            _states = sorted(disp.get("State", pd.Series(dtype=str)).dropna().astype(str).unique().tolist())
+            d_state = st.selectbox("State", ["All"] + _states, key="disp_state")
+            dv = disp if d_state == "All" else disp[disp["State"].astype(str) == d_state]
+            dd = pd.DataFrame({
+                "Name": (dv["First Name"].fillna("") + " " + dv["Last Name"].fillna("")).str.strip().str.title(),
+                "State": dv["State"],
+                "Policy #": dv["Policy #"],
+                "Effective": dv["Effective"],
+                "Paid Through": dv["Paid Through"],
+                "Last Paid": dv.get("Last Paid", "—"),
+                "Members": pd.to_numeric(dv.get("Members"), errors="coerce").fillna(0).astype(int),
+                "Monthly Premium": pd.to_numeric(dv.get("Monthly Premium"), errors="coerce").fillna(0).map(lambda v: f"${v:,.2f}"),
+                "Phone": dv.get("Phone", ""),
+            })
+            st.caption(f"Showing **{len(dd)}** of {len(disp)} disputes" + (f" · {d_state}" if d_state != "All" else ""))
+            st.dataframe(dd, use_container_width=True, hide_index=True, height=min(120 + len(dd) * 34, 560))
+            st.caption("📄 Saved to the **Ambetter Disputes** tab in your Google Sheet. Each row = a policy Ambetter "
+                       "itself confirms you're the broker of record and eligible to be paid on.")
 
         cb = rec["chargebacks"]
         if cb is not None and not cb.empty:

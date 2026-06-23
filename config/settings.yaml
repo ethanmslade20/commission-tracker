@@ -25,4 +25,5 @@ tabs:
   supplemental:      "Supplemental"
   health_pastdue:    "Health Past Due"
   commission_gaps:   "Commission Gaps"
+  ambetter_disputes: "Ambetter Disputes"
   daily_detail:      "Daily Detail"

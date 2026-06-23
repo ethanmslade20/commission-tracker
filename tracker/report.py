@@ -430,6 +430,7 @@ def run_report(settings: dict) -> None:
     # Commission gaps: active clients with no / stopped commission payments,
     # by reading the actual payments sheet and reconciling against the book.
     commission_gaps = None
+    ambetter_disputes = None
     _pay_url = settings.get("payments_sheet_url")
     if _pay_url:
         try:
@@ -441,8 +442,22 @@ def run_report(settings: dict) -> None:
                 print(f"  Commission gaps: {len(commission_gaps)} active clients with a payment gap "
                       f"({(commission_gaps['Gap'] == 'Never paid').sum()} never paid, "
                       f"{(commission_gaps['Gap'] == 'Stopped').sum()} stopped)")
+
+            # Ambetter disputes: cross-reference the carrier's own export (Eligible
+            # for Commission = Yes + member paid-through current) against actual
+            # payments — "carrier says owed, but I was never paid."
+            _amb_book = Path(__file__).resolve().parent.parent / "carrier_books" / "ambetter.csv"
+            if _amb_book.exists():
+                from tracker.carrier_status import (parse_ambetter_export,
+                                                    classify_ambetter, dispute_display)
+                _amb = parse_ambetter_export(str(_amb_book))
+                _clf = classify_ambetter(_amb, _payments, book=active_pending)
+                ambetter_disputes = dispute_display(_clf)
+                if ambetter_disputes is not None and not ambetter_disputes.empty:
+                    print(f"  Ambetter disputes: {len(ambetter_disputes)} policies the carrier "
+                          f"confirms owed but show no payment")
         except Exception as e:
-            print(f"  (commission gaps skipped: {e})")
+            print(f"  (commission gaps / Ambetter disputes skipped: {e})")
 
     print("Pushing to Google Sheets...")
     update_sheet(
@@ -456,6 +471,7 @@ def run_report(settings: dict) -> None:
         supplemental_df=supp_display,
         health_pastdue_df=pastdue_display,
         commission_gaps_df=commission_gaps,
+        ambetter_disputes_df=ambetter_disputes,
     )
 
     # Text the agent any clients who newly dropped into Re-Engage this run.
