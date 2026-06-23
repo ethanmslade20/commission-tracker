@@ -54,6 +54,8 @@ def _ambetter_pastdue(path: Path, today: pd.Timestamp) -> pd.DataFrame:
     a = pd.read_csv(path)
     a["ptd"]  = pd.to_datetime(a.get("Paid Through Date"), errors="coerce")
     a["term"] = pd.to_datetime(a.get("Policy Term Date"), errors="coerce")
+    a["eff"]  = pd.to_datetime(a.get("Policy Effective Date"), errors="coerce")
+    a["bed"]  = pd.to_datetime(a.get("Broker Effective Date"), errors="coerce")
     a["resp"] = _money(a.get("Member Responsibility"))
     in_force = a["term"].isna() | (a["term"] > today)
     # Months behind = how many month-boundaries between the paid-through month and
@@ -61,8 +63,16 @@ def _ambetter_pastdue(path: Path, today: pd.Timestamp) -> pd.DataFrame:
     # month's premium is still expected (autopay posts mid-cycle) — NOT a missed
     # payment. Only flag 2+ months behind (a fully-elapsed month went unpaid).
     months_behind = (today.year - a["ptd"].dt.year) * 12 + (today.month - a["ptd"].dt.month)
+    # Only the agent's CURRENT-term lapses:
+    #  - agent must already BE the broker (broker-effective in the past) — a future
+    #    linkage (e.g. 7/1) isn't his client yet, so don't chase.
+    #  - paid-through must fall WITHIN the current term (>= policy effective) — a
+    #    paid-through before the policy started is stale prior-term data, not a lapse.
+    agent_active = a["bed"].isna() | (a["bed"] <= today)
+    current_term = a["eff"].isna() | (a["ptd"] >= a["eff"])
     # Skip $0-responsibility (fully subsidized) plans — nothing to miss.
-    pastdue = in_force & a["ptd"].notna() & (months_behind >= 2) & (a["resp"] > 0)
+    pastdue = (in_force & a["ptd"].notna() & (months_behind >= 2) & (a["resp"] > 0)
+               & agent_active & current_term)
     d = a[pastdue].copy()
     if d.empty:
         return pd.DataFrame(columns=_COLS)
@@ -93,12 +103,20 @@ def _oscar_pastdue(path: Path, today: pd.Timestamp) -> pd.DataFrame:
     o = pd.read_csv(path)
     o["bal"] = _money(o.get("Balance"))
     o["prem"] = _money(o.get("Premium amount"))
-    in_force = ~o.get("Policy status", pd.Series("", index=o.index)).astype(str).str.contains(
-        "Inactive", case=False, na=False)
+    o["start"] = pd.to_datetime(o.get("Coverage start date"), errors="coerce")
+    cur = pd.Timestamp(today.year, today.month, 1)
+    _status = o.get("Policy status", pd.Series("", index=o.index)).astype(str)
+    in_force = ~_status.str.contains("Inactive", case=False, na=False)
+    # Exclude brand-new business: coverage starting this month or later, and unpaid
+    # binders that never activated — those are in their first-payment window, not a
+    # lapse (same grace rule as Ambetter's effective-date guard).
+    not_new = o["start"].isna() | (o["start"] < cur)
+    not_binder = ~_status.str.contains("binder", case=False, na=False)
     # Oscar has no paid-through date, just a balance owed. A balance up to ~one
     # month's premium is the current cycle (still expected to pay), so only flag
     # when they owe MORE than one month (genuinely behind). Exclude $0-premium.
-    pastdue = in_force & o["bal"].notna() & (o["prem"] > 0) & (o["bal"] > o["prem"])
+    pastdue = (in_force & o["bal"].notna() & (o["prem"] > 0) & (o["bal"] > o["prem"])
+               & not_new & not_binder)
     d = o[pastdue].copy()
     if d.empty:
         return pd.DataFrame(columns=_COLS)
