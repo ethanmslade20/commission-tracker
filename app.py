@@ -1182,6 +1182,24 @@ def _load_ambetter_disputes() -> pd.DataFrame:
 
 
 @st.cache_data(ttl=1800)
+def _load_pastdue() -> pd.DataFrame:
+    """Active health plans with a premium > $0 that are behind on payment
+    (Ambetter paid-through passed / Oscar balance owed). Cloud reads the Health
+    Past Due tab the report writes; local builds it from the carrier books."""
+    cols = ["first_name", "last_name", "carrier", "state", "premium", "members",
+            "paid_through", "balance", "days_overdue", "reason", "phone", "email"]
+    try:
+        if _running_in_cloud():
+            ss = _gspread_client().open_by_url(st.secrets["sheet_url"])
+            return _read_pastdue_df_from_sheet(ss)
+        from tracker.pastdue import load_health_pastdue
+        df = load_health_pastdue()
+        return df if df is not None and not df.empty else pd.DataFrame(columns=cols)
+    except Exception:
+        return pd.DataFrame(columns=cols)
+
+
+@st.cache_data(ttl=1800)
 def _load_daily_detail() -> pd.DataFrame:
     """Per-policy submission detail (Date, Month, First/Last Name, Members,
     Carrier, State) for the Daily Tracker drill-down. Cloud reads the Daily
@@ -2389,6 +2407,63 @@ elif page == "Commissions":
             st.dataframe(dd, use_container_width=True, hide_index=True, height=min(120 + len(dd) * 34, 560))
             st.caption("📄 Saved to the **Ambetter Disputes** tab in your Google Sheet. Each row = a policy Ambetter "
                        "itself confirms you're the broker of record and eligible to be paid on.")
+
+        # ── Premium Past Due — members behind on payment, reach out before they lapse ──
+        pdue = _load_pastdue()
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.markdown(section_header("Premium Past Due — Reach Out", "clock"), unsafe_allow_html=True)
+        st.caption("Active clients **paying a premium** ($0 plans excluded) who haven't paid for a **full elapsed "
+                   "month** — call them before the carrier cancels for non-payment. A **May-start who never paid** "
+                   "shows here; a **June-start gets until end of June** (their first month isn't over yet). "
+                   "Covers Ambetter (paid-through passed) and Oscar (balance owed).")
+        if pdue is None or pdue.empty:
+            st.success("No paying clients are past due right now. 🎉")
+        else:
+            pv = pdue.copy()
+            pv["_name"] = ((pv["first_name"].fillna("").astype(str).str.strip() + " "
+                            + pv["last_name"].fillna("").astype(str).str.strip()).str.strip())
+            pv["premium"] = pd.to_numeric(pv.get("premium"), errors="coerce")
+            pv["members"] = pd.to_numeric(pv.get("members"), errors="coerce").fillna(1).astype(int)
+            pv["days_overdue"] = pd.to_numeric(pv.get("days_overdue"), errors="coerce")
+            _risk = int(pv["members"].sum()) * 23
+            qk1, qk2, qk3 = st.columns(3)
+            with qk1:
+                st.markdown(stat_card("Past-Due Policies", f"{len(pv):,}", "clock", GOLD), unsafe_allow_html=True)
+            with qk2:
+                st.markdown(stat_card("Commission at Risk / Mo", f"${_risk:,.0f}", "minus", RED), unsafe_allow_html=True)
+            with qk3:
+                st.markdown(stat_card("Members at Risk", f"{int(pv['members'].sum()):,}", "users", ELEC), unsafe_allow_html=True)
+            st.markdown("<br>", unsafe_allow_html=True)
+
+            qf1, qf2 = st.columns(2)
+            with qf1:
+                _qc = ["All"] + sorted(pv["carrier"].dropna().unique().tolist())
+                qcf = st.selectbox("Carrier", _qc, key="pastdue_comm_carrier")
+            with qf2:
+                _qs = ["All"] + sorted(pv["state"].dropna().astype(str).unique().tolist()) if "state" in pv.columns else ["All"]
+                qsf = st.selectbox("State", _qs, key="pastdue_comm_state")
+            if qcf != "All":
+                pv = pv[pv["carrier"] == qcf]
+            if qsf != "All" and "state" in pv.columns:
+                pv = pv[pv["state"].astype(str) == qsf]
+            pv = pv.sort_values("days_overdue", ascending=False, na_position="last").reset_index(drop=True)
+
+            qd = pd.DataFrame({
+                "Name": pv["_name"].str.title(),
+                "Carrier": pv["carrier"],
+                "State": pv["state"] if "state" in pv.columns else "",
+                "Premium": pv["premium"].apply(lambda v: f"${v:,.2f}" if pd.notna(v) else "—"),
+                "Members": pv["members"],
+                "Behind Since / Owed": pv["reason"] if "reason" in pv.columns else "",
+                "Days Overdue": pv["days_overdue"].apply(lambda v: str(int(v)) if pd.notna(v) else "—"),
+                "Phone": pv["phone"] if "phone" in pv.columns else "",
+            })
+            st.caption(f"Showing **{len(qd)}** past-due paying clients"
+                       + (f" · {qcf}" if qcf != "All" else "") + (f" · {qsf}" if qsf != "All" else ""))
+            st.dataframe(qd, use_container_width=True, hide_index=True, height=min(120 + len(qd) * 34, 560))
+            st.caption("Same data as the Re-Engage page's **Past Due — Grace Period** tab — surfaced here so it's "
+                       "next to your commissions. Anthem and UHC-medical exports don't include payment data, so "
+                       "they can't be detected.")
 
         cb = rec["chargebacks"]
         if cb is not None and not cb.empty:
