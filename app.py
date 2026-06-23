@@ -2507,6 +2507,26 @@ elif page == "Goals":
 
     # ── At your current pace ──────────────────────────────────────────────────
     st.markdown(section_header("At your current pace", "trend"), unsafe_allow_html=True)
+    # Same cadence as "pace needed" so you can compare directly.
+    cur_per_month = recent_mo_growth
+    cur_per_week  = recent_mo_growth * 12 / 52
+    cur_per_day   = recent_mo_growth * 12 / 365
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        _d_lbl = "ahead of pace ✓" if cur_per_day >= needed_per_day else "below pace"
+        st.markdown(_goal_kpi("New members / day", f"+{cur_per_day:.2f}", f"vs +{needed_per_day} needed · {_d_lbl}",
+                              "green" if cur_per_day >= needed_per_day else "red"), unsafe_allow_html=True)
+    with c2:
+        _w_lbl = "ahead of pace ✓" if cur_per_week >= needed_per_week else "below pace"
+        st.markdown(_goal_kpi("New members / week", f"+{cur_per_week:.0f}", f"vs +{needed_per_week:.0f} needed · {_w_lbl}",
+                              "green" if cur_per_week >= needed_per_week else "red"), unsafe_allow_html=True)
+    with c3:
+        _m_lbl = "ahead of pace ✓" if cur_per_month >= needed_per_mo else "below pace"
+        st.markdown(_goal_kpi("New members / month", f"+{cur_per_month:.0f}", f"vs +{needed_per_mo:.0f} needed · {_m_lbl}",
+                              "green" if cur_per_month >= needed_per_mo else "red"), unsafe_allow_html=True)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
     p1, p2, p3 = st.columns(3)
     proj_color = "green" if on_track else "red"
     proj_label = "On track ✓" if on_track else "Behind pace"
