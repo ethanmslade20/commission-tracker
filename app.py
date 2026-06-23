@@ -2459,11 +2459,12 @@ elif page == "Commissions":
                 pv = pv[pv["carrier"] == qcf]
             if qsf != "All" and "state" in pv.columns:
                 pv = pv[pv["state"].astype(str) == qsf]
-            # Most-urgent lapses first; brand-new unpaid binders last (they're a
-            # different kind of follow-up — activate coverage, not catch up a lapse).
-            _prio = {"Delinquent": 0, "Grace period": 1, "Paid binder": 2, "Unpaid binder": 3}
-            pv["_sp"] = pv["status"].map(lambda s: _prio.get(s, 1))
-            pv = pv.sort_values(["_sp", "days_overdue"], ascending=[True, False], na_position="last").reset_index(drop=True)
+            # Most-recent paid-through month first — the freshest lapses are the
+            # most savable. Oscar rows (balance-based, no paid-through) fall to the
+            # bottom, ordered by balance owed.
+            pv["_pt"] = pd.to_datetime(pv.get("paid_through"), errors="coerce")
+            pv["_bal"] = pd.to_numeric(pv.get("balance"), errors="coerce")
+            pv = pv.sort_values(["_pt", "_bal"], ascending=[False, False], na_position="last").reset_index(drop=True)
 
             qd = pd.DataFrame({
                 "Name": pv["_name"].str.title(),
