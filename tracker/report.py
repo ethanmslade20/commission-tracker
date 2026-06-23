@@ -187,7 +187,7 @@ def _build_follow_ups(all_clients: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame()
     df = all_clients.copy()
     for c in ("dmi_outstanding", "dmi_expired", "svi_outstanding", "svi_expired"):
-        df[c] = pd.to_numeric(df.get(c), errors="coerce").fillna(0)
+        df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0) if c in df.columns else 0
     exp = (df["dmi_expired"] > 0) | (df["svi_expired"] > 0)
     opn = ((df["dmi_outstanding"] > 0) | (df["svi_outstanding"] > 0)) & ~exp
     sub = df[exp | opn].copy()
@@ -350,9 +350,11 @@ def run_report(settings: dict) -> None:
     # subsidy / eligibility is lost, so the client is effectively gone. Mark them
     # Cancelled so they drop off active + past-due and flow into Re-Engage outreach.
     if not all_clients.empty:
-        _de = pd.to_numeric(all_clients.get("dmi_expired"), errors="coerce").fillna(0)
-        _se = pd.to_numeric(all_clients.get("svi_expired"), errors="coerce").fillna(0)
-        _exp = (_de > 0) | (_se > 0)
+        def _numcol(name):
+            if name in all_clients.columns:
+                return pd.to_numeric(all_clients[name], errors="coerce").fillna(0)
+            return pd.Series(0.0, index=all_clients.index)
+        _exp = (_numcol("dmi_expired") > 0) | (_numcol("svi_expired") > 0)
         if _exp.any():
             if "cancel_reason" not in all_clients.columns:
                 all_clients["cancel_reason"] = ""

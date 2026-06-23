@@ -48,6 +48,12 @@ EXTRA_COLS = [
     "email",
     "phone",
     "cancel_notes",
+    # HealthSherpa verification follow-ups (DMI/SVI)
+    "dmi_outstanding",
+    "dmi_expired",
+    "svi_outstanding",
+    "svi_expired",
+    "followup_docs",
 ]
 
 
