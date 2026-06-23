@@ -86,13 +86,21 @@ sources:
       email:                "email"
       phone:                "phone"
       cancel_notes:         "policy_status_notes"
+      # HealthSherpa verification follow-ups (DMI = Data Matching Issue,
+      # SVI = SEP Verification Issue). Expired => subsidy/eligibility lost.
+      dmi_outstanding:      "dmi_outstanding_count"
+      dmi_expired:          "dmi_expired_count"
+      svi_outstanding:      "svi_outstanding_count"
+      svi_expired:          "svi_expired_count"
+      followup_docs:        "followup_docs"
 
     # Only keep rows where the writing agent is Ethan Slade.
     # Matches "Slade, Ethan", "Ethan Slade", or either case variation.
     require_agent: "Ethan Slade"
 
     date_columns:   ["effective_date", "submission_date", "created_date", "date_effectuated", "term_date"]
-    amount_columns: ["commission", "net_premium", "subsidy", "applicant_count"]
+    amount_columns: ["commission", "net_premium", "subsidy", "applicant_count",
+                     "dmi_outstanding", "dmi_expired", "svi_outstanding", "svi_expired"]
 
   # Illinois / Georgia Access portal exports.
   # These CSVs have a missing header for column 0 (agent first name), causing a one-column

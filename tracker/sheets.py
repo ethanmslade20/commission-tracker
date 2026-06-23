@@ -783,6 +783,7 @@ def update_sheet(
     health_pastdue_df: Optional[pd.DataFrame] = None,
     commission_gaps_df: Optional[pd.DataFrame] = None,
     ambetter_disputes_df: Optional[pd.DataFrame] = None,
+    follow_ups_df: Optional[pd.DataFrame] = None,
 ) -> None:
     spreadsheet = _open_sheet(sheet_url, impersonation_target)
 
@@ -798,6 +799,7 @@ def update_sheet(
     pastdue_title = tab_names.get("health_pastdue", "Health Past Due")
     gaps_title = tab_names.get("commission_gaps", "Commission Gaps")
     disputes_title = tab_names.get("ambetter_disputes", "Ambetter Disputes")
+    follow_ups_title = tab_names.get("follow_ups", "Follow-ups")
     daily_detail_title = tab_names.get("daily_detail", "Daily Detail")
 
     # Daily tracker tabs — one per ingested month, all history included.
@@ -811,6 +813,7 @@ def update_sheet(
     _has_pastdue = health_pastdue_df is not None and not health_pastdue_df.empty
     _has_gaps = commission_gaps_df is not None and not commission_gaps_df.empty
     _has_disputes = ambetter_disputes_df is not None and not ambetter_disputes_df.empty
+    _has_follow_ups = follow_ups_df is not None and not follow_ups_df.empty
     all_titles = {dashboard_title} | {t for t, *_ in data_tabs} | set(daily_tracker_tabs.values())
     if _has_supp:
         all_titles |= {supp_title}
@@ -820,6 +823,8 @@ def update_sheet(
         all_titles |= {gaps_title}
     if _has_disputes:
         all_titles |= {disputes_title}
+    if _has_follow_ups:
+        all_titles |= {follow_ups_title}
     _daily_detail = _build_daily_detail(months) if months else pd.DataFrame()
     _has_detail = not _daily_detail.empty
     if _has_detail:
@@ -890,6 +895,15 @@ def update_sheet(
             print(f"  Updated tab: {disputes_title} ({len(ambetter_disputes_df)} rows)")
         except Exception as e:
             print(f"  Warning: Ambetter disputes write failed: {e}")
+
+    # ── Follow-ups tab (HealthSherpa DMI/SVI verifications: open + expired) ────
+    if _has_follow_ups:
+        try:
+            follow_ups_ws = _ensure_tab(spreadsheet, follow_ups_title)
+            _write_tab(follow_ups_ws, follow_ups_df)
+            print(f"  Updated tab: {follow_ups_title} ({len(follow_ups_df)} rows)")
+        except Exception as e:
+            print(f"  Warning: Follow-ups write failed: {e}")
 
     # ── Daily Detail tab (per-policy submissions, for the chart drill-down) ───
     if _has_detail:

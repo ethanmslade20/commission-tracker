@@ -573,6 +573,7 @@ def _nav_icon_css():
         "<circle cx='12' cy='12' r='10'/><circle cx='12' cy='12' r='6'/><circle cx='12' cy='12' r='2'/>",  # Goals (target)
         "<path d='M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2'/><circle cx='9' cy='7' r='4'/><path d='M23 21v-2a4 4 0 0 0-3-3.87'/><path d='M16 3.13a4 4 0 0 1 0 7.75'/>",  # Re-Engage (users)
         "<polyline points='23 4 23 10 17 10'/><polyline points='1 20 1 14 7 14'/><path d='M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15'/>",  # Re-Engage (Supp) (refresh)
+        "<path d='M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2'/><rect x='8' y='2' width='8' height='4' rx='1'/><polyline points='9 14 11 16 15 12'/>",  # Follow-ups (clipboard-check)
         "<path d='M12 2l8 4v6c0 5-3.5 8.5-8 10-4.5-1.5-8-5-8-10V6l8-4z'/>",  # AEP Tracker (shield)
         "<circle cx='12' cy='12' r='3'/><path d='M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z'/>",  # Settings (gear)
     ]
@@ -1207,6 +1208,51 @@ def _load_pastdue() -> pd.DataFrame:
 
 
 @st.cache_data(ttl=1800)
+def _load_follow_ups() -> pd.DataFrame:
+    """HealthSherpa verification follow-ups (DMI/SVI): Open = save the subsidy,
+    Expired = lost. Cloud reads the Follow-ups tab; local builds from the export."""
+    cols = ["First Name", "Last Name", "Carrier", "State", "Follow-up", "Status",
+            "Detail", "Phone", "Email"]
+    try:
+        if _running_in_cloud():
+            ss = _gspread_client().open_by_url(st.secrets["sheet_url"])
+            rows = ss.worksheet("Follow-ups").get_all_records()
+            return pd.DataFrame(rows) if rows else pd.DataFrame(columns=cols)
+        from tracker.report import _build_follow_ups
+        src = Path(__file__).parent / "input" / "healthsherpa.csv"
+        if not src.exists():
+            return pd.DataFrame(columns=cols)
+        df = pd.read_csv(src, dtype=str, low_memory=False).fillna("")
+        if "agent" in df.columns:
+            df = df[df["agent"].str.contains("Slade", case=False, na=False)]
+        df = df.rename(columns={"issuer": "carrier", "dmi_outstanding_count": "dmi_outstanding",
+                                "dmi_expired_count": "dmi_expired", "svi_outstanding_count": "svi_outstanding",
+                                "svi_expired_count": "svi_expired"})
+        out = _build_follow_ups(df)
+        if out is not None and not out.empty and "Carrier" in out.columns:
+            from tracker.carriers import normalize_carrier_series
+            out["Carrier"] = normalize_carrier_series(out["Carrier"])
+        return out if out is not None and not out.empty else pd.DataFrame(columns=cols)
+    except Exception:
+        return pd.DataFrame(columns=cols)
+
+
+@st.cache_data(ttl=1800)
+def _expired_followup_keys() -> set:
+    """name_keys of clients whose verification has EXPIRED — excluded from the
+    past-due reach-out lists (subsidy lost; they're handled as Cancelled outreach)."""
+    try:
+        from tracker.carrier_status import _person_key
+        fu = _load_follow_ups()
+        if fu is None or fu.empty or "Status" not in fu.columns:
+            return set()
+        exp = fu[fu["Status"] == "Expired"]
+        return set(exp.apply(lambda r: _person_key(r.get("First Name", ""), r.get("Last Name", "")), axis=1))
+    except Exception:
+        return set()
+
+
+@st.cache_data(ttl=1800)
 def _load_daily_detail() -> pd.DataFrame:
     """Per-policy submission detail (Date, Month, First/Last Name, Members,
     Carrier, State) for the Daily Tracker drill-down. Cloud reads the Daily
@@ -1539,7 +1585,7 @@ with st.sidebar:
 
     page = st.radio(
         "Navigation",
-        ["Dashboard", "Month-over-Month", "Daily Tracker", "Book of Business", "Commissions", "Goals", "Re-Engage", "Re-Engage (Supp)", "AEP Tracker", "Settings"],
+        ["Dashboard", "Month-over-Month", "Daily Tracker", "Book of Business", "Commissions", "Goals", "Re-Engage", "Re-Engage (Supp)", "Follow-ups", "AEP Tracker", "Settings"],
         label_visibility="collapsed",
     )
 
@@ -2417,6 +2463,13 @@ elif page == "Commissions":
 
         # ── Premium Past Due — members behind on payment, reach out before they lapse ──
         pdue = _load_pastdue()
+        # Drop anyone whose HealthSherpa verification has EXPIRED — subsidy is lost,
+        # they're handled as Cancelled outreach instead (not a payment reach-out).
+        _exp_keys = _expired_followup_keys()
+        if pdue is not None and not pdue.empty and _exp_keys:
+            from tracker.carrier_status import _person_key as _pk_fn
+            _pk = pdue.apply(lambda r: _pk_fn(r.get("first_name", ""), r.get("last_name", "")), axis=1)
+            pdue = pdue[~_pk.isin(_exp_keys)].copy()
         st.markdown("<br>", unsafe_allow_html=True)
         st.markdown(section_header("Premium Past Due — Reach Out", "clock"), unsafe_allow_html=True)
         st.caption("Active clients **paying a premium** ($0 plans excluded) who haven't paid for a **full elapsed "
@@ -2873,6 +2926,12 @@ elif page == "Re-Engage":
     # Health-plan policies behind on payment but still active (grace period).
     _pd_df = dd.get("health_pastdue_df")
     _pd_df = _pd_df.copy() if (_pd_df is not None and len(_pd_df)) else pd.DataFrame()
+    # Exclude expired-verification clients (subsidy lost → Cancelled outreach, not past-due).
+    _exp_keys = _expired_followup_keys()
+    if not _pd_df.empty and _exp_keys:
+        from tracker.carrier_status import _person_key as _pk_fn
+        _pk = _pd_df.apply(lambda r: _pk_fn(r.get("first_name", ""), r.get("last_name", "")), axis=1)
+        _pd_df = _pd_df[~_pk.isin(_exp_keys)].copy()
 
     tab_outreach, tab_pastdue, tab_saved = st.tabs([
         f"Need Outreach ({max(len(lost_df) - len(winbacks), 0)})",
@@ -3274,6 +3333,73 @@ elif page == "Re-Engage (Supp)":
 
                     st.dataframe(disp.style.apply(_row_color, axis=1), use_container_width=True, hide_index=True, height=520)
                     _supp_quick_text(view, "supp_lapsed_pick")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# FOLLOW-UPS  (HealthSherpa DMI/SVI verifications)
+# ══════════════════════════════════════════════════════════════════════════════
+elif page == "Follow-ups":
+    st.title("Follow-ups")
+    st.caption("HealthSherpa verifications your clients still owe. **DMI** = income/coverage match; "
+               "**SVI** = enrollment verification. If one **expires, the client loses their premium "
+               "subsidy** and usually drops. **Open** ones are still savable — reach out before they expire.")
+    st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
+
+    fu = _load_follow_ups()
+    if fu is None or fu.empty:
+        st.success("No outstanding verification follow-ups right now. 🎉")
+    else:
+        fu = fu.copy()
+        fu["Status"] = fu.get("Status", "").astype(str).str.strip()
+        _open_n = int((fu["Status"] == "Open").sum())
+        _exp_n = int((fu["Status"] == "Expired").sum())
+        fk1, fk2, fk3 = st.columns(3)
+        with fk1:
+            st.markdown(stat_card("Open — Save the Subsidy", f"{_open_n:,}", "clock", GOLD), unsafe_allow_html=True)
+        with fk2:
+            st.markdown(stat_card("Expired — Lost", f"{_exp_n:,}", "minus", RED), unsafe_allow_html=True)
+        with fk3:
+            st.markdown(stat_card("Total Follow-ups", f"{len(fu):,}", "shield", ELEC), unsafe_allow_html=True)
+
+        st.markdown("<br>", unsafe_allow_html=True)
+        ef1, ef2, ef3 = st.columns(3)
+        with ef1:
+            _fs = st.selectbox("Status", ["Open first", "Open only", "Expired only", "All"], key="fu_status")
+        with ef2:
+            _fc = st.selectbox("Carrier", ["All"] + sorted(fu["Carrier"].dropna().astype(str).unique().tolist()), key="fu_carrier")
+        with ef3:
+            _fst = st.selectbox("State", ["All"] + sorted(fu["State"].dropna().astype(str).unique().tolist()), key="fu_state")
+
+        fv = fu.copy()
+        if _fs == "Open only":
+            fv = fv[fv["Status"] == "Open"]
+        elif _fs == "Expired only":
+            fv = fv[fv["Status"] == "Expired"]
+        if _fc != "All":
+            fv = fv[fv["Carrier"].astype(str) == _fc]
+        if _fst != "All":
+            fv = fv[fv["State"].astype(str) == _fst]
+        # Open first (savable) unless a specific status was chosen.
+        fv["_o"] = (fv["Status"] == "Expired").astype(int)
+        fv = fv.sort_values(["_o", "Carrier", "Last Name"]).reset_index(drop=True)
+
+        fd = pd.DataFrame({
+            "Name": (fv["First Name"].fillna("") + " " + fv["Last Name"].fillna("")).str.strip().str.title(),
+            "Status": fv["Status"],
+            "Follow-up": fv.get("Follow-up", ""),
+            "Detail": fv.get("Detail", ""),
+            "Carrier": fv["Carrier"],
+            "State": fv["State"],
+            "Phone": fv.get("Phone", ""),
+        })
+        st.caption(f"Showing **{len(fd)}** follow-ups"
+                   + (f" · {_fs}" if _fs not in ('Open first', 'All') else "")
+                   + (f" · {_fc}" if _fc != 'All' else "") + (f" · {_fst}" if _fst != 'All' else ""))
+        st.dataframe(fd, use_container_width=True, hide_index=True, height=min(120 + len(fd) * 34, 620))
+        st.caption("⚠️ The exact **deadline** isn't in the HealthSherpa export — it lives in the app per "
+                   "application. This shows *that* a verification is open or expired (and its type), so reach out "
+                   "promptly. **Expired** clients are removed from your Past Due reach-out list and moved to "
+                   "Cancelled → Re-Engage (subsidy already lost).")
 
 
 # ══════════════════════════════════════════════════════════════════════════════

@@ -179,6 +179,46 @@ def _build_pastdue_display(pastdue: pd.DataFrame) -> pd.DataFrame:
     return out.reset_index(drop=True)
 
 
+def _build_follow_ups(all_clients: pd.DataFrame) -> pd.DataFrame:
+    """HealthSherpa verification follow-ups (DMI = income/coverage match, SVI =
+    enrollment verification). 'Expired' = subsidy lost (lost client, for outreach);
+    'Open' = still actionable — reach out before it expires. For the Follow-ups tab."""
+    if all_clients is None or all_clients.empty:
+        return pd.DataFrame()
+    df = all_clients.copy()
+    for c in ("dmi_outstanding", "dmi_expired", "svi_outstanding", "svi_expired"):
+        df[c] = pd.to_numeric(df.get(c), errors="coerce").fillna(0)
+    exp = (df["dmi_expired"] > 0) | (df["svi_expired"] > 0)
+    opn = ((df["dmi_outstanding"] > 0) | (df["svi_outstanding"] > 0)) & ~exp
+    sub = df[exp | opn].copy()
+    if sub.empty:
+        return pd.DataFrame()
+
+    def _type(r):
+        t = []
+        if r["dmi_outstanding"] or r["dmi_expired"]:
+            t.append("Income/coverage (DMI)")
+        if r["svi_outstanding"] or r["svi_expired"]:
+            t.append("Enrollment (SVI)")
+        return ", ".join(t)
+
+    is_exp = (sub["dmi_expired"] > 0) | (sub["svi_expired"] > 0)
+    out = pd.DataFrame({
+        "First Name":   sub["first_name"],
+        "Last Name":    sub["last_name"],
+        "Carrier":      sub.get("carrier"),
+        "State":        sub.get("state"),
+        "Follow-up":    sub.apply(_type, axis=1),
+        "Status":       ["Expired" if e else "Open" for e in is_exp],
+        "Detail":       sub.get("followup_docs", "").astype(str).str.replace("_", " ").str.title(),
+        "Phone":        sub.get("phone"),
+        "Email":        sub.get("email"),
+    })
+    # Open (savable) first, then Expired (lost — outreach).
+    out["_o"] = (out["Status"] == "Expired").astype(int)
+    return out.sort_values(["_o", "Carrier", "Last Name"]).drop(columns="_o").reset_index(drop=True)
+
+
 def _alert_new_lapses(all_clients: pd.DataFrame) -> None:
     """Text the agent the moment a client newly drops into Re-Engage (Cancelled/
     Terminated). Diffs the current lapsed set against the last run's saved set so
@@ -305,6 +345,21 @@ def run_report(settings: dict) -> None:
         print(f"  Anthem portal truth: +{_ant['added_policies']} added, "
               f"{_ant['cancelled_lapsed'] + _ant['cancelled_dropped']} marked cancelled "
               f"({_ant['protected_new_sales']} new sales protected)")
+
+    # HealthSherpa verification truth: an EXPIRED DMI/SVI follow-up means the
+    # subsidy / eligibility is lost, so the client is effectively gone. Mark them
+    # Cancelled so they drop off active + past-due and flow into Re-Engage outreach.
+    if not all_clients.empty:
+        _de = pd.to_numeric(all_clients.get("dmi_expired"), errors="coerce").fillna(0)
+        _se = pd.to_numeric(all_clients.get("svi_expired"), errors="coerce").fillna(0)
+        _exp = (_de > 0) | (_se > 0)
+        if _exp.any():
+            if "cancel_reason" not in all_clients.columns:
+                all_clients["cancel_reason"] = ""
+            all_clients.loc[_exp, "status"] = "Cancelled"
+            all_clients.loc[_exp, "cancel_reason"] = "Verification expired — subsidy lost"
+            print(f"  Follow-up truth: {int(_exp.sum())} clients with an expired "
+                  f"verification marked Cancelled (subsidy lost)")
 
     # Canonical carrier names (merge "United Healthcare"/"UnitedHealthcare", the
     # several Molina forms, "U of U"→University of Utah) so reporting doesn't
@@ -460,6 +515,13 @@ def run_report(settings: dict) -> None:
         except Exception as e:
             print(f"  (commission gaps / Ambetter disputes skipped: {e})")
 
+    # HealthSherpa verification follow-ups (open = save the subsidy; expired = lost).
+    follow_ups = _build_follow_ups(all_clients)
+    if follow_ups is not None and not follow_ups.empty:
+        print(f"  Follow-ups: {len(follow_ups)} clients "
+              f"({(follow_ups['Status'] == 'Open').sum()} open, "
+              f"{(follow_ups['Status'] == 'Expired').sum()} expired)")
+
     print("Pushing to Google Sheets...")
     update_sheet(
         sheet_url=sheet_url,
@@ -473,6 +535,7 @@ def run_report(settings: dict) -> None:
         health_pastdue_df=pastdue_display,
         commission_gaps_df=commission_gaps,
         ambetter_disputes_df=ambetter_disputes,
+        follow_ups_df=follow_ups,
     )
 
     # Text the agent any clients who newly dropped into Re-Engage this run.
