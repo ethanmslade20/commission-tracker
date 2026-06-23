@@ -155,6 +155,8 @@ def build_all_clients(months: dict) -> pd.DataFrame:
             "client_name", "first_name", "last_name", "carrier",
             "state", "ffm_app_id", "ffm_subscriber_id", "net_premium", "applicant_count",
             "status", "client_key", "email", "phone", "cancel_notes",
+            # HealthSherpa verification follow-ups — carry latest snapshot's values
+            "dmi_outstanding", "dmi_expired", "svi_outstanding", "svi_expired", "followup_docs",
         ]
         if col in all_df.columns
     }
@@ -197,6 +199,7 @@ def build_all_clients(months: dict) -> pd.DataFrame:
         "name_key", "client_key", "first_name", "last_name", "carrier",
         "effective_date", "term_date", "status", "state", "ffm_app_id", "ffm_subscriber_id",
         "email", "phone", "cancel_notes", "net_premium", "applicant_count", "first_seen", "last_seen", "months_on_book",
+        "dmi_outstanding", "dmi_expired", "svi_outstanding", "svi_expired", "followup_docs",
     ]
     return agg[[c for c in cols if c in agg.columns]]
 
