@@ -3080,7 +3080,7 @@ elif page == "Re-Engage":
             outreach_df["_reason_cat"] = (outreach_df["cancel_reason"].apply(_reason_cat)
                                           if "cancel_reason" in outreach_df.columns else "Unknown")
 
-            f1, f2, f3, f4 = st.columns(4)
+            f1, f2, f3, f4, f5 = st.columns(5)
             with f1:
                 window_opts  = {"Last 30 days": 30, "Last 60 days": 60, "Last 90 days": 90, "All time": 99999}
                 window_label = st.selectbox("Show lost in", list(window_opts.keys()), index=2)
@@ -3094,6 +3094,8 @@ elif page == "Re-Engage":
             with f4:
                 reason_cats = ["All"] + sorted(outreach_df["_reason_cat"].dropna().unique().tolist())
                 reason_filter = st.selectbox("Reason", reason_cats)
+            with f5:
+                premium_filter = st.selectbox("Premium", ["All", "$0 only", "Above $0"])
 
             view = outreach_df[outreach_df["days_since_lost"] <= window_days].copy()
             if carrier_filter != "All" and "carrier" in view.columns:
@@ -3102,12 +3104,16 @@ elif page == "Re-Engage":
                 view = view[view["state"] == state_filter]
             if reason_filter != "All" and "_reason_cat" in view.columns:
                 view = view[view["_reason_cat"] == reason_filter]
+            if premium_filter != "All" and "net_premium" in view.columns:
+                _pf = pd.to_numeric(view["net_premium"], errors="coerce").fillna(0)
+                view = view[_pf <= 0] if premium_filter == "$0 only" else view[_pf > 0]
             view = view.sort_values("days_since_lost", ascending=True, na_position="last").reset_index(drop=True)
 
             st.caption(f"Showing **{len(view)}** clients · {window_label.lower()}"
                        + (f" · {carrier_filter}" if carrier_filter != "All" else "")
                        + (f" · {state_filter}" if state_filter != "All" else "")
-                       + (f" · {reason_filter}" if reason_filter != "All" else ""))
+                       + (f" · {reason_filter}" if reason_filter != "All" else "")
+                       + (f" · {premium_filter}" if premium_filter != "All" else ""))
 
             if view.empty:
                 st.info("No clients match the current filters.")
