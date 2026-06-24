@@ -144,6 +144,7 @@ def normalize_dataframe(
     status_map     = cfg.get("status_map", {})
     require_carrier= cfg.get("require_carrier", False)
     require_agent  = cfg.get("require_agent")          # e.g. "Ethan Slade"
+    require_ever_mine = cfg.get("require_ever_mine")    # keep only clients ever ours
     state_from_addr= cfg.get("state_from_address", False)
     default_ac     = cfg.get("default_applicant_count")
     flag_missing_ac= cfg.get("flag_missing_applicant_count", False)
@@ -202,6 +203,38 @@ def normalize_dataframe(
         dropped = before - len(df)
         if dropped:
             print(f"    (agent filter: removed {dropped} rows not written by {require_agent})")
+
+    # Keep ONLY clients the broker was ever the agent for: current agent of record
+    # OR the enrolling agent (their NPN / name on the submission). Anyone else is
+    # another agent's client merely surfacing in the account — drop them.
+    if require_ever_mine:
+        npn        = str(require_ever_mine.get("npn", "")).strip()
+        name_parts = [p.strip().lower() for p in str(require_ever_mine.get("name", "")).split()]
+        aor_c      = require_ever_mine.get("aor_col", "policy_aor")
+        npn_c      = require_ever_mine.get("npn_used_col", "npn_used")
+        sub_c      = require_ever_mine.get("submitting_agent_col", "submitting_agent_name")
+
+        def _name_match(val) -> bool:
+            v = str(val or "").lower()
+            return bool(name_parts) and all(p in v for p in name_parts)
+
+        def _ever_mine(row) -> bool:
+            aor = str(row.get(aor_c) or "")
+            if npn and npn in aor:                 # I am the current agent of record
+                return True
+            if _name_match(aor):
+                return True
+            if npn and npn in str(row.get(npn_c) or ""):   # I enrolled it (my NPN)
+                return True
+            if _name_match(row.get(sub_c)):                # I submitted it
+                return True
+            return False
+
+        before = len(df)
+        df = df[df.apply(_ever_mine, axis=1)].copy()
+        dropped = before - len(df)
+        if dropped:
+            print(f"    (ownership filter: removed {dropped} clients the broker was never agent for)")
 
     # Drop rows with no carrier when required
     if require_carrier and "carrier" in df.columns:
