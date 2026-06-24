@@ -9,7 +9,7 @@
 # (e.g. BCBST before BCBS, Anthem/Wellpoint before BCBS).
 # ---------------------------------------------------------------------------
 carrier_aliases:
-  "Anthem/Wellpoint":  ["wellpoint", "anthem"]
+  "Anthem/Wellpoint":  ["wellpoint", "anthem", "healthcare plan of georgia"]
   "Blue Cross Blue Shield": ["bcbst", "blue cross", "blue shield", "bcbs"]
   "United Healthcare": ["united", "uhc"]
   Ambetter:            ["ambetter"]
