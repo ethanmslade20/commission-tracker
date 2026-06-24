@@ -54,6 +54,10 @@ EXTRA_COLS = [
     "svi_outstanding",
     "svi_expired",
     "followup_docs",
+    # Current agent of record — used to flag AOR-taken clients on Re-Engage
+    "policy_aor",
+    # Last Marketplace sync — approximates WHEN the AOR change registered
+    "last_ede_sync",
 ]
 
 

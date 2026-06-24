@@ -93,6 +93,12 @@ sources:
       svi_outstanding:      "svi_outstanding_count"
       svi_expired:          "svi_expired_count"
       followup_docs:        "followup_docs"
+      # Current Agent of Record ("Name (NPN: #####)"). When this is someone
+      # other than Ethan, the client was switched to another agent (AOR taken).
+      policy_aor:           "policy_aor"
+      # Last time the policy synced from the Marketplace — best available proxy
+      # for WHEN the AOR change/status update registered.
+      last_ede_sync:        "last_ede_sync"
 
     # Only keep rows where the writing agent is Ethan Slade.
     # Matches "Slade, Ethan", "Ethan Slade", or either case variation.

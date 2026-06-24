@@ -406,13 +406,49 @@ def run_report(settings: dict) -> None:
     # "Lapsed — <carrier>" for carrier-truth lapses.
     if not all_clients.empty:
         _churn = all_clients["status"].isin(["Cancelled", "Terminated"])
+        # Preserve any reason already set upstream (e.g. "Verification expired").
+        _existing = (all_clients["cancel_reason"].fillna("").astype(str).str.strip()
+                     if "cancel_reason" in all_clients.columns
+                     else pd.Series("", index=all_clients.index))
         _notes = (all_clients["cancel_notes"].fillna("").astype(str).str.strip()
                   if "cancel_notes" in all_clients.columns
                   else pd.Series("", index=all_clients.index))
         _notes = _notes.replace({"nan": "", "-": "", "None": ""})
         _derived = "Lapsed — " + all_clients["carrier"].astype(str)
+
+        # AOR-taken: the current agent of record is someone other than Ethan
+        # (NPN 21457938). These clients usually still have ACTIVE coverage — they
+        # just moved to another agent — so flag them distinctly for win-back.
+        if "policy_aor" in all_clients.columns:
+            _aor = all_clients["policy_aor"].fillna("").astype(str)
+            _aor_name = _aor.str.replace(r"\s*\(NPN.*$", "", regex=True).str.strip()
+            _aor_taken = ((_aor.str.strip() != "")
+                          & ~_aor.str.contains("None", case=False, na=False)
+                          & ~_aor.str.contains("21457938", na=False)
+                          & ~_aor.str.contains("Ethan", case=False, na=False)
+                          & (_aor_name != ""))
+        else:
+            _aor_name  = pd.Series("", index=all_clients.index)
+            _aor_taken = pd.Series(False, index=all_clients.index)
+
+        # Date the AOR change registered (best proxy = last Marketplace sync),
+        # formatted "· M/D/YY" and appended to the AOR reason.
+        if "last_ede_sync" in all_clients.columns:
+            _sync = pd.to_datetime(all_clients["last_ede_sync"], errors="coerce")
+            _sync_str = _sync.apply(
+                lambda t: f" · {t.month}/{t.day}/{str(t.year)[2:]}" if pd.notna(t) else "")
+        else:
+            _sync_str = pd.Series("", index=all_clients.index)
+
+        _keep_existing = _existing.str.contains("Verification expired", na=False)
         all_clients["cancel_reason"] = ""
         all_clients.loc[_churn, "cancel_reason"] = _notes.where(_notes != "", _derived)[_churn]
+        # AOR-taken takes precedence (most actionable), except where a verification
+        # expiry was already recorded. Includes the date it registered.
+        _aor_rows = _churn & _aor_taken & ~_keep_existing
+        all_clients.loc[_aor_rows, "cancel_reason"] = ("AOR taken — " + _aor_name + _sync_str)[_aor_rows]
+        # Restore preserved upstream reasons.
+        all_clients.loc[_keep_existing, "cancel_reason"] = _existing[_keep_existing]
 
     # Compute diff to identify missing clients (those who dropped off last month)
     if prior_month:

@@ -3068,7 +3068,19 @@ elif page == "Re-Engage":
 
             st.markdown("<br>", unsafe_allow_html=True)
 
-            f1, f2, f3 = st.columns(3)
+            # Group the free-text Reason into filterable categories.
+            def _reason_cat(v):
+                s = str(v or "").strip()
+                if s.startswith("AOR taken"):        return "AOR taken"
+                if "Verification expired" in s:      return "Verification expired"
+                if s.startswith("Lapsed"):           return "Lapsed (carrier)"
+                if s in ("", "—", "nan", "None"):    return "Unknown"
+                return "Carrier note"
+
+            outreach_df["_reason_cat"] = (outreach_df["cancel_reason"].apply(_reason_cat)
+                                          if "cancel_reason" in outreach_df.columns else "Unknown")
+
+            f1, f2, f3, f4 = st.columns(4)
             with f1:
                 window_opts  = {"Last 30 days": 30, "Last 60 days": 60, "Last 90 days": 90, "All time": 99999}
                 window_label = st.selectbox("Show lost in", list(window_opts.keys()), index=2)
@@ -3079,17 +3091,23 @@ elif page == "Re-Engage":
             with f3:
                 states = ["All"] + sorted(outreach_df["state"].dropna().unique().tolist()) if "state" in outreach_df.columns else ["All"]
                 state_filter = st.selectbox("State", states)
+            with f4:
+                reason_cats = ["All"] + sorted(outreach_df["_reason_cat"].dropna().unique().tolist())
+                reason_filter = st.selectbox("Reason", reason_cats)
 
             view = outreach_df[outreach_df["days_since_lost"] <= window_days].copy()
             if carrier_filter != "All" and "carrier" in view.columns:
                 view = view[view["carrier"] == carrier_filter]
             if state_filter != "All" and "state" in view.columns:
                 view = view[view["state"] == state_filter]
+            if reason_filter != "All" and "_reason_cat" in view.columns:
+                view = view[view["_reason_cat"] == reason_filter]
             view = view.sort_values("days_since_lost", ascending=True, na_position="last").reset_index(drop=True)
 
             st.caption(f"Showing **{len(view)}** clients · {window_label.lower()}"
                        + (f" · {carrier_filter}" if carrier_filter != "All" else "")
-                       + (f" · {state_filter}" if state_filter != "All" else ""))
+                       + (f" · {state_filter}" if state_filter != "All" else "")
+                       + (f" · {reason_filter}" if reason_filter != "All" else ""))
 
             if view.empty:
                 st.info("No clients match the current filters.")
