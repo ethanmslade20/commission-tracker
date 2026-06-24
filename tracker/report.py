@@ -431,22 +431,28 @@ def run_report(settings: dict) -> None:
             _aor_name  = pd.Series("", index=all_clients.index)
             _aor_taken = pd.Series(False, index=all_clients.index)
 
-        # Date the AOR change registered (best proxy = last Marketplace sync),
-        # formatted "· M/D/YY" and appended to the AOR reason.
+        # When the AOR change registered (best proxy = last Marketplace sync).
+        # For AOR-taken clients this date becomes their Term Date.
         if "last_ede_sync" in all_clients.columns:
             _sync = pd.to_datetime(all_clients["last_ede_sync"], errors="coerce")
-            _sync_str = _sync.apply(
-                lambda t: f" · {t.month}/{t.day}/{str(t.year)[2:]}" if pd.notna(t) else "")
         else:
-            _sync_str = pd.Series("", index=all_clients.index)
+            _sync = pd.Series(pd.NaT, index=all_clients.index)
 
         _keep_existing = _existing.str.contains("Verification expired", na=False)
         all_clients["cancel_reason"] = ""
         all_clients.loc[_churn, "cancel_reason"] = _notes.where(_notes != "", _derived)[_churn]
         # AOR-taken takes precedence (most actionable), except where a verification
-        # expiry was already recorded. Includes the date it registered.
+        # expiry was already recorded. (No date in the reason — it goes in Term Date.)
         _aor_rows = _churn & _aor_taken & ~_keep_existing
-        all_clients.loc[_aor_rows, "cancel_reason"] = ("AOR taken — " + _aor_name + _sync_str)[_aor_rows]
+        all_clients.loc[_aor_rows, "cancel_reason"] = ("AOR taken — " + _aor_name)[_aor_rows]
+        # The AOR date IS the term date — the real day they left the book, not the
+        # carrier-truth detection date. Mark it non-estimated.
+        if "term_date" not in all_clients.columns:
+            all_clients["term_date"] = pd.NaT
+        _aor_dated = _aor_rows & _sync.notna()
+        all_clients.loc[_aor_dated, "term_date"] = _sync[_aor_dated]
+        if "term_estimated" in all_clients.columns:
+            all_clients.loc[_aor_dated, "term_estimated"] = False
         # Restore preserved upstream reasons.
         all_clients.loc[_keep_existing, "cancel_reason"] = _existing[_keep_existing]
 
