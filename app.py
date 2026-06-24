@@ -2334,8 +2334,11 @@ elif page == "Commissions":
             with st.container(border=True):
                 st.markdown(chart_head("By carrier", "Net commission, all months", "shield"), unsafe_allow_html=True)
                 cs = carrier_summary(pay).copy()
+                cs["Avg / Member"] = (cs["Net"] / cs["Payments"].replace(0, pd.NA)).map(
+                    lambda v: f"${v:,.2f}" if pd.notna(v) else "—")
                 cs["Net"] = cs["Net"].map(lambda v: f"${v:,.0f}")
-                st.dataframe(cs[["Carrier", "Net", "Payments"]], use_container_width=True, hide_index=True, height=380)
+                st.dataframe(cs[["Carrier", "Net", "Payments", "Avg / Member"]],
+                             use_container_width=True, hide_index=True, height=380)
         with cc2:
             with st.container(border=True):
                 st.markdown(chart_head("When each carrier pays", "Lag from coverage month to payment", "calendar"), unsafe_allow_html=True)
