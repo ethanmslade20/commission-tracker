@@ -226,6 +226,14 @@ def _build_follow_ups(all_clients: pd.DataFrame) -> pd.DataFrame:
     if all_clients is None or all_clients.empty:
         return pd.DataFrame()
     df = all_clients.copy()
+    # Follow-ups are CURRENT clients only — Ethan must be the agent of record right
+    # now. Drop anyone whose AOR moved to another agent or is unassigned (they're no
+    # longer his client, even if he originally enrolled them).
+    if "policy_aor" in df.columns:
+        _aor = df["policy_aor"].fillna("").astype(str)
+        _mine = _aor.str.contains("21457938") | (
+            _aor.str.contains("ethan", case=False) & _aor.str.contains("slade", case=False))
+        df = df[_mine].copy()
     for c in ("dmi_outstanding", "dmi_expired", "svi_outstanding", "svi_expired"):
         df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0) if c in df.columns else 0
     exp = (df["dmi_expired"] > 0) | (df["svi_expired"] > 0)
