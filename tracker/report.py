@@ -179,6 +179,46 @@ def _build_pastdue_display(pastdue: pd.DataFrame) -> pd.DataFrame:
     return out.reset_index(drop=True)
 
 
+def _load_followup_due_dates(books_dir: Path = None) -> dict:
+    """Map FFM app id (and lowercased name) -> soonest OPEN verification due date,
+    read from the HealthSherpa DMI/SVI follow-up exports in followup_books/.
+    Only OPEN items (action_needed / insufficient_documentation / processing) carry
+    a real due date; completed/expired rows are blank. Returns {"ffm":{}, "name":{}}."""
+    base = Path(books_dir) if books_dir else (Path(__file__).resolve().parent.parent / "followup_books")
+    by_ffm, by_name = {}, {}
+    if not base.exists():
+        return {"ffm": by_ffm, "name": by_name}
+    OPEN = {"action_needed", "insufficient_documentation", "processing"}
+    for fn in ("dmi.csv", "svi.csv"):
+        p = base / fn
+        if not p.exists():
+            continue
+        try:
+            d = pd.read_csv(p, dtype=str)
+        except Exception:
+            continue
+        cols = {c.strip().lower(): c for c in d.columns}
+        status_col = next((cols[k] for k in cols if k.endswith("status")), None)
+        due_col    = cols.get("due date")
+        ffm_col    = next((cols[k] for k in cols if "ffm" in k), None)
+        name_col   = cols.get("client name")
+        if not status_col or not due_col:
+            continue
+        for _, r in d.iterrows():
+            if str(r.get(status_col) or "").strip().lower() not in OPEN:
+                continue
+            due = pd.to_datetime(r.get(due_col), errors="coerce")
+            if pd.isna(due):
+                continue
+            ffm = re.sub(r"\.0$", "", str(r.get(ffm_col) or "").strip()) if ffm_col else ""
+            nm  = str(r.get(name_col) or "").strip().lower() if name_col else ""
+            if ffm and (ffm not in by_ffm or due < by_ffm[ffm]):
+                by_ffm[ffm] = due
+            if nm and (nm not in by_name or due < by_name[nm]):
+                by_name[nm] = due
+    return {"ffm": by_ffm, "name": by_name}
+
+
 def _build_follow_ups(all_clients: pd.DataFrame) -> pd.DataFrame:
     """HealthSherpa verification follow-ups (DMI = income/coverage match, SVI =
     enrollment verification). 'Expired' = subsidy lost (lost client, for outreach);
@@ -214,9 +254,22 @@ def _build_follow_ups(all_clients: pd.DataFrame) -> pd.DataFrame:
         "Phone":        sub.get("phone"),
         "Email":        sub.get("email"),
     })
-    # Open (savable) first, then Expired (lost — outreach).
-    out["_o"] = (out["Status"] == "Expired").astype(int)
-    return out.sort_values(["_o", "Carrier", "Last Name"]).drop(columns="_o").reset_index(drop=True)
+
+    # Attach the verification due date (from the DMI/SVI exports) — matched by FFM
+    # app id, name as fallback. Open items have one; expired/blank stay empty.
+    dd = _load_followup_due_dates()
+    def _due(r):
+        ffm = re.sub(r"\.0$", "", str(r.get("ffm_app_id") or "").strip())
+        d = dd["ffm"].get(ffm) if ffm else None
+        if d is None:
+            d = dd["name"].get(f"{r.get('first_name','')} {r.get('last_name','')}".strip().lower())
+        return d
+    _due_ts = pd.to_datetime(sub.apply(_due, axis=1), errors="coerce")
+    out["Due Date"] = _due_ts.dt.strftime("%Y-%m-%d").where(_due_ts.notna(), "")
+
+    # Sort by due date: soonest (most urgent) first, undated (expired) last.
+    out["_due_sort"] = _due_ts
+    return out.sort_values("_due_sort", ascending=True, na_position="last").drop(columns="_due_sort").reset_index(drop=True)
 
 
 def _alert_new_lapses(all_clients: pd.DataFrame) -> None:

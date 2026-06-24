@@ -26,5 +26,6 @@ logs/
 .vscode/
 *.swp
 carrier_books/
+followup_books/
 commission_statements/
 licenses/

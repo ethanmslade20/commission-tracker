@@ -3403,12 +3403,13 @@ elif page == "Follow-ups":
             fv = fv[fv["Carrier"].astype(str) == _fc]
         if _fst != "All":
             fv = fv[fv["State"].astype(str) == _fst]
-        # Open first (savable) unless a specific status was chosen.
-        fv["_o"] = (fv["Status"] == "Expired").astype(int)
-        fv = fv.sort_values(["_o", "Carrier", "Last Name"]).reset_index(drop=True)
+        # Sort by due date: soonest (most urgent) first, undated (expired) last.
+        fv["_due"] = pd.to_datetime(fv.get("Due Date"), errors="coerce")
+        fv = fv.sort_values("_due", ascending=True, na_position="last").reset_index(drop=True)
 
         fd = pd.DataFrame({
             "Name": (fv["First Name"].fillna("") + " " + fv["Last Name"].fillna("")).str.strip().str.title(),
+            "Due Date": fv["_due"].dt.strftime("%b %d, %Y").fillna("—"),
             "Status": fv["Status"],
             "Follow-up": fv.get("Follow-up", ""),
             "Detail": fv.get("Detail", ""),
@@ -3416,14 +3417,13 @@ elif page == "Follow-ups":
             "State": fv["State"],
             "Phone": fv.get("Phone", ""),
         })
-        st.caption(f"Showing **{len(fd)}** follow-ups"
+        st.caption(f"Showing **{len(fd)}** follow-ups · soonest due first"
                    + (f" · {_fs}" if _fs not in ('Open first', 'All') else "")
                    + (f" · {_fc}" if _fc != 'All' else "") + (f" · {_fst}" if _fst != 'All' else ""))
         st.dataframe(fd, use_container_width=True, hide_index=True, height=min(120 + len(fd) * 34, 620))
-        st.caption("⚠️ The exact **deadline** isn't in the HealthSherpa export — it lives in the app per "
-                   "application. This shows *that* a verification is open or expired (and its type), so reach out "
-                   "promptly. **Expired** clients are removed from your Past Due reach-out list and moved to "
-                   "Cancelled → Re-Engage (subsidy already lost).")
+        st.caption("📅 **Due Date** = the deadline to resolve the verification (pulled from your HealthSherpa "
+                   "DMI/SVI exports). **Open** items show their due date — reach out before it passes. **Expired** "
+                   "items have no date (already lost) and are moved to Cancelled → Re-Engage.")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
