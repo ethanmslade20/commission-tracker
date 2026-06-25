@@ -34,6 +34,13 @@ st.markdown(
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 
+# Keep the login across the full-page reload a Dashboard card link triggers:
+# unlocking adds ?k=<token> to the URL, which survives reloads so the PIN isn't
+# re-asked. (Casual deterrent only — the app code is public.)
+_AUTH_TOKEN = "ok2026"
+if st.query_params.get("k") == _AUTH_TOKEN:
+    st.session_state.authenticated = True
+
 if not st.session_state.authenticated:
     _lock_svg = ('<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
                  'stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/>'
@@ -192,6 +199,7 @@ if not st.session_state.authenticated:
     if submitted:
         if pin == "2026":
             st.session_state.authenticated = True
+            st.query_params["k"] = _AUTH_TOKEN
             st.rerun()
         elif pin:
             st.error("Incorrect PIN")
@@ -684,7 +692,8 @@ def link_card(label, value, icon_key, color, goto):
     a ?goto= query param (read by the sidebar nav). Makes the card clickable."""
     from urllib.parse import quote
     inner = stat_card(label, value, icon_key, color)
-    return (f'<a href="?goto={quote(goto)}" target="_self" '
+    # Carry the auth token so the card-click reload stays logged in.
+    return (f'<a href="?k={quote(_AUTH_TOKEN)}&goto={quote(goto)}" target="_self" '
             f'style="text-decoration:none;color:inherit;display:block;">{inner}</a>')
 
 
