@@ -679,6 +679,15 @@ def color_legend():
     return f'<div style="margin:-2px 0 10px;">{chips}</div>'
 
 
+def link_card(label, value, icon_key, color, goto):
+    """A stat_card wrapped in a same-tab link that deep-links to another page via
+    a ?goto= query param (read by the sidebar nav). Makes the card clickable."""
+    from urllib.parse import quote
+    inner = stat_card(label, value, icon_key, color)
+    return (f'<a href="?goto={quote(goto)}" target="_self" '
+            f'style="text-decoration:none;color:inherit;display:block;">{inner}</a>')
+
+
 def show_chart(fig):
     """Render a Plotly chart: keep hover tooltips, but disable the floating
     toolbar and all zoom/pan/drag so it's display-only."""
@@ -1631,10 +1640,17 @@ with st.sidebar:
     )
     st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 
+    _NAV = ["Dashboard", "Month-over-Month", "Daily Tracker", "Book of Business", "Commissions", "Money Owed", "Goals", "Re-Engage", "Re-Engage (Supp)", "Follow-ups", "AEP Tracker", "Settings"]
+    # Deep-link: a "?goto=Page" link (e.g. a Dashboard action card) selects that page.
+    _goto = st.query_params.get("goto")
+    if _goto in _NAV:
+        st.session_state["nav"] = _goto
+        del st.query_params["goto"]
     page = st.radio(
         "Navigation",
-        ["Dashboard", "Month-over-Month", "Daily Tracker", "Book of Business", "Commissions", "Money Owed", "Goals", "Re-Engage", "Re-Engage (Supp)", "Follow-ups", "AEP Tracker", "Settings"],
+        _NAV,
         label_visibility="collapsed",
+        key="nav",
     )
 
     st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
@@ -1718,9 +1734,6 @@ if page == "Dashboard":
     except Exception:
         _pdd = None
     _pd_n = 0 if _pdd is None or _pdd.empty else len(_pdd)
-    _risk = 0
-    if _pdd is not None and not _pdd.empty:
-        _risk = int(pd.to_numeric(_pdd.get("members"), errors="coerce").fillna(1).sum()) * 23
     try:
         _fu = _load_follow_ups()
         _fu_open = int((_fu["Status"].astype(str) == "Open").sum()) if _fu is not None and not _fu.empty else 0
@@ -1731,17 +1744,15 @@ if page == "Dashboard":
         _disp_n = 0 if _disp is None or _disp.empty else len(_disp)
     except Exception:
         _disp_n = 0
-    a1, a2, a3, a4 = st.columns(4)
+    a1, a2, a3 = st.columns(3)
     with a1:
-        st.markdown(stat_card("Past-Due to Call", f"{_pd_n:,}", "clock", RED), unsafe_allow_html=True)
+        st.markdown(link_card("Past-Due to Call", f"{_pd_n:,}", "clock", RED, "Money Owed"), unsafe_allow_html=True)
     with a2:
-        st.markdown(stat_card("Follow-ups Open", f"{_fu_open:,}", "shield", GOLD), unsafe_allow_html=True)
+        st.markdown(link_card("Follow-ups Open", f"{_fu_open:,}", "shield", GOLD, "Follow-ups"), unsafe_allow_html=True)
     with a3:
-        st.markdown(stat_card("Ambetter Disputes", f"{_disp_n:,}", "minus", GOLD), unsafe_allow_html=True)
-    with a4:
-        st.markdown(stat_card("Commission at Risk / Mo", f"${_risk:,.0f}", "dollar", RED), unsafe_allow_html=True)
-    st.caption("Act on these in the sidebar → **Money Owed** (past-due, disputes & gaps) · "
-               "**Follow-ups** (verifications due) · **Re-Engage** (lost clients to win back).")
+        st.markdown(link_card("Ambetter Disputes", f"{_disp_n:,}", "minus", GOLD, "Money Owed"), unsafe_allow_html=True)
+    st.caption("👆 Click a box to jump straight to it — Past-Due & Disputes open **Money Owed**, "
+               "Follow-ups opens **Follow-ups**.")
 
     # ── BOOK SNAPSHOT ─────────────────────────────────────────────────────────
     st.markdown(section_header("Book Snapshot", "book"), unsafe_allow_html=True)
