@@ -2334,7 +2334,13 @@ elif page == "Commissions":
             with st.container(border=True):
                 st.markdown(chart_head("By carrier", "Net commission, all months", "shield"), unsafe_allow_html=True)
                 cs = carrier_summary(pay).copy()
-                cs["Avg / Member"] = (cs["Net"] / cs["Payments"].replace(0, pd.NA)).map(
+                # Avg per member per month = net ÷ total member-months (sum of
+                # subscribers across payment lines), NOT ÷ payment count — a single
+                # large household would otherwise skew the average.
+                _subs = (pay.assign(_s=pd.to_numeric(pay["subscribers"], errors="coerce").fillna(1).clip(lower=1))
+                            .groupby("carrier")["_s"].sum())
+                _mm = cs["Carrier"].map(_subs).fillna(0)
+                cs["Avg / Member"] = (cs["Net"] / _mm.replace(0, pd.NA)).map(
                     lambda v: f"${v:,.2f}" if pd.notna(v) else "—")
                 cs["Net"] = cs["Net"].map(lambda v: f"${v:,.0f}")
                 st.dataframe(cs[["Carrier", "Net", "Payments", "Avg / Member"]],
