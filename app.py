@@ -338,8 +338,33 @@ st.markdown(f"""
     display: flex; align-items: flex-start; justify-content: space-between;
     margin: 2px 0 4px;
   }}
-  .dash-title {{ font-size: 2.7rem; font-weight: 800; letter-spacing: -0.03em; line-height: 1; color: {T['text_primary']}; }}
-  .dash-sub {{ color: {T['kpi_lbl']}; font-size: 0.98rem; margin-top: 10px; }}
+  /* Sleek hero header */
+  .dash-hero {{
+    display: flex; align-items: center; justify-content: space-between; gap: 16px;
+    margin: 2px 0 8px; padding-bottom: 16px;
+    border-bottom: 1px solid transparent;
+    border-image: linear-gradient(90deg, rgba(96,165,250,0.5), rgba(124,58,237,0.28), rgba(96,165,250,0)) 1;
+  }}
+  .dash-hero-left {{ display: flex; align-items: center; gap: 17px; }}
+  .dash-accent {{ width: 6px; height: 56px; border-radius: 6px; flex: 0 0 auto;
+    background: linear-gradient(180deg, #60a5fa, #7c3aed);
+    box-shadow: 0 0 20px rgba(96,165,250,0.55); }}
+  .dash-title {{ font-size: 2.8rem; font-weight: 800; letter-spacing: -0.03em; line-height: 1;
+    background: linear-gradient(96deg, #ffffff 0%, #d6e4ff 45%, #8fb3ec 100%);
+    -webkit-background-clip: text; background-clip: text;
+    -webkit-text-fill-color: transparent; color: transparent; }}
+  .dash-sub {{ color: {T['kpi_lbl']}; font-size: 0.92rem; margin-top: 9px;
+    display: flex; align-items: center; gap: 8px; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; }}
+  .dash-sub .live-dot {{ width: 8px; height: 8px; border-radius: 50%; background: #22c55e;
+    box-shadow: 0 0 0 4px rgba(34,197,94,0.16); display: inline-block; }}
+  .date-badge {{ display: inline-flex; align-items: center; gap: 8px; flex: 0 0 auto; white-space: nowrap;
+    background: linear-gradient(160deg, rgba(96,165,250,0.14), rgba(124,58,237,0.10));
+    border: 1px solid rgba(96,165,250,0.32); border-radius: 999px; padding: 10px 18px;
+    color: #dce8ff; font-weight: 700; font-size: 0.84rem; letter-spacing: 0.02em;
+    box-shadow: 0 8px 24px rgba(8,20,46,0.45); }}
+  .date-badge svg {{ width: 15px; height: 15px; stroke: #8fb3ec; fill: none; stroke-width: 2; }}
+  .legend-pill {{ display: inline-flex; align-items: center; gap: 7px; padding: 5px 12px; margin-right: 9px;
+    background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06); border-radius: 999px; }}
   .topbar {{ display: flex; align-items: center; gap: 12px; }}
   .topbar .tb-icon {{
     width: 38px; height: 38px; border-radius: 11px; display: flex; align-items: center; justify-content: center;
@@ -701,11 +726,12 @@ def color_legend():
     """Tiny inline legend explaining the color language; render with st.markdown."""
     items = [(GREEN, "money / good"), (RED, "risk / loss"), (GOLD, "needs attention")]
     chips = "".join(
-        f'<span style="display:inline-flex;align-items:center;gap:5px;margin-right:16px;">'
-        f'<span style="width:10px;height:10px;border-radius:50%;background:{c};display:inline-block;"></span>'
-        f'<span style="color:#9fb0c9;font-size:0.74rem;">{t}</span></span>'
+        f'<span class="legend-pill">'
+        f'<span style="width:9px;height:9px;border-radius:50%;background:{c};'
+        f'box-shadow:0 0 8px {c}99;display:inline-block;"></span>'
+        f'<span style="color:#aebfd6;font-size:0.72rem;font-weight:600;letter-spacing:.02em;">{t}</span></span>'
         for c, t in items)
-    return f'<div style="margin:-2px 0 10px;">{chips}</div>'
+    return f'<div style="margin:-2px 0 12px;">{chips}</div>'
 
 
 def link_card(label, value, icon_key, color, goto, sec=None, tip=None):
@@ -1721,11 +1747,18 @@ with st.sidebar:
 # ══════════════════════════════════════════════════════════════════════════════
 if page == "Dashboard":
     # ── Header ────────────────────────────────────────────────────────────────
+    _cal_svg = ('<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/>'
+                '<line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/>'
+                '<line x1="3" y1="10" x2="21" y2="10"/></svg>')
     st.markdown(
-        f'<div class="dash-header">'
-        f'<div><div class="dash-title">Dashboard</div>'
-        f'<div class="dash-sub">{latest_label} Snapshot</div></div>'
-        f'</div>',
+        '<div class="dash-hero">'
+          '<div class="dash-hero-left">'
+            '<div class="dash-accent"></div>'
+            '<div><div class="dash-title">Dashboard</div>'
+            f'<div class="dash-sub"><span class="live-dot"></span>{latest_label} Snapshot · Live</div></div>'
+          '</div>'
+          f'<div class="date-badge">{_cal_svg}{latest_label}</div>'
+        '</div>',
         unsafe_allow_html=True,
     )
 
