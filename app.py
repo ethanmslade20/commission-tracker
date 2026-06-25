@@ -498,7 +498,8 @@ st.markdown(f"""
   .stat-card .sc-lbl {{ font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.06em;
     color: {T['kpi_lbl']}; margin-top: 7px; font-weight: 600; }}
   /* ── Hover tooltip on the Dashboard action cards ── */
-  [data-testid="stHorizontalBlock"], [data-testid="column"] {{ overflow: visible !important; }}
+  [data-testid="stHorizontalBlock"], [data-testid="column"], [data-testid="stVerticalBlock"],
+  [data-testid="stMarkdownContainer"], .element-container, .stMarkdown {{ overflow: visible !important; }}
   .tip-wrap {{ position: relative; display: block; }}
   .tip-pop {{
     position: absolute; top: calc(100% + 10px); left: 50%; transform: translateX(-50%) translateY(6px);
@@ -1782,24 +1783,24 @@ if page == "Dashboard":
         _disp_n = 0 if _disp is None or _disp.empty else len(_disp)
     except Exception:
         _disp_n = 0
-    a1, a2, a3 = st.columns(3)
-    with a1:
-        st.markdown(link_card("Past-Due to Call", f"{_pd_n:,}", "clock", RED, "Money Owed", sec="pastdue",
-                              tip="Clients still active but behind on their premium. Call them to update payment "
-                                  "before the carrier cancels them for non-payment — if they lapse, you lose the commission."),
-                    unsafe_allow_html=True)
-    with a2:
-        st.markdown(link_card("Follow-ups Open", f"{_fu_open:,}", "shield", GOLD, "Follow-ups",
-                              tip="HealthSherpa verifications (income/coverage or enrollment) your clients still owe. "
-                                  "If one expires, the client loses their subsidy and usually drops — reach out before the deadline."),
-                    unsafe_allow_html=True)
-    with a3:
-        st.markdown(link_card("Ambetter Disputes", f"{_disp_n:,}", "minus", GOLD, "Money Owed", sec="disputes",
-                              tip="Policies Ambetter's own export confirms you're the broker for, but you haven't been "
-                                  "paid on. Take these to your commissions team to get paid what you're owed."),
-                    unsafe_allow_html=True)
-    st.caption("👆 Click a box to jump straight to it — Past-Due & Disputes open **Money Owed**, "
-               "Follow-ups opens **Follow-ups**.")
+    _c1 = link_card("Past-Due to Call", f"{_pd_n:,}", "clock", RED, "Money Owed", sec="pastdue",
+                    tip="Clients still active but behind on their premium. Call them to update payment "
+                        "before the carrier cancels them for non-payment — if they lapse, you lose the commission.")
+    _c2 = link_card("Follow-ups Open", f"{_fu_open:,}", "shield", GOLD, "Follow-ups",
+                    tip="HealthSherpa verifications (income/coverage or enrollment) your clients still owe. "
+                        "If one expires, the client loses their subsidy and usually drops — reach out before the deadline.")
+    _c3 = link_card("Ambetter Disputes", f"{_disp_n:,}", "minus", GOLD, "Money Owed", sec="disputes",
+                    tip="Policies Ambetter's own export confirms you're the broker for, but you haven't been "
+                        "paid on. Take these to your commissions team to get paid what you're owed.")
+    # Render all three in one block (not st.columns) so the hover popup isn't clipped.
+    st.markdown(
+        '<div style="display:flex;gap:18px;flex-wrap:wrap;overflow:visible;margin-bottom:6px;">'
+        + "".join(f'<div style="flex:1 1 200px;position:relative;overflow:visible;">{c}</div>'
+                  for c in (_c1, _c2, _c3))
+        + "</div>",
+        unsafe_allow_html=True)
+    st.caption("👆 Hover a box for what it means · click to jump to it — Past-Due & Disputes open "
+               "**Money Owed**, Follow-ups opens **Follow-ups**.")
 
     # ── BOOK SNAPSHOT ─────────────────────────────────────────────────────────
     st.markdown(section_header("Book Snapshot", "book"), unsafe_allow_html=True)
