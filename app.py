@@ -3239,6 +3239,7 @@ elif page == "Re-Engage":
                 disp["Name"]           = view["_name"]
                 disp["Carrier"]        = view["carrier"] if "carrier" in view.columns else ""
                 disp["State"]          = view["state"]   if "state"   in view.columns else ""
+                disp["Lost"]           = view["term_date"].apply(_rel_day)
                 disp["Term Date"]      = view["term_date"].dt.strftime("%b %d, %Y").where(view["term_date"].notna(), "Unknown")
                 disp["Days Since Lost"]= view["days_since_lost"].fillna(0).astype(int)
                 disp["Mo. on Book"]    = view["months_on_book"].fillna("?").astype(str).str.replace(r"\.0$", "", regex=True)
@@ -3257,7 +3258,13 @@ elif page == "Re-Engage":
                     if "🟠" in u: return ["background-color: rgba(230,126,34,0.10)"] * len(row)
                     return [""] * len(row)
 
-                st.dataframe(disp.style.apply(_row_color, axis=1), use_container_width=True, hide_index=True, height=520)
+                # Lean view by default (relative "Lost" date); toggle reveals the
+                # exact date + tenure/member columns.
+                _show_all = st.checkbox("Show all columns", value=False, key="reengage_showall")
+                _lean = ["Name", "Carrier", "State", "Lost", "Premium", "Reason", "Urgency"]
+                _cols = list(disp.columns) if _show_all else [c for c in _lean if c in disp.columns]
+                st.dataframe(disp[_cols].style.apply(_row_color, axis=1),
+                             use_container_width=True, hide_index=True, height=520)
 
                 # ── Quick Text — copy & paste into your CRM ────────────────
                 st.markdown("<br>", unsafe_allow_html=True)
@@ -3306,7 +3313,7 @@ elif page == "Re-Engage":
 # RE-ENGAGE (SUPPLEMENTAL)
 # ══════════════════════════════════════════════════════════════════════════════
 elif page == "Re-Engage (Supp)":
-    st.title("Re-Engage — Supplemental")
+    st.title("Re-Engage (Supplemental)")
     st.caption("Two categories: clients past due (still active, behind on payment — save them before they cancel) "
                "and lapsed policies to win back.")
     st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
