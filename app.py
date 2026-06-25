@@ -620,15 +620,54 @@ def chart_head(title, sub, icon_key):
     )
 
 
-def stat_card(label, value, icon_key, color):
-    """Icon-left KPI card (tinted circular icon + value + label)."""
+def stat_card(label, value, icon_key, color, delta=None, delta_good=True):
+    """Icon-left KPI card (tinted circular icon + value + label).
+    Optional `delta` renders a small trend line under the value (e.g. "▲ 9% vs
+    last month"); colored green when delta_good else red."""
     icon = ICONS.get(icon_key, "").replace("<svg ", f'<svg stroke="{color}" ', 1)
+    delta_html = ""
+    if delta:
+        dc = GREEN if delta_good else RED
+        delta_html = (f'<div class="sc-delta" style="color:{dc};font-size:0.72rem;'
+                      f'font-weight:700;margin-top:3px;letter-spacing:.2px;">{delta}</div>')
     return (
         f'<div class="stat-card">'
         f'<div class="sc-icon" style="background:{color}22;border:1px solid {color}55;">{icon}</div>'
-        f'<div><div class="sc-val">{value}</div><div class="sc-lbl">{label}</div></div>'
+        f'<div><div class="sc-val">{value}</div><div class="sc-lbl">{label}</div>{delta_html}</div>'
         f'</div>'
     )
+
+
+# Color language (consistent across the app):
+#   green = money / good · red = risk / loss · gold = needs attention
+#   electric/cyan = neutral info · purple = time / coverage
+GOOD, RISK, ATTN, INFO = GREEN, RED, GOLD, ELEC
+
+
+def _rel_day(ts):
+    """Human relative date: 'today', 'yesterday', '3 days ago', 'in 5 days'."""
+    ts = pd.to_datetime(ts, errors="coerce")
+    if pd.isna(ts):
+        return "—"
+    d = (ts.normalize() - pd.Timestamp.today().normalize()).days
+    if d == 0:
+        return "today"
+    if d == -1:
+        return "yesterday"
+    if d == 1:
+        return "tomorrow"
+    return f"{-d} days ago" if d < 0 else f"in {d} days"
+
+
+def color_legend():
+    """Tiny inline legend explaining the color language; render with st.markdown."""
+    items = [(GREEN, "money / good"), (RED, "risk / loss"), (GOLD, "needs attention")]
+    chips = "".join(
+        f'<span style="display:inline-flex;align-items:center;gap:5px;margin-right:16px;">'
+        f'<span style="width:10px;height:10px;border-radius:50%;background:{c};display:inline-block;"></span>'
+        f'<span style="color:#9fb0c9;font-size:0.74rem;">{t}</span></span>'
+        for c, t in items)
+    return f'<div style="margin:-2px 0 10px;">{chips}</div>'
 
 
 def show_chart(fig):
@@ -1625,6 +1664,75 @@ if page == "Dashboard":
         f'</div>',
         unsafe_allow_html=True,
     )
+
+    # ── YOUR MONEY (headline) ─────────────────────────────────────────────────
+    st.markdown(color_legend(), unsafe_allow_html=True)
+    st.markdown(section_header("Your Money", "dollar"), unsafe_allow_html=True)
+    _net_mo = _ytd = _avg_mo = 0.0
+    _mdelta = None
+    _mdelta_good = True
+    _mlabel = "This Month"
+    try:
+        from tracker.commissions import monthly_summary
+        _ms = monthly_summary(_load_payments())
+        if _ms is not None and not _ms.empty:
+            _ms = _ms.copy()
+            _ms["_m"] = pd.to_datetime(_ms["Month"], errors="coerce")
+            _ms = _ms.sort_values("_m")
+            _last = _ms.iloc[-1]
+            _net_mo = float(_last["Net"])
+            _mlabel = _last["_m"].strftime("%b %Y") if pd.notna(_last["_m"]) else "This Month"
+            _yr = _last["_m"].year if pd.notna(_last["_m"]) else None
+            _ytd = float(_ms[_ms["_m"].dt.year == _yr]["Net"].sum()) if _yr else float(_ms["Net"].sum())
+            _avg_mo = float(_ms["Net"].mean())
+            if len(_ms) >= 2:
+                _prev = float(_ms.iloc[-2]["Net"])
+                if _prev:
+                    _p = (_net_mo - _prev) / abs(_prev) * 100
+                    _mdelta = f"{'▲' if _p >= 0 else '▼'} {abs(_p):.0f}% vs last month"
+                    _mdelta_good = _p >= 0
+    except Exception:
+        pass
+    mc1, mc2, mc3 = st.columns(3)
+    with mc1:
+        st.markdown(stat_card(f"{_mlabel} Net", f"${_net_mo:,.0f}", "dollar", GREEN,
+                              delta=_mdelta, delta_good=_mdelta_good), unsafe_allow_html=True)
+    with mc2:
+        st.markdown(stat_card("Year-to-Date", f"${_ytd:,.0f}", "calendar", ELEC), unsafe_allow_html=True)
+    with mc3:
+        st.markdown(stat_card("Avg / Month", f"${_avg_mo:,.0f}", "trend", CYAN), unsafe_allow_html=True)
+
+    # ── WHAT TO DO TODAY ──────────────────────────────────────────────────────
+    st.markdown(section_header("What To Do Today", "clock"), unsafe_allow_html=True)
+    try:
+        _pdd = _load_pastdue()
+    except Exception:
+        _pdd = None
+    _pd_n = 0 if _pdd is None or _pdd.empty else len(_pdd)
+    _risk = 0
+    if _pdd is not None and not _pdd.empty:
+        _risk = int(pd.to_numeric(_pdd.get("members"), errors="coerce").fillna(1).sum()) * 23
+    try:
+        _fu = _load_follow_ups()
+        _fu_open = int((_fu["Status"].astype(str) == "Open").sum()) if _fu is not None and not _fu.empty else 0
+    except Exception:
+        _fu_open = 0
+    try:
+        _disp = _load_ambetter_disputes()
+        _disp_n = 0 if _disp is None or _disp.empty else len(_disp)
+    except Exception:
+        _disp_n = 0
+    a1, a2, a3, a4 = st.columns(4)
+    with a1:
+        st.markdown(stat_card("Past-Due to Call", f"{_pd_n:,}", "clock", RED), unsafe_allow_html=True)
+    with a2:
+        st.markdown(stat_card("Follow-ups Open", f"{_fu_open:,}", "shield", GOLD), unsafe_allow_html=True)
+    with a3:
+        st.markdown(stat_card("Ambetter Disputes", f"{_disp_n:,}", "minus", GOLD), unsafe_allow_html=True)
+    with a4:
+        st.markdown(stat_card("Commission at Risk / Mo", f"${_risk:,.0f}", "dollar", RED), unsafe_allow_html=True)
+    st.caption("Act on these in the sidebar → **Re-Engage** (past-due & lost) · "
+               "**Follow-ups** (verifications due) · **Money Owed** (disputes & gaps).")
 
     # ── BOOK SNAPSHOT ─────────────────────────────────────────────────────────
     st.markdown(section_header("Book Snapshot", "book"), unsafe_allow_html=True)
