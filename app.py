@@ -543,6 +543,14 @@ st.markdown(f"""
     .mc-value {{ font-size: 2rem; }}
     .goal-kpi-box {{ padding: 18px 12px 14px; margin-bottom: 8px; }}
     .goal-kpi-value {{ font-size: 2rem; }}
+    /* compact stat-cards (money + action rows) so 4-across stacks cleanly on phones */
+    .stat-card {{ padding: 14px 14px; gap: 12px; margin-bottom: 8px; }}
+    .stat-card .sc-icon {{ width: 40px; height: 40px; }}
+    .stat-card .sc-icon svg {{ width: 19px; height: 19px; }}
+    .stat-card .sc-val {{ font-size: 1.5rem; }}
+    .stat-card .sc-lbl {{ font-size: 0.6rem; }}
+    .stat-card .sc-delta {{ font-size: 0.66rem; }}
+    .ch-title {{ font-size: 1rem; }}
     .block-container {{ padding-left: 1rem !important; padding-right: 1rem !important; padding-top: 1rem !important; }}
     [data-testid="stDataFrame"] {{ overflow-x: auto; }}
     [data-testid="stDataFrame"] [role="progressbar"] > div {{ background-color: {GREEN} !important; }}
