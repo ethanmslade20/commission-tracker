@@ -687,13 +687,17 @@ def color_legend():
     return f'<div style="margin:-2px 0 10px;">{chips}</div>'
 
 
-def link_card(label, value, icon_key, color, goto):
+def link_card(label, value, icon_key, color, goto, sec=None):
     """A stat_card wrapped in a same-tab link that deep-links to another page via
-    a ?goto= query param (read by the sidebar nav). Makes the card clickable."""
+    a ?goto= query param (read by the sidebar nav). Optional `sec` tells the
+    destination which section to jump to. Makes the card clickable."""
     from urllib.parse import quote
     inner = stat_card(label, value, icon_key, color)
     # Carry the auth token so the card-click reload stays logged in.
-    return (f'<a href="?k={quote(_AUTH_TOKEN)}&goto={quote(goto)}" target="_self" '
+    href = f"?k={quote(_AUTH_TOKEN)}&goto={quote(goto)}"
+    if sec:
+        href += f"&sec={quote(sec)}"
+    return (f'<a href="{href}" target="_self" '
             f'style="text-decoration:none;color:inherit;display:block;">{inner}</a>')
 
 
@@ -1755,11 +1759,11 @@ if page == "Dashboard":
         _disp_n = 0
     a1, a2, a3 = st.columns(3)
     with a1:
-        st.markdown(link_card("Past-Due to Call", f"{_pd_n:,}", "clock", RED, "Money Owed"), unsafe_allow_html=True)
+        st.markdown(link_card("Past-Due to Call", f"{_pd_n:,}", "clock", RED, "Money Owed", sec="pastdue"), unsafe_allow_html=True)
     with a2:
         st.markdown(link_card("Follow-ups Open", f"{_fu_open:,}", "shield", GOLD, "Follow-ups"), unsafe_allow_html=True)
     with a3:
-        st.markdown(link_card("Ambetter Disputes", f"{_disp_n:,}", "minus", GOLD, "Money Owed"), unsafe_allow_html=True)
+        st.markdown(link_card("Ambetter Disputes", f"{_disp_n:,}", "minus", GOLD, "Money Owed", sec="disputes"), unsafe_allow_html=True)
     st.caption("👆 Click a box to jump straight to it — Past-Due & Disputes open **Money Owed**, "
                "Follow-ups opens **Follow-ups**.")
 
@@ -2505,6 +2509,18 @@ elif page == "Money Owed":
                "paid on, Ambetter disputes, and members behind on premium. Chase these to get paid.")
     st.markdown(color_legend(), unsafe_allow_html=True)
     st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
+    # Jump to the section the user clicked from the Dashboard (?sec=...), once.
+    _sec = st.query_params.get("sec")
+    if _sec and st.session_state.get("_mo_scrolled") != _sec:
+        st.session_state["_mo_scrolled"] = _sec
+        _anchor = {"gaps": "mo-gaps", "disputes": "mo-disputes", "pastdue": "mo-pastdue"}.get(_sec)
+        if _anchor:
+            import streamlit.components.v1 as _c
+            _c.html(
+                "<script>const d=window.parent.document;let n=0;"
+                "const t=setInterval(()=>{const e=d.getElementById('" + _anchor + "');"
+                "if(e){e.scrollIntoView({behavior:'smooth',block:'start'});clearInterval(t);}"
+                "if(++n>50)clearInterval(t);},100);</script>", height=0)
     pay = _load_payments()
     _ACTIVE = {"Effectuated", "PendingEffectuation", "PendingFollowups"}
     _active = all_clients[all_clients["status"].isin(_ACTIVE)] if "status" in all_clients.columns else pd.DataFrame()
@@ -2515,6 +2531,7 @@ elif page == "Money Owed":
         st.warning("Couldn't read the Insurance PAYMENTS sheet yet — the 'not getting paid' list needs it. Disputes & past-due below still work after a refresh.")
     if True:
         st.markdown("<br>", unsafe_allow_html=True)
+        st.markdown('<div id="mo-gaps"></div>', unsafe_allow_html=True)
         st.markdown(section_header("Active — Not Getting Paid", "shield"), unsafe_allow_html=True)
         st.caption("Clients confirmed **active** on your book (carrier portals + HealthSherpa) that you're **not "
                    "being paid on**, with each one's full payment history so you can take it to your commissions "
@@ -2586,6 +2603,7 @@ elif page == "Money Owed":
         # ── Ambetter disputes: carrier's OWN export confirms owed, but unpaid ──
         disp = _load_ambetter_disputes()
         st.markdown("<br>", unsafe_allow_html=True)
+        st.markdown('<div id="mo-disputes"></div>', unsafe_allow_html=True)
         st.markdown(section_header("Ambetter — Carrier Confirms Owed", "shield"), unsafe_allow_html=True)
         st.caption("The strongest dispute evidence: Ambetter's **own policy export** marks these "
                    "**Eligible for Commission = Yes** with the member **paid-through current**, yet your payments "
@@ -2635,6 +2653,7 @@ elif page == "Money Owed":
             _pk = pdue.apply(lambda r: _pk_fn(r.get("first_name", ""), r.get("last_name", "")), axis=1)
             pdue = pdue[~_pk.isin(_exp_keys)].copy()
         st.markdown("<br>", unsafe_allow_html=True)
+        st.markdown('<div id="mo-pastdue"></div>', unsafe_allow_html=True)
         st.markdown(section_header("Premium Past Due — Reach Out", "clock"), unsafe_allow_html=True)
         st.caption("Active clients **paying a premium** ($0 plans excluded) who haven't paid for a **full elapsed "
                    "month** — call them before the carrier cancels for non-payment. A **May-start who never paid** "
