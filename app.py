@@ -687,17 +687,19 @@ def color_legend():
     return f'<div style="margin:-2px 0 10px;">{chips}</div>'
 
 
-def link_card(label, value, icon_key, color, goto, sec=None):
+def link_card(label, value, icon_key, color, goto, sec=None, tip=None):
     """A stat_card wrapped in a same-tab link that deep-links to another page via
     a ?goto= query param (read by the sidebar nav). Optional `sec` tells the
-    destination which section to jump to. Makes the card clickable."""
+    destination which section to jump to; `tip` shows a hover explanation."""
     from urllib.parse import quote
+    from html import escape
     inner = stat_card(label, value, icon_key, color)
     # Carry the auth token so the card-click reload stays logged in.
     href = f"?k={quote(_AUTH_TOKEN)}&goto={quote(goto)}"
     if sec:
         href += f"&sec={quote(sec)}"
-    return (f'<a href="{href}" target="_self" '
+    title = f' title="{escape(tip, quote=True)}"' if tip else ""
+    return (f'<a href="{href}" target="_self"{title} '
             f'style="text-decoration:none;color:inherit;display:block;">{inner}</a>')
 
 
@@ -1759,11 +1761,20 @@ if page == "Dashboard":
         _disp_n = 0
     a1, a2, a3 = st.columns(3)
     with a1:
-        st.markdown(link_card("Past-Due to Call", f"{_pd_n:,}", "clock", RED, "Money Owed", sec="pastdue"), unsafe_allow_html=True)
+        st.markdown(link_card("Past-Due to Call", f"{_pd_n:,}", "clock", RED, "Money Owed", sec="pastdue",
+                              tip="Clients still active but behind on their premium. Call them to update payment "
+                                  "before the carrier cancels them for non-payment — if they lapse, you lose the commission."),
+                    unsafe_allow_html=True)
     with a2:
-        st.markdown(link_card("Follow-ups Open", f"{_fu_open:,}", "shield", GOLD, "Follow-ups"), unsafe_allow_html=True)
+        st.markdown(link_card("Follow-ups Open", f"{_fu_open:,}", "shield", GOLD, "Follow-ups",
+                              tip="HealthSherpa verifications (income/coverage or enrollment) your clients still owe. "
+                                  "If one expires, the client loses their subsidy and usually drops — reach out before the deadline."),
+                    unsafe_allow_html=True)
     with a3:
-        st.markdown(link_card("Ambetter Disputes", f"{_disp_n:,}", "minus", GOLD, "Money Owed", sec="disputes"), unsafe_allow_html=True)
+        st.markdown(link_card("Ambetter Disputes", f"{_disp_n:,}", "minus", GOLD, "Money Owed", sec="disputes",
+                              tip="Policies Ambetter's own export confirms you're the broker for, but you haven't been "
+                                  "paid on. Take these to your commissions team to get paid what you're owed."),
+                    unsafe_allow_html=True)
     st.caption("👆 Click a box to jump straight to it — Past-Due & Disputes open **Money Owed**, "
                "Follow-ups opens **Follow-ups**.")
 
