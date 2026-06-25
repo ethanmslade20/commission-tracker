@@ -497,6 +497,26 @@ st.markdown(f"""
   .stat-card .sc-val {{ font-size: 2rem; font-weight: 800; color: {T['kpi_val']}; line-height: 1; }}
   .stat-card .sc-lbl {{ font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.06em;
     color: {T['kpi_lbl']}; margin-top: 7px; font-weight: 600; }}
+  /* ── Hover tooltip on the Dashboard action cards ── */
+  [data-testid="stHorizontalBlock"], [data-testid="column"] {{ overflow: visible !important; }}
+  .tip-wrap {{ position: relative; display: block; }}
+  .tip-pop {{
+    position: absolute; top: calc(100% + 10px); left: 50%; transform: translateX(-50%) translateY(6px);
+    z-index: 1000; width: 340px; max-width: 88vw; text-align: left;
+    background: linear-gradient(160deg, rgba(27,44,77,0.99), rgba(13,23,42,0.99));
+    border: 1px solid rgba(96,165,250,0.45); border-radius: 16px; padding: 18px 20px;
+    color: #e8f0ff; font-size: 1.02rem; line-height: 1.5; font-weight: 500; letter-spacing: .1px;
+    box-shadow: 0 22px 60px rgba(0,0,0,0.6), 0 0 34px rgba(59,130,246,0.18);
+    opacity: 0; visibility: hidden; pointer-events: none;
+    transition: opacity .18s ease, transform .18s ease;
+  }}
+  .tip-pop::before {{
+    content: ""; position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%);
+    border: 8px solid transparent; border-bottom-color: rgba(96,165,250,0.45);
+  }}
+  .tip-pop .tip-title {{ display: block; font-size: 0.74rem; font-weight: 800; text-transform: uppercase;
+    letter-spacing: 0.08em; color: #8fb3ec; margin-bottom: 8px; }}
+  .tip-wrap:hover .tip-pop {{ opacity: 1; visibility: visible; transform: translateX(-50%) translateY(0); }}
   /* ── Target progress bar ── */
   .tp-head {{ display: flex; align-items: center; gap: 9px; margin: 6px 2px 2px; }}
   .tp-head .tp-title {{ font-size: 1.15rem; font-weight: 700; color: {T['text_primary']}; }}
@@ -698,9 +718,12 @@ def link_card(label, value, icon_key, color, goto, sec=None, tip=None):
     href = f"?k={quote(_AUTH_TOKEN)}&goto={quote(goto)}"
     if sec:
         href += f"&sec={quote(sec)}"
-    title = f' title="{escape(tip, quote=True)}"' if tip else ""
-    return (f'<a href="{href}" target="_self"{title} '
-            f'style="text-decoration:none;color:inherit;display:block;">{inner}</a>')
+    pop = ""
+    if tip:
+        pop = (f'<span class="tip-pop"><span class="tip-title">{escape(label)}</span>'
+               f'{escape(tip)}</span>')
+    return (f'<a href="{href}" target="_self" class="tip-wrap" '
+            f'style="text-decoration:none;color:inherit;display:block;">{inner}{pop}</a>')
 
 
 def show_chart(fig):
