@@ -2516,11 +2516,16 @@ elif page == "Money Owed":
         _anchor = {"gaps": "mo-gaps", "disputes": "mo-disputes", "pastdue": "mo-pastdue"}.get(_sec)
         if _anchor:
             import streamlit.components.v1 as _c
+            # Re-align to the section while the page is still rendering (tables above
+            # load late and would otherwise leave the scroll short of the target).
             _c.html(
-                "<script>const d=window.parent.document;let n=0;"
-                "const t=setInterval(()=>{const e=d.getElementById('" + _anchor + "');"
-                "if(e){e.scrollIntoView({behavior:'smooth',block:'start'});clearInterval(t);}"
-                "if(++n>50)clearInterval(t);},100);</script>", height=0)
+                "<script>"
+                "const d=window.parent.document,id='" + _anchor + "',end=Date.now()+2800;"
+                "function go(){const e=d.getElementById(id);if(e)e.scrollIntoView({block:'start'});}"
+                "const o=new MutationObserver(()=>{Date.now()<end?go():o.disconnect();});"
+                "o.observe(d.body,{childList:true,subtree:true});go();"
+                "setTimeout(()=>{go();o.disconnect();},2900);"
+                "</script>", height=0)
     pay = _load_payments()
     _ACTIVE = {"Effectuated", "PendingEffectuation", "PendingFollowups"}
     _active = all_clients[all_clients["status"].isin(_ACTIVE)] if "status" in all_clients.columns else pd.DataFrame()
