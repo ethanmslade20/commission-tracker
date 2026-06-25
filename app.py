@@ -1740,8 +1740,8 @@ if page == "Dashboard":
         st.markdown(stat_card("Ambetter Disputes", f"{_disp_n:,}", "minus", GOLD), unsafe_allow_html=True)
     with a4:
         st.markdown(stat_card("Commission at Risk / Mo", f"${_risk:,.0f}", "dollar", RED), unsafe_allow_html=True)
-    st.caption("Act on these in the sidebar → **Re-Engage** (past-due & lost) · "
-               "**Follow-ups** (verifications due) · **Money Owed** (disputes & gaps).")
+    st.caption("Act on these in the sidebar → **Money Owed** (past-due, disputes & gaps) · "
+               "**Follow-ups** (verifications due) · **Re-Engage** (lost clients to win back).")
 
     # ── BOOK SNAPSHOT ─────────────────────────────────────────────────────────
     st.markdown(section_header("Book Snapshot", "book"), unsafe_allow_html=True)
@@ -3076,91 +3076,10 @@ elif page == "Re-Engage":
         _pk = _pd_df.apply(lambda r: _pk_fn(r.get("first_name", ""), r.get("last_name", "")), axis=1)
         _pd_df = _pd_df[~_pk.isin(_exp_keys)].copy()
 
-    tab_outreach, tab_pastdue, tab_saved = st.tabs([
+    tab_outreach, tab_saved = st.tabs([
         f"Need Outreach ({max(len(lost_df) - len(winbacks), 0)})",
-        f"⚠️ Past Due — Grace Period ({len(_pd_df)})",
         f"Won Back ✅ ({len(winbacks)})"
     ])
-
-    # ── TAB: Past Due — Grace Period (active medical, behind on payment) ───────
-    with tab_pastdue:
-        if _pd_df.empty:
-            st.success("No health plans are flagged past due right now. "
-                       "(Detectable for Ambetter & Oscar; Anthem and UHC-medical exports don't include payment data.)")
-        else:
-            _pd_df["_name"]    = (_pd_df["first_name"].fillna("").astype(str).str.strip() + " "
-                                  + _pd_df["last_name"].fillna("").astype(str).str.strip()).str.strip()
-            _pd_df["premium"]  = pd.to_numeric(_pd_df.get("premium"), errors="coerce")
-            _pd_df["members"]  = pd.to_numeric(_pd_df.get("members"), errors="coerce").fillna(1).astype(int)
-            _pd_df["days_overdue"] = pd.to_numeric(_pd_df.get("days_overdue"), errors="coerce")
-            st.caption("Still active but behind on payment — call to update payment before the carrier cancels them. "
-                       "Every policy with a premium over $0 is shown (flat $23/member, so premium size doesn't matter). "
-                       "Covers Ambetter (paid-through passed) and Oscar (balance owed).")
-            _comm_risk = int(_pd_df["members"].fillna(1).sum()) * 23
-            pk1, pk2, pk3 = st.columns(3)
-            with pk1:
-                st.markdown(stat_card("Past-Due Policies", f"{len(_pd_df):,}", "clock", GOLD), unsafe_allow_html=True)
-            with pk2:
-                st.markdown(stat_card("Commission at Risk / Mo", f"${_comm_risk:,.0f}", "dollar", RED), unsafe_allow_html=True)
-            with pk3:
-                st.markdown(stat_card("Members at Risk", f"{int(_pd_df['members'].sum()):,}", "users", ELEC), unsafe_allow_html=True)
-
-            _pd_df["status"] = _pd_df.get("status", pd.Series(index=_pd_df.index, dtype=str)).fillna("Past due").replace("", "Past due")
-            st.markdown("<br>", unsafe_allow_html=True)
-            pf1, pf2, pf3 = st.columns(3)
-            with pf1:
-                _pst = ["All"] + sorted(_pd_df["status"].dropna().unique().tolist())
-                _pstf = st.selectbox("Status", _pst, key="pastdue_status")
-            with pf2:
-                _pc = ["All"] + sorted(_pd_df["carrier"].dropna().unique().tolist())
-                _pcf = st.selectbox("Carrier", _pc, key="pastdue_carrier")
-            with pf3:
-                _ps = ["All"] + sorted(_pd_df["state"].dropna().unique().tolist()) if "state" in _pd_df.columns else ["All"]
-                _psf = st.selectbox("State", _ps, key="pastdue_state")
-
-            _pv = _pd_df.copy()
-            if _pstf != "All":
-                _pv = _pv[_pv["status"] == _pstf]
-            if _pcf != "All":
-                _pv = _pv[_pv["carrier"] == _pcf]
-            if _psf != "All" and "state" in _pv.columns:
-                _pv = _pv[_pv["state"] == _psf]
-            # Most-recent paid-through month first (freshest, most-savable lapses on
-            # top); Oscar balance-based rows fall to the bottom by balance owed.
-            _pv["_pt"] = pd.to_datetime(_pv.get("paid_through"), errors="coerce")
-            _pv["_bal"] = pd.to_numeric(_pv.get("balance"), errors="coerce")
-            _pv = _pv.sort_values(["_pt", "_bal"], ascending=[False, False], na_position="last").reset_index(drop=True)
-
-            _pdisp = pd.DataFrame()
-            _pdisp["Name"]         = _pv["_name"]
-            _pdisp["Status"]       = _pv["status"]
-            _pdisp["Carrier"]      = _pv["carrier"]
-            _pdisp["State"]        = _pv["state"] if "state" in _pv.columns else ""
-            _pdisp["Premium"]      = _pv["premium"].apply(lambda v: f"${v:,.2f}" if pd.notna(v) else "—")
-            _pdisp["Members"]      = _pv["members"]
-            _pdisp["Reason"]       = _pv["reason"] if "reason" in _pv.columns else ""
-            _pdisp["Phone"]        = _pv["phone"] if "phone" in _pv.columns else ""
-            st.dataframe(_pdisp, use_container_width=True, hide_index=True, height=500)
-
-            # Quick Text — generic carrier-payment nudge (no carrier pay-line on file).
-            st.markdown("<br>", unsafe_allow_html=True)
-            with st.container(border=True):
-                st.markdown(chart_head("Quick Text", "Pick a client, copy the message, paste into your CRM", "users"),
-                            unsafe_allow_html=True)
-                _opts = _pv["_name"].tolist()
-                if _opts:
-                    _pick = st.selectbox("Client", _opts, key="pastdue_msg_pick", label_visibility="collapsed")
-                    _prow = _pv[_pv["_name"] == _pick].iloc[0]
-                    _first = str(_prow.get("first_name") or (_pick.split()[0] if _pick else "")).strip().title()
-                    _carr = str(_prow.get("carrier") or "").strip()
-                    _plan = f"{_carr} plan" if _carr else "health plan"
-                    _msg = (
-                        f"Hey {_first}, it's Ethan, your insurance guy. I got a notice that your {_plan} "
-                        f"is past due and at risk of cancelling for non-payment. Let's get your payment "
-                        f"updated so you don't lose coverage — call me or let me know a good time. Thanks!"
-                    )
-                    st.code(_msg, language=None)
-                    st.caption("Tap the copy icon at the top-right of the box, then paste it into your CRM.")
 
     if lost_df.empty:
         with tab_outreach:
