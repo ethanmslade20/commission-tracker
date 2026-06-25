@@ -734,6 +734,18 @@ def color_legend():
     return f'<div style="margin:-2px 0 12px;">{chips}</div>'
 
 
+def _filter_aor_mine(df):
+    """Keep rows where the current agent of record is Ethan OR blank/unknown; drop
+    rows whose AOR is a DIFFERENT named agent (you're not their agent anymore)."""
+    if df is None or "policy_aor" not in getattr(df, "columns", []):
+        return df
+    a = df["policy_aor"].fillna("").astype(str)
+    not_mine = (a.str.strip().ne("") & ~a.str.contains("None")
+                & ~a.str.contains("21457938")
+                & ~(a.str.contains("ethan", case=False) & a.str.contains("slade", case=False)))
+    return df[~not_mine]
+
+
 def link_card(label, value, icon_key, color, goto, sec=None, tip=None):
     """A stat_card wrapped in a same-tab link that deep-links to another page via
     a ?goto= query param (read by the sidebar nav). Optional `sec` tells the
@@ -2599,7 +2611,11 @@ elif page == "Money Owed":
     _active = all_clients[all_clients["status"].isin(_ACTIVE)] if "status" in all_clients.columns else pd.DataFrame()
     _mo_ready = pay is not None and not pay.empty
     rec = reconcile_book(_active, pay) if _mo_ready else {"matched": 0, "chargebacks": pd.DataFrame(columns=["member","carrier","payment_month","amount"])}
-    gaps = build_gaps(_active, pay) if _mo_ready else None
+    # Gaps = clients YOU'RE the agent for but not paid on. Exclude any whose AOR
+    # moved to another agent — you're correctly not paid on those (they're AOR
+    # losses, not disputes). Blank AOR is kept (could be yours, just unpopulated).
+    _gap_active = _filter_aor_mine(_active)
+    gaps = build_gaps(_gap_active, pay) if _mo_ready else None
     if not _mo_ready:
         st.warning("Couldn't read the Insurance PAYMENTS sheet yet — the 'not getting paid' list needs it. Disputes & past-due below still work after a refresh.")
     if True:

@@ -598,7 +598,17 @@ def run_report(settings: dict) -> None:
             from tracker.commissions import parse_payments_sheet, build_gaps
             from tracker.sheets import _open_sheet
             _payments = parse_payments_sheet(_open_sheet(_pay_url, impersonation_target))
-            commission_gaps = build_gaps(active_pending, _payments)
+            # Gaps = clients Ethan is the agent for but isn't paid on. Exclude any
+            # whose AOR moved to another agent (he's correctly unpaid — not a
+            # dispute). Blank AOR kept (could be his). Person dedup keeps the rest.
+            _gap_active = active_pending
+            if "policy_aor" in active_pending.columns:
+                _a = active_pending["policy_aor"].fillna("").astype(str)
+                _not_mine = (_a.str.strip().ne("") & ~_a.str.contains("None")
+                             & ~_a.str.contains("21457938")
+                             & ~(_a.str.contains("ethan", case=False) & _a.str.contains("slade", case=False)))
+                _gap_active = active_pending[~_not_mine]
+            commission_gaps = build_gaps(_gap_active, _payments)
             if commission_gaps is not None and not commission_gaps.empty:
                 print(f"  Commission gaps: {len(commission_gaps)} active clients with a payment gap "
                       f"({(commission_gaps['Gap'] == 'Never paid').sum()} never paid, "
