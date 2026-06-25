@@ -578,6 +578,7 @@ def _nav_icon_css():
         "<rect x='3' y='4' width='18' height='18' rx='2'/><line x1='16' y1='2' x2='16' y2='6'/><line x1='8' y1='2' x2='8' y2='6'/><line x1='3' y1='10' x2='21' y2='10'/>",  # Daily Tracker (calendar)
         "<rect x='2' y='7' width='20' height='14' rx='2'/><path d='M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16'/>",  # Book of Business (briefcase)
         "<line x1='12' y1='1' x2='12' y2='23'/><path d='M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6'/>",  # Commissions (dollar)
+        "<circle cx='12' cy='12' r='10'/><line x1='12' y1='8' x2='12' y2='12'/><line x1='12' y1='16' x2='12.01' y2='16'/>",  # Money Owed (alert)
         "<circle cx='12' cy='12' r='10'/><circle cx='12' cy='12' r='6'/><circle cx='12' cy='12' r='2'/>",  # Goals (target)
         "<path d='M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2'/><circle cx='9' cy='7' r='4'/><path d='M23 21v-2a4 4 0 0 0-3-3.87'/><path d='M16 3.13a4 4 0 0 1 0 7.75'/>",  # Re-Engage (users)
         "<polyline points='23 4 23 10 17 10'/><polyline points='1 20 1 14 7 14'/><path d='M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15'/>",  # Re-Engage (Supp) (refresh)
@@ -1632,7 +1633,7 @@ with st.sidebar:
 
     page = st.radio(
         "Navigation",
-        ["Dashboard", "Month-over-Month", "Daily Tracker", "Book of Business", "Commissions", "Goals", "Re-Engage", "Re-Engage (Supp)", "Follow-ups", "AEP Tracker", "Settings"],
+        ["Dashboard", "Month-over-Month", "Daily Tracker", "Book of Business", "Commissions", "Money Owed", "Goals", "Re-Engage", "Re-Engage (Supp)", "Follow-ups", "AEP Tracker", "Settings"],
         label_visibility="collapsed",
     )
 
@@ -2473,8 +2474,26 @@ elif page == "Commissions":
         _ACTIVE = {"Effectuated", "PendingEffectuation", "PendingFollowups"}
         _active = all_clients[all_clients["status"].isin(_ACTIVE)] if "status" in all_clients.columns else pd.DataFrame()
         rec = reconcile_book(_active, pay)
-        gaps = build_gaps(_active, pay)
 
+        st.caption(f"Matched {rec['matched']} of {len(_active)} active clients to a payment "
+                   f"({len(_active) - rec['matched']} unmatched — mostly new business not yet paid or name variants).")
+
+elif page == "Money Owed":
+    from tracker.commissions import reconcile_book, build_gaps
+    st.title("Money Owed")
+    st.caption("Money you should be collecting but aren't yet — active clients you're not being "
+               "paid on, Ambetter disputes, and members behind on premium. Chase these to get paid.")
+    st.markdown(color_legend(), unsafe_allow_html=True)
+    st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
+    pay = _load_payments()
+    _ACTIVE = {"Effectuated", "PendingEffectuation", "PendingFollowups"}
+    _active = all_clients[all_clients["status"].isin(_ACTIVE)] if "status" in all_clients.columns else pd.DataFrame()
+    _mo_ready = pay is not None and not pay.empty
+    rec = reconcile_book(_active, pay) if _mo_ready else {"matched": 0, "chargebacks": pd.DataFrame(columns=["member","carrier","payment_month","amount"])}
+    gaps = build_gaps(_active, pay) if _mo_ready else None
+    if not _mo_ready:
+        st.warning("Couldn't read the Insurance PAYMENTS sheet yet — the 'not getting paid' list needs it. Disputes & past-due below still work after a refresh.")
+    if True:
         st.markdown("<br>", unsafe_allow_html=True)
         st.markdown(section_header("Active — Not Getting Paid", "shield"), unsafe_allow_html=True)
         st.caption("Clients confirmed **active** on your book (carrier portals + HealthSherpa) that you're **not "
@@ -2675,8 +2694,7 @@ elif page == "Commissions":
                 })
                 st.dataframe(cbd, use_container_width=True, hide_index=True, height=min(80 + len(cbd) * 35, 400))
 
-        st.caption(f"Matched {rec['matched']} of {len(_active)} active clients to a payment "
-                   f"({len(_active) - rec['matched']} unmatched — mostly new business not yet paid or name variants).")
+
 
 
 # ══════════════════════════════════════════════════════════════════════════════
