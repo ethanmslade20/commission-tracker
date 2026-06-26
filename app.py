@@ -542,7 +542,7 @@ st.markdown(f"""
   }}
   .tip-pop .tip-title {{ display: block; font-size: 0.74rem; font-weight: 800; text-transform: uppercase;
     letter-spacing: 0.08em; color: #8fb3ec; margin-bottom: 8px; }}
-  .tip-wrap:hover .tip-pop {{ opacity: 1; visibility: visible; transform: translateX(-50%) translateY(0); }}
+  .tip-wrap:hover .tip-pop, .tip-wrap.tip-show .tip-pop {{ opacity: 1; visibility: visible; transform: translateX(-50%) translateY(0); }}
   /* ── Target progress bar ── */
   .tp-head {{ display: flex; align-items: center; gap: 9px; margin: 6px 2px 2px; }}
   .tp-head .tp-title {{ font-size: 1.15rem; font-weight: 700; color: {T['text_primary']}; }}
@@ -1844,8 +1844,26 @@ if page == "Dashboard":
                   for c in (_c1, _c2, _c3))
         + "</div>",
         unsafe_allow_html=True)
-    st.caption("👆 Hover a box for what it means · click to jump to it — Past-Due & Disputes open "
-               "**Money Owed**, Follow-ups opens **Follow-ups**.")
+    st.caption("👆 Hover (or tap on phone) a box for what it means · on phone, tap once to read it, "
+               "tap again to open it — Past-Due & Disputes open **Money Owed**, Follow-ups opens **Follow-ups**.")
+    # On touch devices (iPhone), first tap reveals the explanation; a second tap follows the link.
+    import streamlit.components.v1 as _c
+    _c.html(
+        "<script>"
+        "const d=window.parent.document,w=window.parent;"
+        "const touch=('ontouchstart' in w)||(w.navigator&&w.navigator.maxTouchPoints>0);"
+        "function wire(){if(!touch)return;"
+        "d.querySelectorAll('a.tip-wrap').forEach(function(a){"
+        "if(a.dataset.tapwired)return;a.dataset.tapwired='1';"
+        "a.addEventListener('click',function(e){"
+        "if(a.dataset.armed==='1')return;"          // 2nd tap → let the link navigate
+        "e.preventDefault();"                          // 1st tap → just reveal
+        "d.querySelectorAll('a.tip-wrap').forEach(function(o){o.dataset.armed='';o.classList.remove('tip-show');});"
+        "a.classList.add('tip-show');a.dataset.armed='1';"
+        "setTimeout(function(){a.dataset.armed='';a.classList.remove('tip-show');},4000);"
+        "});});}"
+        "wire();new MutationObserver(wire).observe(d.body,{childList:true,subtree:true});"
+        "</script>", height=0)
 
     # ── BOOK SNAPSHOT ─────────────────────────────────────────────────────────
     st.markdown(section_header("Book Snapshot", "book"), unsafe_allow_html=True)
