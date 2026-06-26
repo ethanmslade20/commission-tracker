@@ -609,10 +609,17 @@ def run_report(settings: dict) -> None:
                              & ~(_a.str.contains("ethan", case=False) & _a.str.contains("slade", case=False)))
                 _gap_active = active_pending[~_not_mine]
             commission_gaps = build_gaps(_gap_active, _payments)
+            # Policy-number cross-reference: flag who was truly never paid (carrier
+            # policy # never appears on a statement) vs paid under a different member.
+            from tracker.commissions import audit_gaps
+            _books = str(Path(__file__).resolve().parent.parent / "carrier_books")
+            commission_gaps = audit_gaps(commission_gaps, _payments, _books)
             if commission_gaps is not None and not commission_gaps.empty:
+                _disp = (commission_gaps["Dispute"] == "✅ Dispute").sum() if "Dispute" in commission_gaps.columns else 0
                 print(f"  Commission gaps: {len(commission_gaps)} active clients with a payment gap "
                       f"({(commission_gaps['Gap'] == 'Never paid').sum()} never paid, "
-                      f"{(commission_gaps['Gap'] == 'Stopped').sum()} stopped)")
+                      f"{(commission_gaps['Gap'] == 'Stopped').sum()} stopped) · "
+                      f"{_disp} policy-verified disputes")
 
             # Ambetter disputes: cross-reference the carrier's own export (Eligible
             # for Commission = Yes + member paid-through current) against actual

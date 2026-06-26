@@ -87,7 +87,8 @@ def parse_payments_sheet(spreadsheet) -> pd.DataFrame:
             if amt is None:
                 continue
             rows.append(dict(
-                payment_month=pm, carrier=r[2].strip(), member=r[4].strip(),
+                payment_month=pm, carrier=r[2].strip(), policy_id=r[3].strip(),
+                member=r[4].strip(),
                 pay_period=r[5].strip(), effective=r[6].strip(),
                 subscribers=r[7].strip(), state=r[9].strip(),
                 description=r[10].strip(), amount=amt))
@@ -229,6 +230,105 @@ def payment_history(payments: pd.DataFrame) -> dict:
             "count": int(len(g)),
         }
     return hist
+
+
+def _norm_id(s):
+    return re.sub(r"[^a-z0-9]", "", str(s or "").lower())
+
+
+def _base_policy(s):
+    return re.sub(r"-\d{1,3}$", "", str(s or "").strip())
+
+
+def _route_carrier(carrier):
+    c = str(carrier).lower()
+    if "ambetter" in c: return "ambetter"
+    if "oscar" in c: return "oscar"
+    if "anthem" in c or "wellpoint" in c or "healthcare plan of georgia" in c: return "anthem"
+    return None
+
+
+def carrier_policy_map(books_dir):
+    """{'ambetter'|'oscar'|'anthem': {name_key: policy#}} from the portal exports.
+    Kept PER-CARRIER so a same-name client in a different carrier can't grab the
+    wrong policy number."""
+    import csv
+    from pathlib import Path
+    base = Path(books_dir)
+    amb, osc, ant = {}, {}, {}
+    def nk(f, l):
+        return _norm_id(str(l) + str(f))[:12]
+    p = base / "ambetter.csv"
+    if p.exists():
+        for r in csv.DictReader(open(p)):
+            k = nk(r.get("Insured First Name"), r.get("Insured Last Name"))
+            if k and r.get("Policy Number"):
+                amb.setdefault(k, r["Policy Number"])
+    p = base / "oscar.csv"
+    if p.exists():
+        for r in csv.DictReader(open(p)):
+            nm = str(r.get("Member name") or "").split()
+            if len(nm) >= 2 and r.get("Member ID"):
+                osc.setdefault(nk(nm[0], nm[-1]), r["Member ID"])
+    p = base / "anthem.csv"
+    if p.exists():
+        try:
+            rows = list(csv.DictReader((l for i, l in enumerate(open(p)) if i >= 1)))
+        except Exception:
+            rows = []
+        cid = next((c for c in (rows[0] if rows else {}) if "client" in c.lower() and "id" in c.lower()), None)
+        for r in rows:
+            nmcell = next((v for v in r.values() if v and "," in str(v)), "")
+            pt = str(nmcell).split(",")
+            k = nk(pt[1] if len(pt) > 1 else "", pt[0]) if nmcell else ""
+            if k and cid and r.get(cid):
+                ant.setdefault(k, r[cid])
+    return {"ambetter": amb, "oscar": osc, "anthem": ant}
+
+
+def audit_gaps(gaps, payments, books_dir, today=None):
+    """Cross-reference each gap client's carrier policy number against the policy
+    IDs on the commission statements (matched on the BASE policy, so a payment
+    under a different household member still counts as paid). Adds columns:
+      Policy #  — carrier policy number (blank if no portal export for that carrier)
+      Ever Paid — Yes / No / ?   (? = can't verify, no carrier export)
+      Dispute   — '✅ Dispute' (never paid + established) / '⏳ Too new' / '' / 'needs portal'
+    Too-new = effective in the current or previous calendar month (pay cycle not
+    complete yet), so those are held rather than disputed."""
+    if gaps is None or gaps.empty:
+        return gaps
+    today = pd.Timestamp(today) if today else pd.Timestamp.today().normalize()
+    cutoff = today.replace(day=1) - pd.offsets.MonthBegin(1)   # first of previous month
+    polmap = carrier_policy_map(books_dir)
+    paid = set()
+    if payments is not None and not payments.empty and "policy_id" in payments.columns:
+        for pid in payments["policy_id"].dropna():
+            b = _norm_id(_base_policy(pid))
+            if b:
+                paid.add(b)
+
+    def nk(f, l):
+        return _norm_id(str(l) + str(f))[:12]
+
+    pols, ever, disp = [], [], []
+    for _, r in gaps.iterrows():
+        rt = _route_carrier(r.get("Carrier", ""))
+        pol = polmap.get(rt, {}).get(nk(r.get("First Name", ""), r.get("Last Name", ""))) if rt else None
+        pols.append(pol or "")
+        if pol:
+            was_paid = _norm_id(_base_policy(pol)) in paid
+            ever.append("Yes" if was_paid else "No")
+            eff = pd.to_datetime(r.get("Effective Date"), errors="coerce")
+            too_new = pd.notna(eff) and eff >= cutoff
+            disp.append("" if was_paid else ("⏳ Too new" if too_new else "✅ Dispute"))
+        else:
+            ever.append("?")
+            disp.append("needs portal")
+    g = gaps.copy()
+    g["Policy #"] = pols
+    g["Ever Paid"] = ever
+    g["Dispute"] = disp
+    return g
 
 
 def build_gaps(active: pd.DataFrame, payments: pd.DataFrame, today=None) -> pd.DataFrame:

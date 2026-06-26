@@ -1324,6 +1324,36 @@ def _load_ambetter_disputes() -> pd.DataFrame:
 
 
 @st.cache_data(ttl=1800)
+def _gap_audit_from_sheet() -> dict:
+    """name_key -> {Policy #, Ever Paid, Dispute} from the Commission Gaps tab the
+    report wrote (policy-verified). Lets the cloud app show the audit columns even
+    though it has no carrier_books to compute them live."""
+    import re as _re
+    def _nk(f, l): return _re.sub(r"[^a-z0-9]", "", (str(l) + str(f)).lower())[:12]
+    try:
+        ss = _gspread_client().open_by_url(st.secrets["sheet_url"])
+        v = ss.worksheet("Commission Gaps").get_all_values()
+    except Exception:
+        return {}
+    hr = next((i for i, row in enumerate(v[:6]) if any(str(c).strip() == "First Name" for c in row)), 0)
+    h = v[hr]
+    def ix(n): return h.index(n) if n in h else None
+    fi, li, pi, ei, di = ix("First Name"), ix("Last Name"), ix("Policy #"), ix("Ever Paid"), ix("Dispute")
+    if fi is None or li is None or di is None:
+        return {}
+    out = {}
+    for r in v[hr + 1:]:
+        if len(r) <= max(x for x in (fi, li, pi, ei, di) if x is not None):
+            continue
+        out[_nk(r[fi], r[li])] = {
+            "Policy #": r[pi] if pi is not None else "",
+            "Ever Paid": r[ei] if ei is not None else "?",
+            "Dispute": r[di] if di is not None else "",
+        }
+    return out
+
+
+@st.cache_data(ttl=1800)
 def _load_pastdue() -> pd.DataFrame:
     """Active health plans with a premium > $0 that are behind on payment
     (Ambetter paid-through passed / Oscar balance owed). Cloud reads the Health
@@ -2634,6 +2664,25 @@ elif page == "Money Owed":
     # losses, not disputes). Blank AOR is kept (could be yours, just unpopulated).
     _gap_active = _filter_aor_mine(_active)
     gaps = build_gaps(_gap_active, pay) if _mo_ready else None
+    # Policy-number audit: who's truly never paid (carrier policy # never on a
+    # statement) vs paid under a different member. Local computes it from the
+    # carrier books; cloud reads the columns the report wrote to the sheet.
+    if gaps is not None and not gaps.empty:
+        try:
+            from tracker.commissions import audit_gaps
+            _books = Path(__file__).parent / "carrier_books"
+            if _books.exists() and any(_books.glob("*.csv")):
+                gaps = audit_gaps(gaps, pay, str(_books))
+            else:
+                _au = _gap_audit_from_sheet()
+                if _au:
+                    import re as _re2
+                    def _nkk(r): return _re2.sub(r"[^a-z0-9]", "", (str(r["Last Name"]) + str(r["First Name"])).lower())[:12]
+                    gaps["Policy #"] = gaps.apply(lambda r: _au.get(_nkk(r), {}).get("Policy #", ""), axis=1)
+                    gaps["Ever Paid"] = gaps.apply(lambda r: _au.get(_nkk(r), {}).get("Ever Paid", "?"), axis=1)
+                    gaps["Dispute"] = gaps.apply(lambda r: _au.get(_nkk(r), {}).get("Dispute", ""), axis=1)
+        except Exception:
+            pass
     if not _mo_ready:
         st.warning("Couldn't read the Insurance PAYMENTS sheet yet — the 'not getting paid' list needs it. Disputes & past-due below still work after a refresh.")
     if True:
@@ -2648,21 +2697,26 @@ elif page == "Money Owed":
         else:
             _never = int((gaps["Gap"] == "Never paid").sum())
             _stop = int((gaps["Gap"] == "Stopped").sum())
-            gk1, gk2, gk3 = st.columns(3)
+            _disp_ct = int(gaps["Dispute"].astype(str).str.contains("Dispute").sum()) if "Dispute" in gaps.columns else 0
+            gk1, gk2, gk3, gk4 = st.columns(4)
             with gk1:
                 st.markdown(stat_card("Total Gaps", f"{len(gaps):,}", "minus", RED), unsafe_allow_html=True)
             with gk2:
                 st.markdown(stat_card("Never Paid", f"{_never:,}", "shield", GOLD), unsafe_allow_html=True)
             with gk3:
                 st.markdown(stat_card("Stopped", f"{_stop:,}", "clock", ELEC), unsafe_allow_html=True)
+            with gk4:
+                st.markdown(stat_card("Dispute-Ready", f"{_disp_ct:,}", "dollar", GREEN), unsafe_allow_html=True)
             st.markdown("<br>", unsafe_allow_html=True)
             # Reindex so a missing column (e.g. an older cached module) can't crash the page.
             gx = gaps.reindex(columns=["First Name", "Last Name", "Carrier", "State", "Gap",
-                                       "Client Since", "Months Paid", "Last Paid", "Total Paid", "Premium"])
+                                       "Client Since", "Months Paid", "Last Paid", "Total Paid", "Premium",
+                                       "Policy #", "Ever Paid", "Dispute"])
             gx["_prem"] = pd.to_numeric(gx["Premium"], errors="coerce").fillna(0)
+            gx["Dispute"] = gx["Dispute"].fillna("")
 
             # ── Filters ───────────────────────────────────────────────────────
-            ff1, ff2, ff3, ff4 = st.columns(4)
+            ff1, ff2, ff3, ff4, ff5 = st.columns(5)
             with ff1:
                 f_gap = st.selectbox("Gap type", ["All", "Never paid", "Stopped"], key="gap_type")
             with ff2:
@@ -2671,6 +2725,8 @@ elif page == "Money Owed":
                 f_state = st.selectbox("State", ["All"] + sorted(gx["State"].dropna().astype(str).unique().tolist()), key="gap_state")
             with ff4:
                 f_prem = st.selectbox("Premium", ["All", "Paying ($0+ premium)", "$0 (fully subsidized)"], key="gap_prem")
+            with ff5:
+                f_ver = st.selectbox("Verified", ["All", "✅ Dispute-ready", "Were paid", "Needs portal"], key="gap_verified")
 
             gv = gx.copy()
             if f_gap != "All":
@@ -2683,6 +2739,12 @@ elif page == "Money Owed":
                 gv = gv[gv["_prem"] <= 0]
             elif f_prem == "Paying ($0+ premium)":
                 gv = gv[gv["_prem"] > 0]
+            if f_ver == "✅ Dispute-ready":
+                gv = gv[gv["Dispute"].astype(str).str.contains("Dispute", na=False)]
+            elif f_ver == "Were paid":
+                gv = gv[gv["Ever Paid"].astype(str) == "Yes"]
+            elif f_ver == "Needs portal":
+                gv = gv[gv["Dispute"].astype(str).str.contains("needs portal", na=False)]
             # Group by $0 vs paying (paying first, highest premium on top), then carrier.
             gv = gv.sort_values(["_prem", "Carrier"], ascending=[False, True])
 
@@ -2691,6 +2753,8 @@ elif page == "Money Owed":
                 "Name": (gv["First Name"].fillna("") + " " + gv["Last Name"].fillna("")).str.strip().str.title(),
                 "Carrier": gv["Carrier"],
                 "State": gv["State"],
+                "Policy #": gv.get("Policy #", "").fillna("").replace("", "—"),
+                "Dispute": gv.get("Dispute", "").fillna(""),
                 "Gap": gv["Gap"],
                 "Client Since": _cs.dt.strftime("%b %Y").where(_cs.notna(), "—"),
                 "Months Paid": gv["Months Paid"].fillna("—"),
