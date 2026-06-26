@@ -1856,8 +1856,8 @@ if page == "Dashboard":
         "d.querySelectorAll('a.tip-wrap').forEach(function(a){"
         "if(a.dataset.tapwired)return;a.dataset.tapwired='1';"
         "a.addEventListener('click',function(e){"
-        "if(a.dataset.armed==='1')return;"          // 2nd tap → let the link navigate
-        "e.preventDefault();"                          // 1st tap → just reveal
+        "if(a.dataset.armed==='1')return;"
+        "e.preventDefault();"
         "d.querySelectorAll('a.tip-wrap').forEach(function(o){o.dataset.armed='';o.classList.remove('tip-show');});"
         "a.classList.add('tip-show');a.dataset.armed='1';"
         "setTimeout(function(){a.dataset.armed='';a.classList.remove('tip-show');},4000);"
