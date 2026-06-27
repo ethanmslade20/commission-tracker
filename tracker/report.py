@@ -349,6 +349,135 @@ def _alert_new_lapses(all_clients: pd.DataFrame) -> None:
         print(f"  (lapse text failed: {e})")
 
 
+def _upload_summary(all_clients, pastdue, snapshot_dir, today=None) -> None:
+    """After a new HealthSherpa upload, text the agent a summary: new policies/
+    members signed, and clients newly fallen off since the last upload split into
+    Cancelled (→ Re-Engage), Behind on payment, and Taken by another agent.
+    Only fires when the HealthSherpa snapshot actually changed (a real upload)."""
+    import glob
+    import hashlib
+    import json
+    import re
+    import unicodedata
+
+    today = pd.Timestamp(today) if today else pd.Timestamp.today().normalize()
+    _data = Path(__file__).resolve().parent.parent / "data"
+    _data.mkdir(parents=True, exist_ok=True)
+
+    # Only run on a genuinely new HealthSherpa upload (snapshot content changed).
+    hs = sorted(glob.glob(str(Path(snapshot_dir) / "*healthsherpa*.parquet")))
+    if not hs:
+        return
+    h = hashlib.md5(Path(hs[-1]).read_bytes()).hexdigest()
+    marker = _data / "last_upload_hash.txt"
+    if marker.exists() and marker.read_text().strip() == h:
+        return  # same upload as last summary — don't re-text
+
+    NPN = "21457938"
+    def _is_e(v):
+        v = str(v or "").lower()
+        return "slade" in v and "ethan" in v
+    def _key(f, l):
+        s = unicodedata.normalize("NFKD", f"{f} {l}").encode("ascii", "ignore").decode().lower()
+        return re.sub(r"[^a-z]", "", s)
+    def _disp(f, l):
+        return f"{f} {l}".strip().title()
+
+    lost, aor, pol, polmem = {}, {}, set(), {}
+    for _, r in all_clients.iterrows():
+        f, l = r.get("first_name", ""), r.get("last_name", "")
+        k = _key(f, l)
+        if not k:
+            continue
+        st = str(r.get("status") or "")
+        if st in ("Cancelled", "Terminated"):
+            lost[k] = _disp(f, l)
+        if st in ("Effectuated", "PendingEffectuation", "PendingFollowups"):
+            a = str(r.get("policy_aor") or "")
+            if a.strip() not in ("", "None") and NPN not in a and not _is_e(a):
+                aor[k] = _disp(f, l)
+        pid = re.sub(r"\.0$", "", str(r.get("ffm_app_id") or "").strip())
+        if pid and pid.lower() != "nan":
+            pol.add(pid)
+            polmem[pid] = int(pd.to_numeric(r.get("applicant_count"), errors="coerce") or 1)
+
+    pdue = {}
+    if pastdue is not None and not pastdue.empty:
+        for _, r in pastdue.iterrows():
+            k = _key(r.get("first_name", ""), r.get("last_name", ""))
+            if k:
+                pdue[k] = _disp(r.get("first_name", ""), r.get("last_name", ""))
+
+    def _load(name):
+        p = _data / name
+        try:
+            return json.loads(p.read_text())
+        except Exception:
+            return None
+    base_lost, base_aor, base_pd, base_pol = (_load("known_lapsed.json"), _load("known_aor.json"),
+                                              _load("known_pastdue.json"), _load("known_policies.json"))
+    first_run = base_pol is None
+
+    def _new(cur, base):
+        return [] if base is None else [v for k, v in cur.items() if k not in base]
+    new_lost = _new(lost, base_lost)
+    new_aor = _new(aor, base_aor)
+    new_pd = _new(pdue, base_pd)
+    base_pol_set = set(base_pol or [])
+    new_pol = [p for p in pol if p not in base_pol_set]
+    new_pol_n = 0 if first_run else len(new_pol)
+    new_mem = 0 if first_run else sum(polmem.get(p, 1) for p in new_pol)
+
+    # Save baselines + marker for next time.
+    (_data / "known_lapsed.json").write_text(json.dumps(lost, indent=2))
+    (_data / "known_aor.json").write_text(json.dumps(aor, indent=2))
+    (_data / "known_pastdue.json").write_text(json.dumps(pdue, indent=2))
+    (_data / "known_policies.json").write_text(json.dumps(sorted(pol), indent=2))
+    marker.write_text(h)
+
+    if first_run:
+        print("  Upload summary: baselines initialized (no text on first run).")
+        return
+
+    def _fmt(names):
+        return ", ".join(names[:6]) + (f" +{len(names) - 6} more" if len(names) > 6 else "")
+    d = today.strftime("%b %d")
+    lines = [f"HealthSherpa updated · {d}",
+             f"✅ Signed: {new_pol_n} new policies / {new_mem} members"]
+    total = len(new_lost) + len(new_pd) + len(new_aor)
+    if total == 0:
+        lines.append("⬇️ Lost 0 clients — all clear.")
+    else:
+        lines.append(f"⬇️ Lost {total} clients:")
+        if new_lost:
+            lines.append(f" • Cancelled (→ Re-Engage): {_fmt(new_lost)}")
+        if new_pd:
+            lines.append(f" • Behind on payment: {_fmt(new_pd)}")
+        if new_aor:
+            lines.append(f" • Taken by another agent: {_fmt(new_aor)}")
+    msg = "\n".join(lines)
+    print("  Upload summary:\n    " + msg.replace("\n", "\n    "))
+
+    cfg = _data / "alert_config.json"
+    phone, enabled = None, True
+    if cfg.exists():
+        try:
+            c = json.loads(cfg.read_text())
+            phone = c.get("phone")
+            enabled = c.get("upload_summary", c.get("lapse_alerts", True))
+        except Exception:
+            pass
+    if enabled and phone:
+        try:
+            from tracker.digest import send_imessage
+            send_imessage(msg, phone)
+            print(f"  Upload summary texted to {phone}")
+        except Exception as e:
+            print(f"  (upload summary text failed: {e})")
+    elif not phone:
+        print("  (no phone configured — not texted)")
+
+
 def run_report(settings: dict) -> None:
     snapshot_dir = Path(settings["snapshot_dir"])
     months = load_all_snapshots(snapshot_dir)
@@ -660,10 +789,11 @@ def run_report(settings: dict) -> None:
         follow_ups_df=follow_ups,
     )
 
-    # Text the agent any clients who newly dropped into Re-Engage this run.
+    # On a new HealthSherpa upload, text the agent the summary: new sales + who
+    # newly fell off (cancelled / behind on payment / taken by another agent).
     try:
-        _alert_new_lapses(all_clients)
+        _upload_summary(all_clients, pastdue, settings["snapshot_dir"])
     except Exception as e:
-        print(f"  (lapse alert step skipped: {e})")
+        print(f"  (upload summary step skipped: {e})")
 
     print("Done.")
