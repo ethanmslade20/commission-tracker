@@ -2611,21 +2611,6 @@ elif page == "Commissions":
             # biggest carriers first (by all-time net)
             piv = piv.loc[piv.sum(axis=1).sort_values(ascending=False).index]
 
-            # one line per carrier across the months
-            _long = piv.T.reset_index().melt(id_vars="Month", var_name="Carrier", value_name="Net")
-            _long["Label"] = _long["Month"].dt.strftime("%b %Y")
-            figc = px.line(_long, x="Label", y="Net", color="Carrier", markers=True)
-            figc.update_traces(line=dict(width=2.5), marker=dict(size=6),
-                               hovertemplate="%{fullData.name}<br>%{x}: $%{y:,.0f}<extra></extra>")
-            figc.update_layout(height=400, margin=dict(l=10, r=10, t=10, b=10),
-                               paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                               xaxis_title=None, yaxis_title=None, font_color="#cbd5e1",
-                               legend=dict(orientation="h", yanchor="bottom", y=-0.32, x=0,
-                                           title=None, font=dict(size=11)))
-            figc.update_yaxes(tickprefix="$", gridcolor="rgba(255,255,255,0.08)")
-            figc.update_xaxes(gridcolor="rgba(255,255,255,0.04)")
-            show_chart(figc)
-
             # exact-dollar matrix: carrier × month, with a Total column and an
             # all-carriers row so the monthly grand total is visible too.
             _mat = piv.copy()
