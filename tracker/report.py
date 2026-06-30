@@ -503,6 +503,29 @@ def run_report(settings: dict) -> None:
 
     appointments = _load_appointments()
     all_clients  = build_all_clients(months)
+
+    # Mark confirmed-AOR-changed clients whose HealthSherpa policy_aor field still
+    # lags the exchange (e.g. Tammy Bennett -> Albert Rincon). Stamping policy_aor
+    # here means EVERY AOR filter treats them as another agent's — including the
+    # cloud app, which reads this written value and can't see data/aor_changed.json
+    # (gitignored). 'Marketplace disconnected' clients are NOT on the list, so they
+    # keep policy_aor=Ethan and are left alone.
+    try:
+        from tracker.commissions import aor_changed_keys
+        _chg = aor_changed_keys()
+        if _chg and "policy_aor" in all_clients.columns:
+            import re as _re_aor
+            def _ck(r):
+                l = _re_aor.sub(r"[^a-z]", "", str(r.get("last_name", "")).lower())
+                f = _re_aor.sub(r"[^a-z]", "", str(r.get("first_name", "")).lower())
+                return l + f
+            _m = all_clients.apply(lambda r: _ck(r) in _chg, axis=1)
+            if _m.any():
+                all_clients.loc[_m, "policy_aor"] = "AOR changed (another agent)"
+                print(f"  AOR-changed override: marked {int(_m.sum())} client(s) as another agent's")
+    except Exception as _e:
+        print(f"  (AOR-changed override skipped: {_e})")
+
     before_ct    = len(all_clients)
     all_clients  = _filter_by_appointments(all_clients, appointments)
     filtered_ct  = before_ct - len(all_clients)
