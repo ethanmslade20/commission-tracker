@@ -59,6 +59,45 @@ def _person_key(first, last):
     return l[:4] + f[:3]
 
 
+def aor_changed_keys() -> set:
+    """Full-name keys of clients CONFIRMED stolen by another agent (their AOR was
+    changed), manually curated in data/aor_changed.json. Used to drop them from
+    the Money Owed / dispute list even when the HealthSherpa export's policy_aor
+    field still LAGS the exchange (hasn't propagated the change yet — e.g. Tammy
+    Bennett). Only confirmed AOR *changes* belong here — NEVER 'marketplace
+    disconnected' clients, since Ethan is usually still their agent on those."""
+    import json
+    from pathlib import Path
+    p = Path(__file__).resolve().parent.parent / "data" / "aor_changed.json"
+    try:
+        items = json.loads(p.read_text())
+    except Exception:
+        return set()
+    keys = set()
+    for it in items:
+        l = re.sub(r"[^a-z]", "", _norm(it.get("last", "")))
+        f = re.sub(r"[^a-z]", "", _norm(it.get("first", "")))
+        if l:
+            keys.add(l + f)
+    return keys
+
+
+def drop_aor_changed(df):
+    """Remove rows whose (first_name,last_name) is on the confirmed-AOR-changed
+    override list. Pairs with the policy_aor filter to catch lag cases the export
+    field misses. No-op if the list is empty or the name columns are absent."""
+    keys = aor_changed_keys()
+    if not keys or df is None or getattr(df, "empty", True):
+        return df
+    if "first_name" not in df.columns or "last_name" not in df.columns:
+        return df
+    def _k(r):
+        l = re.sub(r"[^a-z]", "", _norm(r.get("last_name", "")))
+        f = re.sub(r"[^a-z]", "", _norm(r.get("first_name", "")))
+        return l + f
+    return df[~df.apply(lambda r: _k(r) in keys, axis=1)]
+
+
 def _member_key(member):
     """Match key for a statement member name, handling 'LAST, FIRST' and 'First Last'."""
     m = _norm(member)

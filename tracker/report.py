@@ -737,6 +737,9 @@ def run_report(settings: dict) -> None:
                              & ~_a.str.contains("21457938")
                              & ~(_a.str.contains("ethan", case=False) & _a.str.contains("slade", case=False)))
                 _gap_active = active_pending[~_not_mine]
+            # Also drop confirmed-AOR-changed clients whose policy_aor field lags.
+            from tracker.commissions import drop_aor_changed
+            _gap_active = drop_aor_changed(_gap_active)
             commission_gaps = build_gaps(_gap_active, _payments)
             # Policy-number cross-reference: flag who was truly never paid (carrier
             # policy # never appears on a statement) vs paid under a different member.

@@ -736,14 +736,26 @@ def color_legend():
 
 def _filter_aor_mine(df):
     """Keep rows where the current agent of record is Ethan OR blank/unknown; drop
-    rows whose AOR is a DIFFERENT named agent (you're not their agent anymore)."""
-    if df is None or "policy_aor" not in getattr(df, "columns", []):
+    rows whose AOR is a DIFFERENT named agent (you're not their agent anymore).
+    Also drops anyone on the confirmed-AOR-changed override list (catches lag
+    cases where the export's policy_aor field hasn't propagated yet, e.g. Tammy
+    Bennett). Marketplace-disconnected clients keep policy_aor=Ethan and are NOT
+    on that list, so they stay — you may still be their agent."""
+    if df is None or getattr(df, "empty", True):
         return df
-    a = df["policy_aor"].fillna("").astype(str)
-    not_mine = (a.str.strip().ne("") & ~a.str.contains("None")
-                & ~a.str.contains("21457938")
-                & ~(a.str.contains("ethan", case=False) & a.str.contains("slade", case=False)))
-    return df[~not_mine]
+    out = df
+    if "policy_aor" in getattr(df, "columns", []):
+        a = df["policy_aor"].fillna("").astype(str)
+        not_mine = (a.str.strip().ne("") & ~a.str.contains("None")
+                    & ~a.str.contains("21457938")
+                    & ~(a.str.contains("ethan", case=False) & a.str.contains("slade", case=False)))
+        out = df[~not_mine]
+    try:
+        from tracker.commissions import drop_aor_changed
+        out = drop_aor_changed(out)
+    except Exception:
+        pass
+    return out
 
 
 def link_card(label, value, icon_key, color, goto, sec=None, tip=None):
