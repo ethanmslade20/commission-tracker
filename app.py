@@ -2516,14 +2516,6 @@ elif page == "Book of Business":
             _hh = (pd.DataFrame({"n": _b, "mem": _sz.values})
                      .groupby("n").agg(Policies=("n", "size"), Members=("mem", "sum")).reset_index())
             _hh["Size"] = _hh["n"].map(_lbl)
-            fig_hh = px.bar(_hh, x="Size", y="Policies", text="Policies")
-            fig_hh.update_traces(marker_color=ELEC, marker_cornerradius=6, textposition="outside",
-                                 hovertemplate="%{x} member(s): %{y} policies<extra></extra>")
-            fig_hh.update_layout(height=300, margin=dict(l=10, r=10, t=10, b=10),
-                                 paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                                 xaxis_title=None, yaxis_title=None, font_color="#cbd5e1")
-            fig_hh.update_yaxes(gridcolor="rgba(255,255,255,0.08)")
-            show_chart(fig_hh)
             _hht = _hh[["Size", "Policies", "Members"]].copy()
             _hht.loc[len(_hht)] = ["Total", int(_hht["Policies"].sum()), int(_hht["Members"].sum())]
             st.dataframe(_hht, use_container_width=True, hide_index=True)
