@@ -2501,6 +2501,37 @@ elif page == "Book of Business":
 
     st.markdown("<br>", unsafe_allow_html=True)
 
+    # ── Household size breakdown (active policies) ────────────────────────────
+    # How many singles vs 2/3/4/5+ member families make up the book. Uses the
+    # active policies in the current filtered view, so carrier/state filters flow
+    # through; with no filter it's the whole book.
+    with st.container(border=True):
+        st.markdown(chart_head("Household Size", "Active policies by number of members on the plan", "users"),
+                    unsafe_allow_html=True)
+        _adf = df[df["status"].isin(active_sts)]
+        _sz = pd.to_numeric(_adf.get("applicant_count", pd.Series(dtype=float)), errors="coerce").fillna(1).astype(int).clip(lower=1)
+        if len(_sz):
+            _b = _sz.where(_sz < 6, 6)   # bucket 6+ together
+            _lbl = {1: "1 (single)", 2: "2", 3: "3", 4: "4", 5: "5", 6: "6+"}
+            _hh = (pd.DataFrame({"n": _b, "mem": _sz.values})
+                     .groupby("n").agg(Policies=("n", "size"), Members=("mem", "sum")).reset_index())
+            _hh["Size"] = _hh["n"].map(_lbl)
+            fig_hh = px.bar(_hh, x="Size", y="Policies", text="Policies")
+            fig_hh.update_traces(marker_color=ELEC, marker_cornerradius=6, textposition="outside",
+                                 hovertemplate="%{x} member(s): %{y} policies<extra></extra>")
+            fig_hh.update_layout(height=300, margin=dict(l=10, r=10, t=10, b=10),
+                                 paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                                 xaxis_title=None, yaxis_title=None, font_color="#cbd5e1")
+            fig_hh.update_yaxes(gridcolor="rgba(255,255,255,0.08)")
+            show_chart(fig_hh)
+            _hht = _hh[["Size", "Policies", "Members"]].copy()
+            _hht.loc[len(_hht)] = ["Total", int(_hht["Policies"].sum()), int(_hht["Members"].sum())]
+            st.dataframe(_hht, use_container_width=True, hide_index=True)
+        else:
+            st.caption("No active policies in the current view.")
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
     # Duplicate detection
     dup_mask = all_clients.duplicated(subset=["first_name", "last_name"], keep=False)
     dups = all_clients[dup_mask][["first_name", "last_name", "carrier", "state", "status", "effective_date"]].copy()
