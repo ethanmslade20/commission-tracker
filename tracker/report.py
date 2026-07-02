@@ -799,6 +799,22 @@ def run_report(settings: dict) -> None:
               f"({(follow_ups['Status'] == 'Open').sum()} open, "
               f"{(follow_ups['Status'] == 'Expired').sum()} expired)")
 
+    # AOR Defense: the scraped at-risk list merged with the book — split into
+    # Taken (another agent filed an AOR change — fight these) vs Disconnected
+    # (usually still ours; just needs a Reconnect). Texts on NEWLY-taken only.
+    aor_defense = None
+    try:
+        from tracker.aor_defense import build_aor_defense, alert_new_aor_changes
+        aor_defense = build_aor_defense()
+        if aor_defense is not None and not aor_defense.empty:
+            _t = int((aor_defense["Type"] == "Taken").sum())
+            _d = int((aor_defense["Type"] == "Disconnected").sum())
+            _open = int(((aor_defense["Type"] == "Taken") & (aor_defense["Handled"] == "")).sum())
+            print(f"  AOR Defense: {len(aor_defense)} at-risk ({_t} taken / {_d} disconnected · {_open} taken still open)")
+            alert_new_aor_changes(aor_defense)
+    except Exception as e:
+        print(f"  (AOR defense skipped: {e})")
+
     print("Pushing to Google Sheets...")
     update_sheet(
         sheet_url=sheet_url,
@@ -813,6 +829,7 @@ def run_report(settings: dict) -> None:
         commission_gaps_df=commission_gaps,
         ambetter_disputes_df=ambetter_disputes,
         follow_ups_df=follow_ups,
+        aor_defense_df=aor_defense,
     )
 
     # On a new HealthSherpa upload, text the agent the summary: new sales + who

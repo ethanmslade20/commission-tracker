@@ -633,6 +633,7 @@ def _nav_icon_css():
         "<rect x='2' y='7' width='20' height='14' rx='2'/><path d='M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16'/>",  # Book of Business (briefcase)
         "<line x1='12' y1='1' x2='12' y2='23'/><path d='M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6'/>",  # Commissions (dollar)
         "<circle cx='12' cy='12' r='10'/><line x1='12' y1='8' x2='12' y2='12'/><line x1='12' y1='16' x2='12.01' y2='16'/>",  # Money Owed (alert)
+        "<path d='M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2'/><circle cx='8.5' cy='7' r='4'/><line x1='18' y1='8' x2='23' y2='13'/><line x1='23' y1='8' x2='18' y2='13'/>",  # AOR Defense (user-x)
         "<circle cx='12' cy='12' r='10'/><circle cx='12' cy='12' r='6'/><circle cx='12' cy='12' r='2'/>",  # Goals (target)
         "<path d='M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2'/><circle cx='9' cy='7' r='4'/><path d='M23 21v-2a4 4 0 0 0-3-3.87'/><path d='M16 3.13a4 4 0 0 1 0 7.75'/>",  # Re-Engage (users)
         "<polyline points='23 4 23 10 17 10'/><polyline points='1 20 1 14 7 14'/><path d='M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15'/>",  # Re-Engage (Supp) (refresh)
@@ -1365,6 +1366,33 @@ def _gap_audit_from_sheet() -> dict:
     return out
 
 
+@st.cache_data(ttl=900)
+def _load_aor_defense() -> pd.DataFrame:
+    """The AOR-at-risk defense table. Local mode builds it live from the scraped
+    data/aor_at_risk.json + latest HealthSherpa export; cloud mode reads the
+    'AOR Defense' tab the report wrote."""
+    try:
+        from tracker.aor_defense import build_aor_defense, _RISK_PATH
+        if Path(_RISK_PATH).exists():
+            df = build_aor_defense()
+            if df is not None and not df.empty:
+                return df
+    except Exception:
+        pass
+    try:
+        ss = _gspread_client().open_by_url(st.secrets["sheet_url"])
+        v = ss.worksheet("AOR Defense").get_all_values()
+        if len(v) > 1:
+            df = pd.DataFrame(v[1:], columns=v[0])
+            for c in ("Members", "Est $/yr"):
+                if c in df.columns:
+                    df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0).astype(int)
+            return df
+    except Exception:
+        pass
+    return pd.DataFrame()
+
+
 @st.cache_data(ttl=1800)
 def _load_pastdue() -> pd.DataFrame:
     """Active health plans with a premium > $0 that are behind on payment
@@ -1759,7 +1787,7 @@ with st.sidebar:
     )
     st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 
-    _NAV = ["Dashboard", "Month-over-Month", "Daily Tracker", "Book of Business", "Commissions", "Money Owed", "Goals", "Re-Engage", "Re-Engage (Supp)", "Follow-ups", "AEP Tracker", "Settings"]
+    _NAV = ["Dashboard", "Month-over-Month", "Daily Tracker", "Book of Business", "Commissions", "Money Owed", "AOR Defense", "Goals", "Re-Engage", "Re-Engage (Supp)", "Follow-ups", "AEP Tracker", "Settings"]
     # Deep-link: a "?goto=Page" link (e.g. a Dashboard action card) selects that page.
     _goto = st.query_params.get("goto")
     if _goto in _NAV:
@@ -2966,6 +2994,67 @@ elif page == "Money Owed":
 
 
 
+
+# ══════════════════════════════════════════════════════════════════════════════
+# AOR DEFENSE
+# ══════════════════════════════════════════════════════════════════════════════
+elif page == "AOR Defense":
+    st.title("AOR Defense")
+    st.caption("Clients HealthSherpa flags as at risk of walking out the door. **Taken** = another "
+               "agent filed an Agent-of-Record change — call them, most don't know they were switched. "
+               "**Disconnected** = usually still yours — just click Reconnect in HealthSherpa to confirm.")
+    st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
+
+    _adf = _load_aor_defense()
+    if _adf is None or _adf.empty:
+        st.warning("No AOR-at-risk data yet. Ask Claude to re-pull the AOR list from HealthSherpa, "
+                   "then run the report.")
+    else:
+        _taken = _adf[_adf["Type"] == "Taken"]
+        _disc  = _adf[_adf["Type"] == "Disconnected"]
+        _open_taken = _taken[_taken["Handled"].fillna("") == ""]
+        _stake = int(pd.to_numeric(_open_taken["Est $/yr"], errors="coerce").fillna(0).sum())
+
+        k1, k2, k3, k4 = st.columns(4)
+        with k1:
+            st.markdown(stat_card("Taken by Another Agent", f"{len(_taken):,}", "minus", RED), unsafe_allow_html=True)
+        with k2:
+            st.markdown(stat_card("Still To Fight", f"{len(_open_taken):,}", "bell", GOLD), unsafe_allow_html=True)
+        with k3:
+            st.markdown(stat_card("Disconnected (reconnect)", f"{len(_disc):,}", "refresh", CYAN), unsafe_allow_html=True)
+        with k4:
+            st.markdown(stat_card("$/yr At Stake", f"${_stake:,}", "dollar", GREEN), unsafe_allow_html=True)
+
+        st.markdown("<br>", unsafe_allow_html=True)
+        _show_handled = st.toggle("Show handled clients", value=False)
+
+        _cols_taken = [c for c in ["Client", "Taken By", "Carrier", "State", "Members",
+                                   "Est $/yr", "Phone", "Policy Status", "Last Synced", "Handled"]
+                       if c in _adf.columns]
+        _cols_disc = [c for c in _cols_taken if c != "Taken By"]
+
+        with st.container(border=True):
+            st.markdown(chart_head("Taken — call these first",
+                                   "Another agent holds the AOR. Sorted by money at stake. "
+                                   "Script: “I saw your plan got moved to a different agent — did you mean to do that?”",
+                                   "minus"), unsafe_allow_html=True)
+            _t = _taken if _show_handled else _open_taken
+            st.dataframe(_t[_cols_taken], use_container_width=True, hide_index=True,
+                         height=min(46 + 35 * max(len(_t), 1), 560))
+
+        st.markdown("<br>", unsafe_allow_html=True)
+        with st.container(border=True):
+            st.markdown(chart_head("Disconnected — reconnect these",
+                                   "Usually still your clients. Open each in HealthSherpa and click Reconnect; "
+                                   "only worry if the reconnect shows another agent.",
+                                   "refresh"), unsafe_allow_html=True)
+            _d = _disc if _show_handled else _disc[_disc["Handled"].fillna("") == ""]
+            st.dataframe(_d[_cols_disc], use_container_width=True, hide_index=True,
+                         height=min(46 + 35 * max(len(_d), 1), 560))
+
+        st.caption("✅ Handled someone? Tell Claude (e.g. “won back Kayla Martinez” or “Sue Meyer is "
+                   "really gone”) and they'll drop off the open list. The list itself refreshes when "
+                   "Claude re-pulls HealthSherpa's AOR-at-risk tab.")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # GOALS
