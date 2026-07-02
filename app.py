@@ -3995,6 +3995,44 @@ elif page == "AEP Tracker":
 elif page == "Settings":
     st.title("Settings")
     st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+
+    # ── Data freshness: when each source was last pulled ─────────────────────
+    st.markdown(section_header("Data Freshness", "clock"), unsafe_allow_html=True)
+    st.markdown("When each data source was last pulled into the site.")
+    _fresh = pd.DataFrame()
+    try:
+        from tracker.freshness import build_freshness as _bf
+        _fresh = _bf()   # local: live file times
+    except Exception:
+        pass
+    if _fresh.empty:
+        try:   # cloud: the tab the report wrote
+            _ss = _gspread_client().open_by_url(st.secrets["sheet_url"])
+            _v = _ss.worksheet("Data Freshness").get_all_values()
+            if len(_v) > 1:
+                _fresh = pd.DataFrame(_v[1:], columns=_v[0])
+        except Exception:
+            pass
+    if not _fresh.empty:
+        def _age_icon(a):
+            a = str(a)
+            if a in ("today", "yesterday", "—"):
+                return "🟢 " + a
+            try:
+                d = int(a.split()[0])
+            except Exception:
+                return a
+            return ("🟢 " if d <= 3 else "🟡 " if d <= 7 else "🔴 ") + a
+        _fd = _fresh.drop(columns=["_days"], errors="ignore").copy()
+        _fd["Age"] = _fd["Age"].map(_age_icon)
+        st.dataframe(_fd, use_container_width=True, hide_index=True,
+                     height=46 + 35 * len(_fd))
+        st.caption("🟢 3 days or fresher · 🟡 up to a week · 🔴 stale — ask Claude to re-pull it. "
+                   "\"Website push\" is when the site's numbers were last refreshed.")
+    else:
+        st.caption("Freshness data appears after the next report run.")
+
+    st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
     st.markdown(section_header("Carrier Appointments", "gear"), unsafe_allow_html=True)
     st.markdown("Toggle the carriers you are appointed with in each state. Changes apply immediately to the dashboard.")
     st.markdown("<br>", unsafe_allow_html=True)

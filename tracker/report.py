@@ -815,6 +815,14 @@ def run_report(settings: dict) -> None:
     except Exception as e:
         print(f"  (AOR defense skipped: {e})")
 
+    # Data freshness — when each source file was last pulled (shown in Settings).
+    freshness = None
+    try:
+        from tracker.freshness import build_freshness
+        freshness = build_freshness()
+    except Exception as e:
+        print(f"  (freshness skipped: {e})")
+
     print("Pushing to Google Sheets...")
     update_sheet(
         sheet_url=sheet_url,
@@ -830,6 +838,7 @@ def run_report(settings: dict) -> None:
         ambetter_disputes_df=ambetter_disputes,
         follow_ups_df=follow_ups,
         aor_defense_df=aor_defense,
+        freshness_df=freshness,
     )
 
     # On a new HealthSherpa upload, text the agent the summary: new sales + who

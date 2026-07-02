@@ -785,6 +785,7 @@ def update_sheet(
     ambetter_disputes_df: Optional[pd.DataFrame] = None,
     follow_ups_df: Optional[pd.DataFrame] = None,
     aor_defense_df: Optional[pd.DataFrame] = None,
+    freshness_df: Optional[pd.DataFrame] = None,
 ) -> None:
     spreadsheet = _open_sheet(sheet_url, impersonation_target)
 
@@ -802,6 +803,7 @@ def update_sheet(
     disputes_title = tab_names.get("ambetter_disputes", "Ambetter Disputes")
     follow_ups_title = tab_names.get("follow_ups", "Follow-ups")
     aor_defense_title = tab_names.get("aor_defense", "AOR Defense")
+    freshness_title = tab_names.get("freshness", "Data Freshness")
     daily_detail_title = tab_names.get("daily_detail", "Daily Detail")
 
     # Daily tracker tabs — one per ingested month, all history included.
@@ -830,6 +832,9 @@ def update_sheet(
         all_titles |= {follow_ups_title}
     if _has_aor:
         all_titles |= {aor_defense_title}
+    _has_fresh = freshness_df is not None and not freshness_df.empty
+    if _has_fresh:
+        all_titles |= {freshness_title}
     _daily_detail = _build_daily_detail(months) if months else pd.DataFrame()
     _has_detail = not _daily_detail.empty
     if _has_detail:
@@ -918,6 +923,15 @@ def update_sheet(
             print(f"  Updated tab: {aor_defense_title} ({len(aor_defense_df)} rows)")
         except Exception as e:
             print(f"  Warning: AOR Defense write failed: {e}")
+
+    # ── Data Freshness tab (when each source file was last pulled) ────────────
+    if _has_fresh:
+        try:
+            fresh_ws = _ensure_tab(spreadsheet, freshness_title)
+            _write_tab(fresh_ws, freshness_df.drop(columns=["_days"], errors="ignore"))
+            print(f"  Updated tab: {freshness_title}")
+        except Exception as e:
+            print(f"  Warning: freshness write failed: {e}")
 
     # ── Daily Detail tab (per-policy submissions, for the chart drill-down) ───
     if _has_detail:
