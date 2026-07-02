@@ -371,7 +371,10 @@ def _upload_summary(all_clients, pastdue, snapshot_dir, today=None) -> None:
     h = hashlib.md5(Path(hs[-1]).read_bytes()).hexdigest()
     marker = _data / "last_upload_hash.txt"
     if marker.exists() and marker.read_text().strip() == h:
-        return  # same upload as last summary — don't re-text
+        # NEVER exit silently — a quiet return here is indistinguishable from a
+        # lost text (bit us twice when a ghost process consumed the marker).
+        print("  Upload summary: no new HealthSherpa upload since last text — nothing to send.")
+        return
 
     NPN = "21457938"
     def _is_e(v):
@@ -399,7 +402,10 @@ def _upload_summary(all_clients, pastdue, snapshot_dir, today=None) -> None:
         pid = re.sub(r"\.0$", "", str(r.get("ffm_app_id") or "").strip())
         if pid and pid.lower() != "nan":
             pol.add(pid)
-            polmem[pid] = int(pd.to_numeric(r.get("applicant_count"), errors="coerce") or 1)
+            # NaN is truthy, so `int(nan or 1)` raises ValueError and kills the
+            # whole summary — treat missing applicant_count as 1 explicitly.
+            _n = pd.to_numeric(r.get("applicant_count"), errors="coerce")
+            polmem[pid] = 1 if pd.isna(_n) else max(int(_n), 1)
 
     pdue = {}
     if pastdue is not None and not pastdue.empty:
@@ -428,14 +434,19 @@ def _upload_summary(all_clients, pastdue, snapshot_dir, today=None) -> None:
     new_pol_n = 0 if first_run else len(new_pol)
     new_mem = 0 if first_run else sum(polmem.get(p, 1) for p in new_pol)
 
-    # Save baselines + marker for next time.
-    (_data / "known_lapsed.json").write_text(json.dumps(lost, indent=2))
-    (_data / "known_aor.json").write_text(json.dumps(aor, indent=2))
-    (_data / "known_pastdue.json").write_text(json.dumps(pdue, indent=2))
-    (_data / "known_policies.json").write_text(json.dumps(sorted(pol), indent=2))
-    marker.write_text(h)
+    # State writes are deferred until the text is actually SENT (or knowingly
+    # skipped). Writing them first is how texts got lost: any crash or failed
+    # send after the marker write "consumed" the upload event, and the next
+    # run's gate stayed silent forever.
+    def _save_state():
+        (_data / "known_lapsed.json").write_text(json.dumps(lost, indent=2))
+        (_data / "known_aor.json").write_text(json.dumps(aor, indent=2))
+        (_data / "known_pastdue.json").write_text(json.dumps(pdue, indent=2))
+        (_data / "known_policies.json").write_text(json.dumps(sorted(pol), indent=2))
+        marker.write_text(h)
 
     if first_run:
+        _save_state()
         print("  Upload summary: baselines initialized (no text on first run).")
         return
 
@@ -467,15 +478,30 @@ def _upload_summary(all_clients, pastdue, snapshot_dir, today=None) -> None:
             enabled = c.get("upload_summary", c.get("lapse_alerts", True))
         except Exception:
             pass
-    if enabled and phone:
+
+    if not enabled or not phone:
+        # Deliberately not texting → the event is handled; advance state.
+        _save_state()
+        print("  (upload summary text disabled or no phone configured — not texted)")
+        return
+
+    import time as _time
+    sent = False
+    for attempt in (1, 2):
         try:
             from tracker.digest import send_imessage
             send_imessage(msg, phone)
-            print(f"  Upload summary texted to {phone}")
+            sent = True
+            break
         except Exception as e:
-            print(f"  (upload summary text failed: {e})")
-    elif not phone:
-        print("  (no phone configured — not texted)")
+            print(f"  !! upload summary text attempt {attempt} failed: {e}")
+            if attempt == 1:
+                _time.sleep(3)
+    if sent:
+        _save_state()
+        print(f"  Upload summary texted to {phone}")
+    else:
+        print("  !! TEXT NOT SENT — baselines/marker left unchanged, next report run will retry.")
 
 
 def run_report(settings: dict) -> None:
