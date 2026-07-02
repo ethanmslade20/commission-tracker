@@ -4001,8 +4001,13 @@ elif page == "Settings":
     st.markdown("When each data source was last pulled into the site.")
     _fresh = pd.DataFrame()
     try:
-        from tracker.freshness import build_freshness as _bf
-        _fresh = _bf()   # local: live file times
+        # Local mode only: build live from file mtimes — but only if the source
+        # files actually exist here. On Streamlit Cloud they don't (the repo has
+        # no data/input files), so fall through to the sheet tab instead of
+        # showing a wall of "never".
+        from tracker.freshness import build_freshness as _bf, _SOURCES as _fsrc
+        if any(Path(p).exists() for _, p in _fsrc):
+            _fresh = _bf()   # local: live file times
     except Exception:
         pass
     if _fresh.empty:
