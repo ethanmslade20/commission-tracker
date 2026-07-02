@@ -1384,7 +1384,7 @@ def _load_aor_defense() -> pd.DataFrame:
         v = ss.worksheet("AOR Defense").get_all_values()
         if len(v) > 1:
             df = pd.DataFrame(v[1:], columns=v[0])
-            for c in ("Members", "Est $/yr"):
+            for c in ("Members", "Est $/yr", "Days Ago"):
                 if c in df.columns:
                     df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0).astype(int)
             return df
@@ -3028,8 +3028,8 @@ elif page == "AOR Defense":
         st.markdown("<br>", unsafe_allow_html=True)
         _show_handled = st.toggle("Show handled clients", value=False)
 
-        _cols_taken = [c for c in ["Client", "Taken By", "Carrier", "State", "Members",
-                                   "Est $/yr", "Phone", "Policy Status", "Last Synced", "Handled"]
+        _cols_taken = [c for c in ["Client", "Taken By", "Detected", "Days Ago", "Carrier", "State",
+                                   "Members", "Est $/yr", "Phone", "Policy Status", "Handled"]
                        if c in _adf.columns]
         _cols_disc = [c for c in _cols_taken if c != "Taken By"]
 
@@ -3038,8 +3038,9 @@ elif page == "AOR Defense":
                                    "Another agent holds the AOR. Sorted by money at stake. "
                                    "Script: “I saw your plan got moved to a different agent — did you mean to do that?”",
                                    "minus"), unsafe_allow_html=True)
-            _t = _taken if _show_handled else _open_taken
-            st.dataframe(_t[_cols_taken], use_container_width=True, hide_index=True,
+            _t = (_taken if _show_handled else _open_taken)[_cols_taken]
+            _t = _t.rename(columns={"Detected": "Taken On"})
+            st.dataframe(_t, use_container_width=True, hide_index=True,
                          height=min(46 + 35 * max(len(_t), 1), 560))
 
         st.markdown("<br>", unsafe_allow_html=True)
@@ -3048,8 +3049,9 @@ elif page == "AOR Defense":
                                    "Usually still your clients. Open each in HealthSherpa and click Reconnect; "
                                    "only worry if the reconnect shows another agent.",
                                    "refresh"), unsafe_allow_html=True)
-            _d = _disc if _show_handled else _disc[_disc["Handled"].fillna("") == ""]
-            st.dataframe(_d[_cols_disc], use_container_width=True, hide_index=True,
+            _d = (_disc if _show_handled else _disc[_disc["Handled"].fillna("") == ""])[_cols_disc]
+            _d = _d.rename(columns={"Detected": "Disconnected On"})
+            st.dataframe(_d, use_container_width=True, hide_index=True,
                          height=min(46 + 35 * max(len(_d), 1), 560))
 
         st.caption("✅ Handled someone? Tell Claude (e.g. “won back Kayla Martinez” or “Sue Meyer is "

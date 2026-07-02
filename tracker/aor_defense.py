@@ -75,17 +75,21 @@ def build_aor_defense(risk_path=_RISK_PATH, hs_path=_HS_PATH, handled_path=_HAND
             members = int(pd.to_numeric(m.get("applicant_count"), errors="coerce") or 1)
 
         h = handled.get(xid, {})
+        # When it happened: the HealthSherpa sync date that detected the change —
+        # the closest thing to "day they were taken" (clusters on the real dates).
+        ts = pd.to_datetime(r.get("last_synced", ""), errors="coerce")
         rows.append({
             "Client": r.get("name", ""),
             "Type": kind,
             "Taken By": taken_by,
+            "Detected": ts.strftime("%b %d, %Y") if pd.notna(ts) else "",
+            "Days Ago": int((pd.Timestamp.today().normalize() - ts).days) if pd.notna(ts) else None,
             "Carrier": carrier,
             "State": state,
             "Members": members,
             "Est $/yr": round(members * _PMPM * 12),
             "Phone": phone,
             "Policy Status": status,
-            "Last Synced": r.get("last_synced", ""),
             "Handled": h.get("outcome", ""),
             "Exchange ID": xid,
         })
