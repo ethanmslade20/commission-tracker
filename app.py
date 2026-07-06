@@ -1832,6 +1832,32 @@ with st.sidebar:
 # ══════════════════════════════════════════════════════════════════════════════
 # OVERVIEW
 # ══════════════════════════════════════════════════════════════════════════════
+# ── Global client finder — every page, top-right under the toolbar ───────────
+def _jump_to_client():
+    _v = st.session_state.get("global_lookup")
+    if _v:
+        st.session_state["nav"] = "Client Lookup"      # switch pages
+        st.session_state["lookup_select"] = _v         # preselect the client
+        st.session_state["global_lookup"] = None       # reset the finder
+
+_gl_names = sorted({p for p in ((all_clients["first_name"].fillna("").astype(str).str.title().str.strip()
+                                 + " " +
+                                 all_clients["last_name"].fillna("").astype(str).str.title().str.strip())
+                                .str.strip()) if p})
+if page != "Client Lookup":   # the lookup page has its own big search box
+    _gl_sp, _gl_box = st.columns([5, 2])
+    with _gl_box:
+        with st.container(key="global_finder"):
+            st.selectbox("Find client", _gl_names, index=None, key="global_lookup",
+                         on_change=_jump_to_client, label_visibility="collapsed",
+                         placeholder="🔎 Find a client…")
+    st.markdown("""<style>
+      .st-key-global_finder div[data-baseweb="select"] > div {
+          font-size:.85rem; border-radius:10px;
+          background:rgba(15,23,42,.55); border:1px solid rgba(148,163,184,.28);}
+      .st-key-global_finder div[data-baseweb="select"] svg {width:16px;height:16px;}
+    </style>""", unsafe_allow_html=True)
+
 if page == "Dashboard":
     # ── Header ────────────────────────────────────────────────────────────────
     _cal_svg = ('<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/>'
@@ -2613,32 +2639,28 @@ elif page == "Client Lookup":
     import re as _re
 
     st.title("Client Lookup")
-    st.caption("Type a name (or phone digits) — everything about that client on one card.")
-    q = st.text_input("Search", placeholder="e.g. Brittney Redd — or 9016284116",
-                      label_visibility="collapsed")
+    st.caption("Start typing — the list narrows with every letter. Pick a client to open their profile.")
 
-    if not q or len(q.strip()) < 2:
-        st.info("🔎 Start typing a first name, last name, or phone number.")
+    _people_all = (all_clients["first_name"].fillna("").astype(str).str.title().str.strip() + " " +
+                   all_clients["last_name"].fillna("").astype(str).str.title().str.strip()).str.strip()
+    _names = sorted({p for p in _people_all if p})
+    with st.container(key="lookup_hero"):
+        person = st.selectbox("Find a client", _names, index=None, key="lookup_select",
+                              placeholder="🔎  Type a name…  (e.g. “br” → every Brandon, Brittney, Bryan…)",
+                              label_visibility="collapsed")
+    st.markdown("""<style>
+      .st-key-lookup_hero {max-width:620px;}
+      .st-key-lookup_hero div[data-baseweb="select"] > div {
+          font-size:1.08rem; padding:8px 12px; border-radius:14px;
+          background:rgba(15,23,42,.65); border:1.5px solid rgba(96,165,250,.4);
+          box-shadow:0 6px 22px rgba(0,0,0,.3);}
+    </style>""", unsafe_allow_html=True)
+
+    if not person:
+        st.info("🔎 Pick a client to see everything — policies, payments, contact, and alerts.")
     else:
-        qq = q.strip().lower()
-        qd = _re.sub(r"\D", "", q)
-        _full = (all_clients["first_name"].fillna("") + " " +
-                 all_clients["last_name"].fillna("")).str.lower()
-        mask = _full.str.contains(_re.escape(qq), na=False)
-        if len(qd) >= 4 and "phone" in all_clients.columns:
-            mask |= (all_clients["phone"].fillna("").astype(str)
-                     .str.replace(r"\D", "", regex=True).str.contains(qd, na=False))
-        hits = all_clients[mask].copy()
-
-        if hits.empty:
-            st.warning(f"No client matching “{q}”. Try fewer letters — search matches partial names.")
-        else:
-            hits["_person"] = (hits["first_name"].fillna("").astype(str).str.title().str.strip() + " " +
-                               hits["last_name"].fillna("").astype(str).str.title().str.strip()).str.strip()
-            people = sorted(hits["_person"].unique().tolist())
-            person = people[0] if len(people) == 1 else st.selectbox(
-                f"{len(people)} clients match — pick one", people)
-            rows = hits[hits["_person"] == person].copy()
+        rows = all_clients[_people_all == person].copy()
+        if len(rows):
             rows["_eff"] = pd.to_datetime(rows["effective_date"], errors="coerce")
             rows = rows.sort_values("_eff", ascending=False)
             r = rows.iloc[0]   # newest policy is the headline
