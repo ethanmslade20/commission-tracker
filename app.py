@@ -628,6 +628,7 @@ def _nav_icon_css():
     # order MUST match the st.radio options below
     nav = [
         "<rect x='3' y='3' width='7' height='7'/><rect x='14' y='3' width='7' height='7'/><rect x='14' y='14' width='7' height='7'/><rect x='3' y='14' width='7' height='7'/>",  # Dashboard (grid)
+        "<circle cx='11' cy='11' r='8'/><line x1='21' y1='21' x2='16.65' y2='16.65'/>",  # Client Lookup (magnifier)
         "<polyline points='23 6 13.5 15.5 8.5 10.5 1 18'/><polyline points='17 6 23 6 23 12'/>",  # Month-over-Month (trend)
         "<rect x='3' y='4' width='18' height='18' rx='2'/><line x1='16' y1='2' x2='16' y2='6'/><line x1='8' y1='2' x2='8' y2='6'/><line x1='3' y1='10' x2='21' y2='10'/>",  # Daily Tracker (calendar)
         "<rect x='2' y='7' width='20' height='14' rx='2'/><path d='M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16'/>",  # Book of Business (briefcase)
@@ -1791,7 +1792,7 @@ with st.sidebar:
     )
     st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 
-    _NAV = ["Dashboard", "Month-over-Month", "Daily Tracker", "Book of Business", "Commissions", "Money Owed", "AOR Defense", "Goals", "Re-Engage", "Re-Engage (Supp)", "Follow-ups", "AEP Tracker", "Settings"]
+    _NAV = ["Dashboard", "Client Lookup", "Month-over-Month", "Daily Tracker", "Book of Business", "Commissions", "Money Owed", "AOR Defense", "Goals", "Re-Engage", "Re-Engage (Supp)", "Follow-ups", "AEP Tracker", "Settings"]
     # Deep-link: a "?goto=Page" link (e.g. a Dashboard action card) selects that page.
     _goto = st.query_params.get("goto")
     if _goto in _NAV:
@@ -2604,6 +2605,176 @@ elif page == "Book of Business":
             },
         )
 
+
+# ══════════════════════════════════════════════════════════════════════════════
+# CLIENT LOOKUP
+# ══════════════════════════════════════════════════════════════════════════════
+elif page == "Client Lookup":
+    import re as _re
+
+    st.title("Client Lookup")
+    st.caption("Type a name (or phone digits) — everything about that client on one card.")
+    q = st.text_input("Search", placeholder="e.g. Brittney Redd — or 9016284116",
+                      label_visibility="collapsed")
+
+    if not q or len(q.strip()) < 2:
+        st.info("🔎 Start typing a first name, last name, or phone number.")
+    else:
+        qq = q.strip().lower()
+        qd = _re.sub(r"\D", "", q)
+        _full = (all_clients["first_name"].fillna("") + " " +
+                 all_clients["last_name"].fillna("")).str.lower()
+        mask = _full.str.contains(_re.escape(qq), na=False)
+        if len(qd) >= 4 and "phone" in all_clients.columns:
+            mask |= (all_clients["phone"].fillna("").astype(str)
+                     .str.replace(r"\D", "", regex=True).str.contains(qd, na=False))
+        hits = all_clients[mask].copy()
+
+        if hits.empty:
+            st.warning(f"No client matching “{q}”. Try fewer letters — search matches partial names.")
+        else:
+            hits["_person"] = (hits["first_name"].fillna("").astype(str).str.title().str.strip() + " " +
+                               hits["last_name"].fillna("").astype(str).str.title().str.strip()).str.strip()
+            people = sorted(hits["_person"].unique().tolist())
+            person = people[0] if len(people) == 1 else st.selectbox(
+                f"{len(people)} clients match — pick one", people)
+            rows = hits[hits["_person"] == person].copy()
+            rows["_eff"] = pd.to_datetime(rows["effective_date"], errors="coerce")
+            rows = rows.sort_values("_eff", ascending=False)
+            r = rows.iloc[0]   # newest policy is the headline
+
+            _ACTIVE = {"Effectuated", "PendingEffectuation", "PendingFollowups"}
+            is_active = r.get("status") in _ACTIVE
+            _mem = int(pd.to_numeric(r.get("applicant_count"), errors="coerce") or 1)
+
+            # ── Header ────────────────────────────────────────────────────────
+            _pill_bg, _pill_tx = (("rgba(34,197,94,.15)", "#4ade80") if is_active
+                                  else ("rgba(239,68,68,.15)", "#f87171"))
+            st.markdown(
+                f"<div style='display:flex;align-items:center;gap:14px;margin:6px 0 2px;'>"
+                f"<span style='font-size:1.6rem;font-weight:800;color:#f8fafc;'>{person}</span>"
+                f"<span style='background:{_pill_bg};color:{_pill_tx};padding:3px 12px;border-radius:999px;"
+                f"font-size:.8rem;font-weight:700;'>{r.get('status','?')}</span></div>"
+                f"<div style='color:#94a3b8;font-size:.95rem;margin-bottom:10px;'>"
+                f"{r.get('carrier','—')} · {r.get('state','—')}</div>",
+                unsafe_allow_html=True)
+
+            # ── Agent-of-record banner ────────────────────────────────────────
+            _aor = str(r.get("policy_aor") or "")
+            _mine = ("21457938" in _aor) or ("ethan" in _aor.lower() and "slade" in _aor.lower())
+            if _aor.strip().lower() in ("", "none", "nan"):
+                st.caption("Agent of record: not recorded (usually fine — carrier book shows you).")
+            elif _mine:
+                st.success("✓ You are the agent of record.", icon="🛡️")
+            else:
+                _who = _re.sub(r"\s*\(NPN.*\)", "", _aor).strip().title()
+                st.error(f"⚠️ Agent of record is **{_who}** — this client is on your AOR Defense page.",
+                         icon="🚨")
+
+            # ── Stat cards ────────────────────────────────────────────────────
+            _prem = pd.to_numeric(r.get("net_premium"), errors="coerce")
+            _mob = pd.to_numeric(r.get("months_on_book"), errors="coerce")
+            k1, k2, k3, k4 = st.columns(4)
+            with k1:
+                st.markdown(stat_card("Members", f"{_mem}", "users", CYAN), unsafe_allow_html=True)
+            with k2:
+                st.markdown(stat_card("Net Premium / Mo",
+                                      f"${_prem:,.0f}" if pd.notna(_prem) else "—",
+                                      "dollar", GREEN), unsafe_allow_html=True)
+            with k3:
+                st.markdown(stat_card("Months on Book",
+                                      f"{int(_mob)}" if pd.notna(_mob) else "—",
+                                      "calendar", ELEC), unsafe_allow_html=True)
+            with k4:
+                st.markdown(stat_card("Est Commission / Yr",
+                                      f"${_mem * 23 * 12:,.0f}" if is_active else "$0",
+                                      "trend", GOLD), unsafe_allow_html=True)
+
+            # ── Contact ───────────────────────────────────────────────────────
+            _ph = _re.sub(r"\D", "", str(r.get("phone") or ""))
+            _ph_fmt = f"({_ph[:3]}) {_ph[3:6]}-{_ph[6:10]}" if len(_ph) >= 10 else (_ph or "—")
+            _em = str(r.get("email") or "").strip() or "—"
+            c1, c2 = st.columns(2)
+            with c1:
+                st.markdown(f"**📞 Phone:** {_ph_fmt}")
+            with c2:
+                st.markdown(f"**✉️ Email:** {_em}")
+
+            # ── Why they left (if churned) ────────────────────────────────────
+            _reason = str(r.get("cancel_reason") or "").strip()
+            if not is_active and _reason:
+                st.warning(f"**Why they left:** {_reason}", icon="📋")
+
+            # ── Verification flags ────────────────────────────────────────────
+            _dmi = int(pd.to_numeric(r.get("dmi_outstanding"), errors="coerce") or 0)
+            _svi = int(pd.to_numeric(r.get("svi_outstanding"), errors="coerce") or 0)
+            if _dmi or _svi:
+                st.warning(f"📎 Outstanding verification docs: {_dmi} DMI, {_svi} SVI — "
+                           "their subsidy is at risk until submitted (see Follow-ups).", icon="⚠️")
+
+            # ── Policies (history) ────────────────────────────────────────────
+            with st.container(border=True):
+                st.markdown(chart_head("Policies", f"{len(rows)} on record for {person}", "file"),
+                            unsafe_allow_html=True)
+                _pc = [c for c in ["carrier", "status", "effective_date", "term_date",
+                                   "net_premium", "applicant_count", "cancel_reason"] if c in rows.columns]
+                _pt = rows[_pc].rename(columns={
+                    "carrier": "Carrier", "status": "Status", "effective_date": "Effective",
+                    "term_date": "Term Date", "net_premium": "Premium",
+                    "applicant_count": "Members", "cancel_reason": "Why Ended"})
+                st.dataframe(_pt, use_container_width=True, hide_index=True,
+                             column_config={
+                                 "Effective": st.column_config.DateColumn("Effective", format="MMM D, YYYY"),
+                                 "Term Date": st.column_config.DateColumn("Term Date", format="MMM D, YYYY"),
+                             })
+
+            # ── Payment history (commissions received for this client) ───────
+            with st.container(border=True):
+                st.markdown(chart_head("Commission Payments",
+                                       "What carriers have paid YOU for this client", "dollar"),
+                            unsafe_allow_html=True)
+                pay = _load_payments()
+                if pay is None or pay.empty:
+                    st.caption("Payments sheet not available.")
+                else:
+                    def _norm_name(s):
+                        return _re.sub(r"[^a-z]", "", str(s).lower())
+                    _fn = _norm_name(r.get("first_name")); _ln = _norm_name(r.get("last_name"))
+                    _keys = {_fn + _ln, _ln + _fn}
+                    _pm = pay[pay["member"].map(_norm_name).isin(_keys)
+                              | pay["member"].map(_norm_name).str.replace(",", "").isin(_keys)]
+                    if _pm.empty:
+                        st.caption("No commission payments found under this client's name — "
+                                   "if they're active and 2+ months in, check Money Owed.")
+                    else:
+                        _pm = _pm.copy()
+                        _pm["Month"] = pd.to_datetime(_pm["payment_month"], errors="coerce").dt.strftime("%b %Y")
+                        _amt = pd.to_numeric(_pm["amount"], errors="coerce").fillna(0)
+                        s1, s2, s3 = st.columns(3)
+                        with s1:
+                            st.markdown(stat_card("Total Paid to You", f"${_amt.sum():,.2f}", "dollar", GREEN),
+                                        unsafe_allow_html=True)
+                        with s2:
+                            st.markdown(stat_card("Payments", f"{len(_pm)}", "file", CYAN),
+                                        unsafe_allow_html=True)
+                        with s3:
+                            _last = pd.to_datetime(_pm["payment_month"], errors="coerce").max()
+                            st.markdown(stat_card("Last Paid",
+                                                  _last.strftime("%b %Y") if pd.notna(_last) else "—",
+                                                  "calendar", ELEC), unsafe_allow_html=True)
+                        _pv = _pm[["Month", "carrier", "amount"]].rename(
+                            columns={"carrier": "Carrier", "amount": "Amount"})
+                        st.dataframe(_pv, use_container_width=True, hide_index=True,
+                                     height=min(46 + 35 * len(_pv), 320))
+
+            # ── Supplemental coverage ─────────────────────────────────────────
+            _supp = dd.get("supp_df")
+            if _supp is not None and not getattr(_supp, "empty", True):
+                _en = _attach_supplemental(rows.head(1), _supp)
+                _sp = str(_en["_supp_products"].iloc[0] or "").strip()
+                if _sp:
+                    st.markdown(f"**🦷 Supplemental:** {_sp} — ${_en['_supp_premium'].iloc[0]}/mo "
+                                f"({_en['_supp_status'].iloc[0]})")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # COMMISSIONS
