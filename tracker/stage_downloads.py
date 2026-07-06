@@ -50,12 +50,25 @@ def _text(msg):
 
 
 def _newest(pattern):
+    # Skip files younger than _MIN_AGE_S (browser may still be writing).
+    # launchd fires instantly on appearance — too early for a fresh download —
+    # so the plist ALSO runs this every 2 min (StartInterval) as a sweeper.
+    # (Sleeping here doesn't work: launchd kills the sleeping child.)
     files = [p for p in _DL.glob(pattern)
              if time.time() - p.stat().st_mtime > _MIN_AGE_S]
     return max(files, key=lambda p: p.stat().st_mtime) if files else None
 
 
 def main():
+    # macOS TCC: launchd jobs need Full Disk Access (System Settings) to read
+    # ~/Downloads. Without it, log the denial loudly instead of silently seeing
+    # an empty folder (root cause of the 2026-07-06 sweeper mystery).
+    try:
+        next(_DL.iterdir(), None)
+    except PermissionError:
+        _log("!! BLOCKED: no permission to read ~/Downloads — grant Full Disk "
+             "Access to Python in System Settings > Privacy & Security.")
+        return
     state = {}
     if _STATE.exists():
         try:

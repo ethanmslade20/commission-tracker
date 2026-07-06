@@ -1,4 +1,4 @@
 #!/bin/bash
-# Triggered by launchd whenever ~/Downloads changes — stages recognized exports.
+# Runs on ~/Downloads changes (WatchPaths) AND every 2 min (StartInterval sweeper).
 cd /Users/ethanslade/commission-tracker || exit 1
 /Users/ethanslade/commission-tracker/.venv/bin/python -m tracker.stage_downloads
