@@ -396,8 +396,11 @@ def _upload_summary(all_clients, pastdue, snapshot_dir, today=None) -> None:
         if st in ("Cancelled", "Terminated"):
             lost[k] = _disp(f, l)
         if st in ("Effectuated", "PendingEffectuation", "PendingFollowups"):
-            a = str(r.get("policy_aor") or "")
-            if a.strip() not in ("", "None") and NPN not in a and not _is_e(a):
+            _a = r.get("policy_aor")
+            a = "" if pd.isna(_a) else str(_a)
+            # A missing AOR is unknown, NOT another agent — "nan"/"none" text
+            # slipping through here caused false "taken" alerts (2026-07-06).
+            if a.strip().lower() not in ("", "none", "nan") and NPN not in a and not _is_e(a):
                 aor[k] = _disp(f, l)
         pid = re.sub(r"\.0$", "", str(r.get("ffm_app_id") or "").strip())
         if pid and pid.lower() != "nan":

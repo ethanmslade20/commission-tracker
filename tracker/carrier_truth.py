@@ -160,6 +160,11 @@ def apply_ambetter_truth(all_clients: pd.DataFrame,
             "applicant_count": pd.to_numeric(r.get("Number of Members"), errors="coerce"),
             "months_on_book": _months_on_book(eff, today),
             "broker_effective_date": r["bed"],
+            # Book rows are by definition under the broker's own NPN. Leaving
+            # policy_aor blank stringifies to "nan" downstream, which the AOR
+            # detectors read as a FOREIGN agent → false "taken by another
+            # agent" alerts (Redd kids, 2026-07-06).
+            "policy_aor": f"{r.get('Broker Name', 'Ethan Slade')} (NPN: {r.get('Broker NPN', '21457938')})",
         })
 
     # Stamp the broker-of-record date onto existing Ambetter rows (true tenure
