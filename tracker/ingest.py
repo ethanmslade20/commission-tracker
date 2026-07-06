@@ -363,6 +363,19 @@ def ingest_file(
 
     cfg = source_configs[source]
     df = _read_csv(csv_path, cfg)
+
+    # Fail with a human message, not a KeyError, when the file isn't the export
+    # we expect (wrong download, changed format, partial file).
+    if source == "healthsherpa":
+        _required = {"first_name", "last_name", "policy_status", "effective_date", "policy_aor"}
+        _missing = _required - set(df.columns)
+        if _missing:
+            raise SystemExit(
+                f"!! {csv_path.name} doesn't look like a HealthSherpa client export — "
+                f"missing columns: {', '.join(sorted(_missing))}.\n"
+                f"   Re-export from Clients → Export (Date Range: Custom 01/01/2025 → today, "
+                f"both checkboxes) and try again. Nothing was ingested.")
+
     df = normalize_dataframe(df, source, source_configs, full_config=full_config)
 
     if month is None:

@@ -508,6 +508,23 @@ def _upload_summary(all_clients, pastdue, snapshot_dir, today=None) -> None:
 
 
 def run_report(settings: dict) -> None:
+    # ONE report at a time, process-wide. Concurrent runs (launchd watcher vs a
+    # manual run) once raced on the upload-summary marker and silently ate the
+    # text alert (the "ghost process", Jun 29). Non-blocking lock: second caller
+    # prints and exits instead of double-writing the sheet.
+    import fcntl
+    _lock_path = Path(__file__).resolve().parent.parent / "data" / ".report.lock"
+    _lock_path.parent.mkdir(parents=True, exist_ok=True)
+    _lock_f = open(_lock_path, "w")
+    try:
+        fcntl.flock(_lock_f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        print("!! Another report run is already in progress — skipping this one "
+              "(it would race on the sheet + alert baselines). Try again in ~3 min.")
+        return
+    _lock_f.write(str(pd.Timestamp.now()))
+    _lock_f.flush()
+
     snapshot_dir = Path(settings["snapshot_dir"])
     months = load_all_snapshots(snapshot_dir)
 
@@ -567,26 +584,36 @@ def run_report(settings: dict) -> None:
     # built from `months` separately, so sale timing stays HealthSherpa-driven.
     from tracker.carrier_truth import (apply_ambetter_truth, apply_oscar_truth,
                                         apply_uhc_truth, apply_anthem_truth)
-    all_clients, _amb = apply_ambetter_truth(all_clients)
-    if _amb.get("applied"):
-        print(f"  Ambetter portal truth: +{_amb['added_from_portal']} added, "
-              f"{_amb['cancelled_termed'] + _amb['cancelled_dropped']} marked cancelled "
-              f"({_amb['protected_new_sales']} new sales protected)")
-    all_clients, _osc = apply_oscar_truth(all_clients)
-    if _osc.get("applied"):
-        print(f"  Oscar portal truth: +{_osc['added_from_portal']} added, "
-              f"{_osc['cancelled_inactive'] + _osc['cancelled_dropped']} marked cancelled "
-              f"({_osc['protected_new_sales']} new sales protected)")
-    all_clients, _uhc = apply_uhc_truth(all_clients)
-    if _uhc.get("applied"):
-        print(f"  UHC portal truth: +{_uhc['added_policies']} added, "
-              f"{_uhc['cancelled_lapsed'] + _uhc['cancelled_dropped']} marked cancelled "
-              f"({_uhc['protected_new_sales']} new sales protected)")
-    all_clients, _ant = apply_anthem_truth(all_clients)
-    if _ant.get("applied"):
-        print(f"  Anthem portal truth: +{_ant['added_policies']} added, "
-              f"{_ant['cancelled_lapsed'] + _ant['cancelled_dropped']} marked cancelled "
-              f"({_ant['protected_new_sales']} new sales protected)")
+
+    # A malformed carrier file (changed export format, wrong download) must
+    # never kill the whole report — skip that carrier loudly and keep going.
+    def _apply_truth(fn, label, fmt):
+        nonlocal all_clients
+        try:
+            all_clients, _s = fn(all_clients)
+            if _s.get("applied"):
+                print(f"  {label} portal truth: " + fmt(_s))
+        except Exception as e:
+            print(f"  !! {label} book SKIPPED — {type(e).__name__}: {e}")
+            print(f"     Check carrier_books/ for a bad/changed {label} export; "
+                  f"book statuses for {label} were left as-is this run.")
+
+    _apply_truth(apply_ambetter_truth, "Ambetter",
+                 lambda s: f"+{s['added_from_portal']} added, "
+                           f"{s['cancelled_termed'] + s['cancelled_dropped']} marked cancelled "
+                           f"({s['protected_new_sales']} new sales protected)")
+    _apply_truth(apply_oscar_truth, "Oscar",
+                 lambda s: f"+{s['added_from_portal']} added, "
+                           f"{s['cancelled_inactive'] + s['cancelled_dropped']} marked cancelled "
+                           f"({s['protected_new_sales']} new sales protected)")
+    _apply_truth(apply_uhc_truth, "UHC",
+                 lambda s: f"+{s['added_policies']} added, "
+                           f"{s['cancelled_lapsed'] + s['cancelled_dropped']} marked cancelled "
+                           f"({s['protected_new_sales']} new sales protected)")
+    _apply_truth(apply_anthem_truth, "Anthem",
+                 lambda s: f"+{s['added_policies']} added, "
+                           f"{s['cancelled_lapsed'] + s['cancelled_dropped']} marked cancelled "
+                           f"({s['protected_new_sales']} new sales protected)")
 
     # HealthSherpa verification truth: an EXPIRED DMI/SVI follow-up means the
     # subsidy / eligibility is lost, so the client is effectively gone. Mark them
