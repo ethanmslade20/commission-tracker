@@ -1384,9 +1384,13 @@ def _load_aor_defense() -> pd.DataFrame:
         v = ss.worksheet("AOR Defense").get_all_values()
         if len(v) > 1:
             df = pd.DataFrame(v[1:], columns=v[0])
-            for c in ("Members", "Est $/yr", "Days Ago"):
+            for c in ("Members", "Est $/yr"):
                 if c in df.columns:
                     df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0).astype(int)
+            if "Days Ago" in df.columns:
+                # Unknown taken-dates stay blank (Int64 keeps NaN) — filling 0
+                # would float them above genuinely fresh steals in the sort.
+                df["Days Ago"] = pd.to_numeric(df["Days Ago"], errors="coerce").astype("Int64")
             return df
     except Exception:
         pass
@@ -3035,10 +3039,12 @@ elif page == "AOR Defense":
 
         with st.container(border=True):
             st.markdown(chart_head("Taken — call these first",
-                                   "Another agent holds the AOR. Sorted by money at stake. "
+                                   "Another agent holds the AOR. Newest steals first — freshest are the most winnable. "
                                    "Script: “I saw your plan got moved to a different agent — did you mean to do that?”",
                                    "minus"), unsafe_allow_html=True)
             _t = (_taken if _show_handled else _open_taken)[_cols_taken]
+            if "Days Ago" in _t.columns:
+                _t = _t.sort_values("Days Ago", ascending=True, na_position="last")
             _t = _t.rename(columns={"Detected": "Taken On"})
             st.dataframe(_t, use_container_width=True, hide_index=True,
                          height=min(46 + 35 * max(len(_t), 1), 560))

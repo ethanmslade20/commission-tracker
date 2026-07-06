@@ -59,10 +59,14 @@ def build_aor_defense(risk_path=_RISK_PATH, hs_path=_HS_PATH, handled_path=_HAND
     # truth applied). It catches steals HealthSherpa's at-risk tab hasn't listed
     # yet, and clients whose policies vanished from the current export once the
     # steal completed (Tammy, Maurice). Union in anyone the scrape didn't have.
-    scraped_names = {re.sub(r"[^a-z]", "", str(r.get("name", "")).lower()) for r in risk}
+    def _fl_key(name):
+        # first + last token only, so "Christopher Cody Lokey" == "Christopher Lokey"
+        p = str(name).split()
+        return re.sub(r"[^a-z]", "", (p[0] + p[-1]).lower()) if p else ""
+    scraped_names = {_fl_key(r.get("name", "")) for r in risk}
     known_aor = _load_json(_ROOT / "data" / "known_aor.json", {})
     for k, disp in known_aor.items():
-        if re.sub(r"[^a-z]", "", str(disp).lower()) in scraped_names:
+        if _fl_key(disp) in scraped_names:
             continue
         entry = {"name": disp, "exchange_id": "", "type": "changed", "last_synced": ""}
         if len(hs):
@@ -132,10 +136,12 @@ def build_aor_defense(risk_path=_RISK_PATH, hs_path=_HS_PATH, handled_path=_HAND
         })
 
     df = pd.DataFrame(rows)
-    # Fires first: taken, unhandled, most money at stake, most recent.
+    # Fires first: taken, unhandled, NEWEST steal first (freshest = most
+    # winnable). Unknown dates sink to the bottom, never masquerade as day 0.
     df["_open"] = (df["Handled"] == "").astype(int)
     df["_taken"] = (df["Type"] == "Taken").astype(int)
-    df = (df.sort_values(["_taken", "_open", "Est $/yr"], ascending=[False, False, False])
+    df = (df.sort_values(["_taken", "_open", "Days Ago", "Est $/yr"],
+                         ascending=[False, False, True, False], na_position="last")
             .drop(columns=["_open", "_taken"]).reset_index(drop=True))
     return df
 
