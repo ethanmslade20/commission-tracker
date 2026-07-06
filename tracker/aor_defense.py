@@ -29,7 +29,9 @@ _HS_PATH = _ROOT / "input" / "healthsherpa.csv"
 # Blended per-member commission (net ÷ member-months across carriers ≈ $22-23).
 _PMPM = 23.0
 
-_ETHAN_NPN = "21457938"
+from tracker.config import get_agent
+_AGENT = get_agent()
+_ETHAN_NPN = _AGENT["npn"]
 
 
 def _load_json(path, default):
@@ -78,7 +80,7 @@ def build_aor_defense(risk_path=_RISK_PATH, hs_path=_HS_PATH, handled_path=_HAND
             if len(m):
                 a = m["policy_aor"].fillna("").astype(str)
                 foreign = m[a.str.strip().ne("") & ~a.str.contains("None")
-                            & ~a.str.contains(_ETHAN_NPN) & ~a.str.contains("Slade", case=False)]
+                            & ~a.str.contains(_ETHAN_NPN) & ~a.str.contains(_AGENT["last_name"], case=False)]
                 row = (foreign.iloc[0] if len(foreign) else m.iloc[-1])
                 entry.update({
                     "exchange_id": str(row.get("ffm_app_id", "")).strip(),
@@ -107,7 +109,7 @@ def build_aor_defense(risk_path=_RISK_PATH, hs_path=_HS_PATH, handled_path=_HAND
         phone = status = ""
         if m is not None:
             aor = str(m.get("policy_aor", ""))
-            if aor.strip() and _ETHAN_NPN not in aor and "slade" not in aor.lower():
+            if aor.strip() and _ETHAN_NPN not in aor and _AGENT["last_name"].lower() not in aor.lower():
                 taken_by = re.sub(r"\s*\(NPN.*\)", "", aor).strip().title()
             carrier = str(m.get("issuer", ""))[:34]
             state = str(m.get("state", ""))

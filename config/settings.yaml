@@ -28,3 +28,12 @@ tabs:
   ambetter_disputes: "Ambetter Disputes"
   follow_ups:        "Follow-ups"
   daily_detail:      "Daily Detail"
+
+# The agent this tracker is configured for. Code must read these via
+# tracker.config.get_agent() — never hardcode name/NPN in logic (product prep:
+# a different agent should only ever need to edit this block + the sheet URLs).
+agent:
+  first_name: "Ethan"
+  last_name: "Slade"
+  name: "Ethan Slade"
+  npn: "21457938"

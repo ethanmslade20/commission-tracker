@@ -109,6 +109,9 @@ def build_monthly_pdf(month: str = None, out_dir: Path = None) -> Path:
     KL = ParagraphStyle("KL", fontName="Helvetica", fontSize=7.5, textColor=colors.white,
                         alignment=1, leading=9)
 
+    from tracker.config import get_agent
+    _agent_name = get_agent()["name"]
+
     def header(canvas, doc):
         canvas.saveState()
         canvas.setFillColor(NAVY); canvas.rect(0, letter[1] - 1.15 * inch, letter[0], 1.15 * inch, fill=1, stroke=0)
@@ -117,9 +120,9 @@ def build_monthly_pdf(month: str = None, out_dir: Path = None) -> Path:
         canvas.drawString(0.75 * inch, letter[1] - 0.62 * inch, "Book & Performance Report")
         canvas.setFillColor(colors.HexColor("#cbd5e1")); canvas.setFont("Helvetica", 10.5)
         canvas.drawString(0.75 * inch, letter[1] - 0.86 * inch,
-                          f"{m_label}  •  Ethan Slade  •  auto-generated")
+                          f"{m_label}  •  {_agent_name}  •  auto-generated")
         canvas.setFillColor(colors.HexColor("#64748b")); canvas.setFont("Helvetica", 7.5)
-        canvas.drawString(0.75 * inch, 0.5 * inch, "Slade Insurance — confidential")
+        canvas.drawString(0.75 * inch, 0.5 * inch, f"{_agent_name} — confidential")
         canvas.drawRightString(letter[0] - 0.75 * inch, 0.5 * inch, f"Page {doc.page}")
         canvas.restoreState()
 

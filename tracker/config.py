@@ -31,3 +31,17 @@ def load_full_carrier_config(path: str) -> dict:
 
 def project_root() -> Path:
     return _ROOT
+
+
+_AGENT_DEFAULTS = {"first_name": "Ethan", "last_name": "Slade",
+                   "name": "Ethan Slade", "npn": "21457938"}
+
+
+def get_agent() -> dict:
+    """The agent identity this tracker is configured for (config/settings.yaml
+    `agent:` block). Falls back to defaults so a missing block never crashes."""
+    try:
+        agent = load_settings().get("agent") or {}
+    except Exception:
+        agent = {}
+    return {**_AGENT_DEFAULTS, **agent}

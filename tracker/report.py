@@ -9,6 +9,13 @@ from pathlib import Path
 
 import pandas as pd
 
+from tracker.config import get_agent
+
+_AGENT = get_agent()
+_NPN = _AGENT["npn"]
+_FN = _AGENT["first_name"].lower()
+_LN = _AGENT["last_name"].lower()
+
 from tracker.diff import build_all_clients, compute_diff
 from tracker.ingest import load_all_snapshots
 from tracker.sheets import update_sheet
@@ -231,8 +238,8 @@ def _build_follow_ups(all_clients: pd.DataFrame) -> pd.DataFrame:
     # longer his client, even if he originally enrolled them).
     if "policy_aor" in df.columns:
         _aor = df["policy_aor"].fillna("").astype(str)
-        _mine = _aor.str.contains("21457938") | (
-            _aor.str.contains("ethan", case=False) & _aor.str.contains("slade", case=False))
+        _mine = _aor.str.contains(_NPN) | (
+            _aor.str.contains(_FN, case=False) & _aor.str.contains(_LN, case=False))
         df = df[_mine].copy()
     for c in ("dmi_outstanding", "dmi_expired", "svi_outstanding", "svi_expired"):
         df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0) if c in df.columns else 0
@@ -376,10 +383,10 @@ def _upload_summary(all_clients, pastdue, snapshot_dir, today=None) -> None:
         print("  Upload summary: no new HealthSherpa upload since last text — nothing to send.")
         return
 
-    NPN = "21457938"
+    NPN = _NPN
     def _is_e(v):
         v = str(v or "").lower()
-        return "slade" in v and "ethan" in v
+        return _LN in v and _FN in v
     def _key(f, l):
         s = unicodedata.normalize("NFKD", f"{f} {l}").encode("ascii", "ignore").decode().lower()
         return re.sub(r"[^a-z]", "", s)
@@ -693,8 +700,8 @@ def run_report(settings: dict) -> None:
             _aor_name = _aor.str.replace(r"\s*\(NPN.*$", "", regex=True).str.strip()
             _aor_taken = ((_aor.str.strip() != "")
                           & ~_aor.str.contains("None", case=False, na=False)
-                          & ~_aor.str.contains("21457938", na=False)
-                          & ~_aor.str.contains("Ethan", case=False, na=False)
+                          & ~_aor.str.contains(_NPN, na=False)
+                          & ~_aor.str.contains(_FN, case=False, na=False)
                           & (_aor_name != ""))
         else:
             _aor_name  = pd.Series("", index=all_clients.index)
@@ -813,8 +820,8 @@ def run_report(settings: dict) -> None:
             if "policy_aor" in active_pending.columns:
                 _a = active_pending["policy_aor"].fillna("").astype(str)
                 _not_mine = (_a.str.strip().ne("") & ~_a.str.contains("None")
-                             & ~_a.str.contains("21457938")
-                             & ~(_a.str.contains("ethan", case=False) & _a.str.contains("slade", case=False)))
+                             & ~_a.str.contains(_NPN)
+                             & ~(_a.str.contains(_FN, case=False) & _a.str.contains(_LN, case=False)))
                 _gap_active = active_pending[~_not_mine]
             # Also drop confirmed-AOR-changed clients whose policy_aor field lags.
             from tracker.commissions import drop_aor_changed

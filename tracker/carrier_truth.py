@@ -22,6 +22,10 @@ from pathlib import Path
 
 import pandas as pd
 
+from tracker.config import get_agent
+
+_AGENT = get_agent()
+
 # Anchor data/carrier-book paths to the repo root so the pipeline works no matter
 # what the current working directory is (launchd watchers can run from anywhere;
 # a relative "carrier_books" would silently not load and skip carrier truth).
@@ -164,7 +168,7 @@ def apply_ambetter_truth(all_clients: pd.DataFrame,
             # policy_aor blank stringifies to "nan" downstream, which the AOR
             # detectors read as a FOREIGN agent → false "taken by another
             # agent" alerts (Redd kids, 2026-07-06).
-            "policy_aor": f"{r.get('Broker Name', 'Ethan Slade')} (NPN: {r.get('Broker NPN', '21457938')})",
+            "policy_aor": f"{r.get('Broker Name', _AGENT['name'])} (NPN: {r.get('Broker NPN', _AGENT['npn'])})",
         })
 
     # Stamp the broker-of-record date onto existing Ambetter rows (true tenure

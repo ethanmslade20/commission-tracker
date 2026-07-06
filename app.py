@@ -14,6 +14,14 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
+from tracker.config import get_agent
+
+_AGENT = get_agent()
+_AGENT_NAME = _AGENT["name"]
+_AGENT_NPN = _AGENT["npn"]
+_AGENT_FN = _AGENT["first_name"].lower()
+_AGENT_LN = _AGENT["last_name"].lower()
+
 sys.path.insert(0, str(Path(__file__).parent))
 
 # ── Page config ───────────────────────────────────────────────────────────────
@@ -148,7 +156,7 @@ if not st.session_state.authenticated:
     }}
     </style>
     <div class="lock-circle">{_lock_svg}</div>
-    <div class="lock-title">{_lock_svg} Ethan Slade Book of Business</div>
+    <div class="lock-title">{_lock_svg} {_AGENT_NAME} Book of Business</div>
     <div class="lock-sub">Enter your 4-digit PIN to continue.</div>
     <div class="lock-divider"></div>
     """, unsafe_allow_html=True)
@@ -772,8 +780,8 @@ def _filter_aor_mine(df):
     if "policy_aor" in getattr(df, "columns", []):
         a = df["policy_aor"].fillna("").astype(str)
         not_mine = (a.str.strip().ne("") & ~a.str.contains("None")
-                    & ~a.str.contains("21457938")
-                    & ~(a.str.contains("ethan", case=False) & a.str.contains("slade", case=False)))
+                    & ~a.str.contains(_AGENT_NPN)
+                    & ~(a.str.contains(_AGENT_FN, case=False) & a.str.contains(_AGENT_LN, case=False)))
         out = df[~not_mine]
     try:
         from tracker.commissions import drop_aor_changed
@@ -1456,7 +1464,7 @@ def _load_follow_ups() -> pd.DataFrame:
             return pd.DataFrame(columns=cols)
         df = pd.read_csv(src, dtype=str, low_memory=False).fillna("")
         if "agent" in df.columns:
-            df = df[df["agent"].str.contains("Slade", case=False, na=False)]
+            df = df[df["agent"].str.contains(_AGENT_LN, case=False, na=False)]
         df = df.rename(columns={"issuer": "carrier", "dmi_outstanding_count": "dmi_outstanding",
                                 "dmi_expired_count": "dmi_expired", "svi_outstanding_count": "svi_outstanding",
                                 "svi_expired_count": "svi_expired"})
@@ -2769,7 +2777,7 @@ elif page == "Client Lookup":
 
             # ── Agent-of-record banner ────────────────────────────────────────
             _aor = str(r.get("policy_aor") or "")
-            _mine = ("21457938" in _aor) or ("ethan" in _aor.lower() and "slade" in _aor.lower())
+            _mine = (_AGENT_NPN in _aor) or (_AGENT_FN in _aor.lower() and _AGENT_LN in _aor.lower())
             if _aor.strip().lower() in ("", "none", "nan"):
                 st.caption("Agent of record: not recorded (usually fine — carrier book shows you).")
             elif _mine:
