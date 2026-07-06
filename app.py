@@ -290,8 +290,10 @@ st.markdown(f"""
     background: rgba(96,165,250,0.08);
   }}
   section[data-testid="stSidebar"] div[role="radiogroup"] > label:has(input:checked) {{
-    background: linear-gradient(90deg, rgba(59,130,246,0.30), rgba(124,58,237,0.18));
-    box-shadow: inset 0 0 0 1px rgba(96,165,250,0.38);
+    background: linear-gradient(90deg, rgba(59,130,246,0.38), rgba(124,58,237,0.22));
+    box-shadow: inset 3px 0 0 0 #60a5fa,
+                inset 0 0 0 1px rgba(96,165,250,0.45),
+                0 0 14px rgba(96,165,250,0.18);
   }}
   section[data-testid="stSidebar"] div[role="radiogroup"] > label:has(input:checked)::before {{
     opacity: 1;
@@ -625,20 +627,24 @@ def _nav_icon_css():
             f"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' "
             f"stroke='#cbd5e1' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'>{inner}</svg>"
         ))
-    # order MUST match the st.radio options below
+    # order MUST match the st.radio options below (grouped nav)
     nav = [
+        # ── OVERVIEW ──
         "<rect x='3' y='3' width='7' height='7'/><rect x='14' y='3' width='7' height='7'/><rect x='14' y='14' width='7' height='7'/><rect x='3' y='14' width='7' height='7'/>",  # Dashboard (grid)
-        "<circle cx='11' cy='11' r='8'/><line x1='21' y1='21' x2='16.65' y2='16.65'/>",  # Client Lookup (magnifier)
-        "<polyline points='23 6 13.5 15.5 8.5 10.5 1 18'/><polyline points='17 6 23 6 23 12'/>",  # Month-over-Month (trend)
         "<rect x='3' y='4' width='18' height='18' rx='2'/><line x1='16' y1='2' x2='16' y2='6'/><line x1='8' y1='2' x2='8' y2='6'/><line x1='3' y1='10' x2='21' y2='10'/>",  # Daily Tracker (calendar)
-        "<rect x='2' y='7' width='20' height='14' rx='2'/><path d='M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16'/>",  # Book of Business (briefcase)
+        "<circle cx='12' cy='12' r='10'/><circle cx='12' cy='12' r='6'/><circle cx='12' cy='12' r='2'/>",  # Goals (target)
+        # ── CLIENTS ──
+        "<circle cx='11' cy='11' r='8'/><line x1='21' y1='21' x2='16.65' y2='16.65'/>",  # Client Lookup (magnifier)
+        "<rect x='2' y='7' width='20' height='14' rx='2'/><path d='M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16'/>",  # Book (briefcase)
+        "<path d='M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2'/><circle cx='8.5' cy='7' r='4'/><line x1='18' y1='8' x2='23' y2='13'/><line x1='23' y1='8' x2='18' y2='13'/>",  # AOR Defense (user-x)
+        # ── MONEY ──
         "<line x1='12' y1='1' x2='12' y2='23'/><path d='M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6'/>",  # Commissions (dollar)
         "<circle cx='12' cy='12' r='10'/><line x1='12' y1='8' x2='12' y2='12'/><line x1='12' y1='16' x2='12.01' y2='16'/>",  # Money Owed (alert)
-        "<path d='M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2'/><circle cx='8.5' cy='7' r='4'/><line x1='18' y1='8' x2='23' y2='13'/><line x1='23' y1='8' x2='18' y2='13'/>",  # AOR Defense (user-x)
-        "<circle cx='12' cy='12' r='10'/><circle cx='12' cy='12' r='6'/><circle cx='12' cy='12' r='2'/>",  # Goals (target)
-        "<path d='M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2'/><circle cx='9' cy='7' r='4'/><path d='M23 21v-2a4 4 0 0 0-3-3.87'/><path d='M16 3.13a4 4 0 0 1 0 7.75'/>",  # Re-Engage (users)
-        "<polyline points='23 4 23 10 17 10'/><polyline points='1 20 1 14 7 14'/><path d='M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15'/>",  # Re-Engage (Supp) (refresh)
+        "<polyline points='23 6 13.5 15.5 8.5 10.5 1 18'/><polyline points='17 6 23 6 23 12'/>",  # Monthly Trends (trend)
+        # ── WORKFLOWS ──
         "<path d='M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2'/><rect x='8' y='2' width='8' height='4' rx='1'/><polyline points='9 14 11 16 15 12'/>",  # Follow-ups (clipboard-check)
+        "<path d='M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2'/><circle cx='9' cy='7' r='4'/><path d='M23 21v-2a4 4 0 0 0-3-3.87'/><path d='M16 3.13a4 4 0 0 1 0 7.75'/>",  # Re-Engage (users)
+        "<polyline points='23 4 23 10 17 10'/><polyline points='1 20 1 14 7 14'/><path d='M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15'/>",  # Supplemental Re-Engage (refresh)
         "<path d='M12 2l8 4v6c0 5-3.5 8.5-8 10-4.5-1.5-8-5-8-10V6l8-4z'/>",  # AEP Tracker (shield)
         "<circle cx='12' cy='12' r='3'/><path d='M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z'/>",  # Settings (gear)
     ]
@@ -646,6 +652,23 @@ def _nav_icon_css():
         f'section[data-testid="stSidebar"] div[role="radiogroup"] > label:nth-of-type({i})::before'
         f'{{background-image:url("{_svg(inner)}");}}'
         for i, inner in enumerate(nav, start=1)
+    )
+    # Group headers (small dim uppercase) painted above the first tab of each
+    # section, plus a divider before Settings. Positions follow _NAV order.
+    _SB = 'section[data-testid="stSidebar"] div[role="radiogroup"] > label'
+    groups = [(1, "OVERVIEW"), (4, "CLIENTS"), (7, "MONEY"), (10, "WORKFLOWS")]
+    for i, title in groups:
+        rules += (
+            f'{_SB}:nth-of-type({i}) {{margin-top:26px; position:relative; overflow:visible;}}'
+            f'{_SB}:nth-of-type({i})::after {{content:"{title}"; position:absolute; top:-19px; left:14px;'
+            f'font-size:.6rem; font-weight:800; letter-spacing:.16em; color:#5b6b84;}}'
+        )
+    rules += (
+        f'{_SB}:nth-of-type(1) {{margin-top:20px;}}'
+        # Settings: pinned visually apart with a hairline divider above it.
+        f'{_SB}:nth-of-type(14) {{margin-top:30px; position:relative; overflow:visible;}}'
+        f'{_SB}:nth-of-type(14)::after {{content:""; position:absolute; top:-15px; left:10px; right:10px;'
+        f'height:1px; background:rgba(148,163,184,.16);}}'
     )
     return f"<style>{rules}</style>"
 
@@ -1792,24 +1815,80 @@ with st.sidebar:
     )
     st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 
-    _NAV = ["Dashboard", "Client Lookup", "Month-over-Month", "Daily Tracker", "Book of Business", "Commissions", "Money Owed", "AOR Defense", "Goals", "Re-Engage", "Re-Engage (Supp)", "Follow-ups", "AEP Tracker", "Settings"]
+    # Grouped nav: OVERVIEW / CLIENTS / MONEY / WORKFLOWS / settings — group
+    # headers + dividers are painted by CSS in _nav_icon_css (nth-of-type), so
+    # this order, the icon list, and the header positions MUST stay in sync.
+    _NAV = ["Dashboard", "Daily Tracker", "Goals",
+            "Client Lookup", "Book", "AOR Defense",
+            "Commissions", "Money Owed", "Monthly Trends",
+            "Follow-ups", "Re-Engage", "Supplemental Re-Engage", "AEP Tracker",
+            "Settings"]
+    # Old page names still arrive via bookmarks / stale ?goto= links.
+    _ALIASES = {"Month-over-Month": "Monthly Trends", "Book of Business": "Book",
+                "Re-Engage (Supp)": "Supplemental Re-Engage"}
     # Deep-link: a "?goto=Page" link (e.g. a Dashboard action card) selects that page.
     _goto = st.query_params.get("goto")
+    _goto = _ALIASES.get(_goto, _goto)
     if _goto in _NAV:
         st.session_state["nav"] = _goto
         del st.query_params["goto"]
+    if st.session_state.get("nav") in _ALIASES:
+        st.session_state["nav"] = _ALIASES[st.session_state["nav"]]
+
+    # Attention badges — counts shown on the tabs that need action today.
+    # Loaders are @st.cache_data so this costs nothing on rerun.
+    _badges = {}
+    try:
+        _bp = _load_pastdue()
+        _badges["Money Owed"] = 0 if _bp is None or _bp.empty else len(_bp)
+    except Exception:
+        pass
+    try:
+        _bf = _load_follow_ups()
+        _badges["Follow-ups"] = (int((_bf["Status"].astype(str) == "Open").sum())
+                                 if _bf is not None and not _bf.empty else 0)
+    except Exception:
+        pass
+    try:
+        _ba = _load_aor_defense()
+        if _ba is not None and not _ba.empty and "Type" in _ba.columns:
+            _badges["AOR Defense"] = int(((_ba["Type"] == "Taken")
+                                          & (_ba["Handled"].fillna("") == "")).sum())
+    except Exception:
+        pass
+
     page = st.radio(
         "Navigation",
         _NAV,
         label_visibility="collapsed",
         key="nav",
+        format_func=lambda p: f"{p}  ·  {_badges[p]}" if _badges.get(p) else p,
     )
+
+    # Compact mode: icons-only rail for more content width.
+    _compact = st.session_state.get("nav_compact", False)
+    if st.button("⇥  expand" if _compact else "⇤  compact", key="nav_compact_btn",
+                 use_container_width=True, help="Collapse the sidebar to icons only"):
+        st.session_state["nav_compact"] = not _compact
+        st.rerun()
+    if _compact:
+        st.markdown("""<style>
+          section[data-testid="stSidebar"] {width:92px !important; min-width:92px !important; max-width:92px !important;}
+          section[data-testid="stSidebar"] .brand-text {display:none;}
+          section[data-testid="stSidebar"] div[role="radiogroup"] > label p {display:none;}
+          section[data-testid="stSidebar"] div[role="radiogroup"] > label {justify-content:center; padding:11px 6px;}
+          section[data-testid="stSidebar"] div[role="radiogroup"] > label::after {display:none !important;}
+          section[data-testid="stSidebar"] div[data-testid="stCaptionContainer"] {display:none;}
+          section[data-testid="stSidebar"] div[data-testid="stDownloadButton"] {display:none;}
+          section[data-testid="stSidebar"] .st-key-refresh_btn {display:none;}
+          section[data-testid="stSidebar"] .st-key-nav_compact_btn button {padding:4px 2px; font-size:.8rem;}
+        </style>""", unsafe_allow_html=True)
 
     st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
     st.caption(f"📅 Latest snapshot: **{latest_label}**")
     st.caption(f"👥 {len(all_clients):,} total clients tracked")
 
-    if st.button("🔄 Refresh data", use_container_width=True):
+    if st.button("🔄 Refresh data", use_container_width=True, key="refresh_btn"):
         st.cache_data.clear()
         for _k in ["aep_df", "aep_tab"]:
             st.session_state.pop(_k, None)
@@ -2222,7 +2301,7 @@ if page == "Dashboard":
 # ══════════════════════════════════════════════════════════════════════════════
 # MONTH-OVER-MONTH
 # ══════════════════════════════════════════════════════════════════════════════
-elif page == "Month-over-Month":
+elif page == "Monthly Trends":
     st.title("Month-over-Month Trends")
     st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
 
@@ -2506,7 +2585,7 @@ elif page == "Daily Tracker":
 # ══════════════════════════════════════════════════════════════════════════════
 # CLIENT ROSTER
 # ══════════════════════════════════════════════════════════════════════════════
-elif page == "Book of Business":
+elif page == "Book":
     st.title("Book of Business")
     st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
 
@@ -3817,7 +3896,7 @@ elif page == "Re-Engage":
 # ══════════════════════════════════════════════════════════════════════════════
 # RE-ENGAGE (SUPPLEMENTAL)
 # ══════════════════════════════════════════════════════════════════════════════
-elif page == "Re-Engage (Supp)":
+elif page == "Supplemental Re-Engage":
     st.title("Re-Engage (Supplemental)")
     st.caption("Two categories: clients past due (still active, behind on payment — save them before they cancel) "
                "and lapsed policies to win back.")
