@@ -2733,6 +2733,12 @@ elif page == "Client Lookup":
           font-size:1.08rem; padding:8px 12px; border-radius:14px;
           background:rgba(15,23,42,.65); border:1.5px solid rgba(96,165,250,.4);
           box-shadow:0 6px 22px rgba(0,0,0,.3);}
+      /* Selected client's name: bright and bold in the box — never placeholder-dim */
+      .st-key-lookup_hero div[data-baseweb="select"] > div > div:first-child,
+      .st-key-lookup_hero div[data-baseweb="select"] > div > div:first-child > div {
+          color:#f8fafc !important; font-weight:700 !important; opacity:1 !important;}
+      .st-key-lookup_hero div[data-baseweb="select"] input {
+          color:#f8fafc !important; font-weight:600 !important; -webkit-text-fill-color:#f8fafc !important;}
     </style>""", unsafe_allow_html=True)
 
     if not person:
