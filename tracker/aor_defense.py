@@ -87,7 +87,7 @@ def build_aor_defense(risk_path=_RISK_PATH, hs_path=_HS_PATH, handled_path=_HAND
                                  if len(foreign) else ""),
                     "carrier": str(row.get("issuer", ""))[:34],
                     "state": str(row.get("state", "")),
-                    "members": int(pd.to_numeric(row.get("applicant_count"), errors="coerce") or 1),
+                    "members": (lambda _n: 1 if pd.isna(_n) else max(int(_n), 1))(pd.to_numeric(row.get("applicant_count"), errors="coerce")),
                 })
         risk.append(entry)
 
@@ -113,7 +113,8 @@ def build_aor_defense(risk_path=_RISK_PATH, hs_path=_HS_PATH, handled_path=_HAND
             state = str(m.get("state", ""))
             phone = str(m.get("phone", ""))
             status = str(m.get("policy_status", ""))
-            members = int(pd.to_numeric(m.get("applicant_count"), errors="coerce") or 1)
+            _mn = pd.to_numeric(m.get("applicant_count"), errors="coerce")
+            members = 1 if pd.isna(_mn) else max(int(_mn), 1)
 
         h = handled.get(xid, {})
         # When it happened: the HealthSherpa sync date that detected the change —

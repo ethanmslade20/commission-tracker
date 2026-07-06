@@ -2746,7 +2746,8 @@ elif page == "Client Lookup":
 
             _ACTIVE = {"Effectuated", "PendingEffectuation", "PendingFollowups"}
             is_active = r.get("status") in _ACTIVE
-            _mem = int(pd.to_numeric(r.get("applicant_count"), errors="coerce") or 1)
+            _mem_n = pd.to_numeric(r.get("applicant_count"), errors="coerce")
+            _mem = 1 if pd.isna(_mem_n) else max(int(_mem_n), 1)
 
             # ── Header ────────────────────────────────────────────────────────
             _pill_bg, _pill_tx = (("rgba(34,197,94,.15)", "#4ade80") if is_active
@@ -2807,8 +2808,10 @@ elif page == "Client Lookup":
                 st.warning(f"**Why they left:** {_reason}", icon="📋")
 
             # ── Verification flags ────────────────────────────────────────────
-            _dmi = int(pd.to_numeric(r.get("dmi_outstanding"), errors="coerce") or 0)
-            _svi = int(pd.to_numeric(r.get("svi_outstanding"), errors="coerce") or 0)
+            _dmi_n = pd.to_numeric(r.get("dmi_outstanding"), errors="coerce")
+            _dmi = 0 if pd.isna(_dmi_n) else int(_dmi_n)
+            _svi_n = pd.to_numeric(r.get("svi_outstanding"), errors="coerce")
+            _svi = 0 if pd.isna(_svi_n) else int(_svi_n)
             if _dmi or _svi:
                 st.warning(f"📎 Outstanding verification docs: {_dmi} DMI, {_svi} SVI — "
                            "their subsidy is at risk until submitted (see Follow-ups).", icon="⚠️")
