@@ -84,11 +84,21 @@ def main():
     def mark(p):
         state[str(p)] = p.stat().st_mtime
 
-    # HealthSherpa client export — validate size before it can touch the book.
+    # HealthSherpa client export — validate size AND ownership before it can
+    # touch the book. Another agent's export (Phase-B audit files!) must never
+    # auto-stage into this tracker.
     hs = _newest("on_ex_applications-export-*.csv")
     if fresh(hs):
-        rows = sum(1 for _ in open(hs, errors="replace")) - 1
-        if rows >= _HS_MIN_ROWS:
+        body = open(hs, errors="replace").read()
+        rows = body.count("\n") - 1
+        from tracker.config import get_agent
+        _npn = get_agent()["npn"]
+        if _npn not in body:
+            _log(f"REJECTED foreign HealthSherpa export (no NPN {_npn} inside): {hs.name}")
+            _text(f"⚠️ A HealthSherpa export landed in Downloads that isn't YOUR book "
+                  f"(your NPN isn't in it) — probably another agent's audit file. "
+                  f"Not uploaded. Move it to the audit folder instead.")
+        elif rows >= _HS_MIN_ROWS:
             shutil.copy(hs, _ROOT / "input" / "healthsherpa.csv")
             staged.append(f"HealthSherpa ({rows} rows)")
         else:
