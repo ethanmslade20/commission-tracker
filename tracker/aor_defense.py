@@ -54,6 +54,39 @@ def build_aor_defense(risk_path=_RISK_PATH, hs_path=_HS_PATH, handled_path=_HAND
 
     handled = _load_json(handled_path, {})
 
+    # SECOND DETECTOR: data/known_aor.json — the "active but credited to another
+    # agent" set the report maintains from the FULLY-PROCESSED book (carrier
+    # truth applied). It catches steals HealthSherpa's at-risk tab hasn't listed
+    # yet, and clients whose policies vanished from the current export once the
+    # steal completed (Tammy, Maurice). Union in anyone the scrape didn't have.
+    scraped_names = {re.sub(r"[^a-z]", "", str(r.get("name", "")).lower()) for r in risk}
+    known_aor = _load_json(_ROOT / "data" / "known_aor.json", {})
+    for k, disp in known_aor.items():
+        if re.sub(r"[^a-z]", "", str(disp).lower()) in scraped_names:
+            continue
+        entry = {"name": disp, "exchange_id": "", "type": "changed", "last_synced": ""}
+        if len(hs):
+            parts = str(disp).split()
+            fn, ln = (parts[0], parts[-1]) if len(parts) >= 2 else (str(disp), "")
+            m = hs[(hs["first_name"].str.lower() == fn.lower())
+                   & (hs["last_name"].str.lower().str.replace(r"[^a-z]", "", regex=True)
+                      == re.sub(r"[^a-z]", "", ln.lower()))]
+            if len(m):
+                a = m["policy_aor"].fillna("").astype(str)
+                foreign = m[a.str.strip().ne("") & ~a.str.contains("None")
+                            & ~a.str.contains(_ETHAN_NPN) & ~a.str.contains("Slade", case=False)]
+                row = (foreign.iloc[0] if len(foreign) else m.iloc[-1])
+                entry.update({
+                    "exchange_id": str(row.get("ffm_app_id", "")).strip(),
+                    "last_synced": str(row.get("last_ede_sync", ""))[:10],
+                    "taken_by": (re.sub(r"\s*\(NPN.*\)", "", str(row.get("policy_aor", ""))).strip().title()
+                                 if len(foreign) else ""),
+                    "carrier": str(row.get("issuer", ""))[:34],
+                    "state": str(row.get("state", "")),
+                    "members": int(pd.to_numeric(row.get("applicant_count"), errors="coerce") or 1),
+                })
+        risk.append(entry)
+
     rows = []
     for r in risk:
         xid = str(r.get("exchange_id", "")).strip()
@@ -61,9 +94,13 @@ def build_aor_defense(risk_path=_RISK_PATH, hs_path=_HS_PATH, handled_path=_HAND
         kind = "Taken" if typ in ("changed", "both") else "Disconnected"
         m = hs.loc[xid] if (len(hs) and xid in hs.index) else None
 
-        taken_by = ""
-        carrier = state = phone = status = ""
-        members = 1
+        # Snapshot-sourced entries carry their own details (the client may be
+        # gone from today's export); the export row overrides when present.
+        taken_by = r.get("taken_by", "")
+        carrier = r.get("carrier", "")
+        state = r.get("state", "")
+        members = int(r.get("members", 1) or 1)
+        phone = status = ""
         if m is not None:
             aor = str(m.get("policy_aor", ""))
             if aor.strip() and _ETHAN_NPN not in aor and "slade" not in aor.lower():
