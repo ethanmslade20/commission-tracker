@@ -51,12 +51,40 @@ def _norm(s):
     return unicodedata.normalize("NFKD", str(s)).encode("ascii", "ignore").decode().lower()
 
 
+_SUFFIXES = {"jr", "sr", "ii", "iii", "iv", "v"}
+
+
+def _strip_suffix(s):
+    """Drop generational suffixes: 'Hippolyte Jr' -> 'hippolyte'. A bare 'Jr'
+    poisoned match keys and produced FALSE 'never paid' disputes (2026-07-07,
+    Timothy Hippolyte Jr / Joseph Jones Jr — ABM proved both were paid)."""
+    return " ".join(t for t in _norm(s).split() if t not in _SUFFIXES)
+
+
 def _person_key(first, last):
     """Match key from a (first, last) pair: last[:4]+first[:3]. Tolerant of
-    truncated/abbreviated names in the statements (e.g. 'GONZALEZ, ALL')."""
-    f = re.sub(r"[^a-z]", "", _norm(first))
-    l = re.sub(r"[^a-z]", "", _norm(last))
+    truncated/abbreviated names in the statements (e.g. 'GONZALEZ, ALL').
+    Suffix-stripped so 'Jones Jr' keys like 'Jones'."""
+    f = re.sub(r"[^a-z]", "", _strip_suffix(first))
+    l = re.sub(r"[^a-z]", "", _strip_suffix(last))
     return l[:4] + f[:3]
+
+
+def _person_keys(first, last) -> set:
+    """ALL plausible keys for a person, so compound last names match however a
+    statement writes them: 'Hannah Hottle Cave' appears as 'CAVE, HANNAH' in one
+    statement and 'Hannah Hottle Cave' in another. Candidates: first word, last
+    word, and the squashed whole of the last-name string."""
+    fw = _strip_suffix(first).split()
+    fvars = {re.sub(r"[^a-z]", "", "".join(fw))[:3]}           # 'Ta Nisha' -> 'tan'
+    if fw:
+        fvars.add(re.sub(r"[^a-z]", "", fw[0])[:3])            # 'Ta Nisha' -> 'ta'
+    words = _strip_suffix(last).split()
+    lvars = {re.sub(r"[^a-z]", "", w)[:4] for w in (words[:1] + words[-1:])}
+    if words:
+        lvars.add(re.sub(r"[^a-z]", "", "".join(words))[:4])
+    cands = {l + f for l in (lvars or {""}) for f in fvars}
+    return cands or fvars
 
 
 def aor_changed_keys() -> set:
@@ -100,7 +128,7 @@ def drop_aor_changed(df):
 
 def _member_key(member):
     """Match key for a statement member name, handling 'LAST, FIRST' and 'First Last'."""
-    m = _norm(member)
+    m = _strip_suffix(member)
     if "," in m:
         last, first = m.split(",", 1)
     else:
@@ -204,14 +232,16 @@ def reconcile_book(active: pd.DataFrame, payments: pd.DataFrame, today=None) -> 
 
     a = active.copy()
     a["name_key"] = a.apply(lambda r: _person_key(r.get("first_name", ""), r.get("last_name", "")), axis=1)
-    a["_matched"] = a["name_key"].isin(paid_keys)
+    a["_keyset"] = a.apply(lambda r: _person_keys(r.get("first_name", ""), r.get("last_name", "")), axis=1)
+    a["_matched"] = a.apply(lambda r: bool((r["_keyset"] | {r["name_key"]}) & paid_keys), axis=1)
     result["matched"] = int(a["_matched"].sum())
     result["unmatched"] = int((~a["_matched"]).sum())
 
     # Stopped = was paid before, but last payment is older than the latest
     # complete month (so it's not just the pending current-month check).
     def _status(row):
-        lp = last_paid.get(row["name_key"])
+        _hits = [last_paid[k] for k in (row["_keyset"] | {row["name_key"]}) if k in last_paid]
+        lp = max(_hits) if _hits else None
         if lp is None or lp >= complete_latest:
             return None
         return lp
@@ -244,12 +274,15 @@ def unpaid_active(active: pd.DataFrame, payments: pd.DataFrame, today=None,
     paid = set(payments[payments["amount"] > 0]["name_key"])
     a = active.copy()
     a["name_key"] = a.apply(lambda r: _person_key(r.get("first_name", ""), r.get("last_name", "")), axis=1)
+    # Paid under ANY plausible key (suffix/compound-surname variants) = paid.
+    _paid_any = a.apply(lambda r: bool((_person_keys(r.get("first_name", ""), r.get("last_name", ""))
+                                        | {r["name_key"]}) & paid), axis=1)
     a["_eff"] = pd.to_datetime(a.get("effective_date"), errors="coerce")
     mob = pd.to_numeric(a.get("months_on_book"), errors="coerce").fillna(0)
     # coverage must have started before last month, so a payment was due in a
     # complete month even allowing for a +1-month carrier lag.
     eff_cutoff = cur - pd.DateOffset(months=1)
-    elig = (~a["name_key"].isin(paid)) & (mob >= min_months) & (a["_eff"] < eff_cutoff)
+    elig = (~_paid_any) & (mob >= min_months) & (a["_eff"] < eff_cutoff)
     return a[elig].drop(columns=["_eff"], errors="ignore").copy()
 
 

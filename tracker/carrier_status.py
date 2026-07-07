@@ -106,10 +106,20 @@ def classify_ambetter(amb: pd.DataFrame, payments: pd.DataFrame, today=None,
     else:
         last_paid = {}
 
+    from tracker.commissions import _person_keys
+
+    def _last_paid_for(r):
+        # Probe every plausible key — compound last names ('Hottle Cave') and
+        # suffixes ('Jones Jr') appear differently across statements vs the
+        # carrier book, which false-flagged PAID clients as disputes (2026-07-07).
+        cands = _person_keys(r.get("first_name", ""), r.get("last_name", "")) | {r["name_key"]}
+        hits = [last_paid[k] for k in cands if k in last_paid]
+        return max(hits) if hits else None
+
     def _verdict(r):
         if not r["eligible"]:
             return NOT_ELIG
-        lp = last_paid.get(r["name_key"])
+        lp = _last_paid_for(r)
         paid_recently = lp is not None and lp >= complete_latest
         if paid_recently:
             return PAID_OK
@@ -122,8 +132,9 @@ def classify_ambetter(amb: pd.DataFrame, payments: pd.DataFrame, today=None,
         return DISPUTE if member_current else WINBACK
 
     out["verdict"] = out.apply(_verdict, axis=1)
-    out["last_paid"] = out["name_key"].map(
-        lambda k: pd.Timestamp(last_paid[k]).strftime("%b %Y") if k in last_paid else "—")
+    out["last_paid"] = out.apply(
+        lambda r: (lambda lp: pd.Timestamp(lp).strftime("%b %Y") if lp is not None else "—")(_last_paid_for(r)),
+        axis=1)
 
     # Optional: HealthSherpa shows active, carrier says not eligible & past grace.
     out["hs_stale"] = False
