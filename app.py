@@ -1287,6 +1287,7 @@ def _running_in_cloud() -> bool:
         return False
 
 
+@st.cache_resource
 def _gspread_client():
     """Return an authenticated gspread client using st.secrets (cloud mode).
     Retries on 429 (quota exceeded) instead of raising, since this app reads
@@ -1304,7 +1305,7 @@ def _gspread_client():
     return client
 
 
-@st.cache_data(ttl=1800)
+@st.cache_data(ttl=3600)
 def _load_payments() -> pd.DataFrame:
     """Read the Insurance PAYMENTS sheet into commission line items. Works in
     cloud (service account from secrets) and local (ADC impersonation)."""
@@ -1333,7 +1334,7 @@ def _load_payments() -> pd.DataFrame:
         return pd.DataFrame()
 
 
-@st.cache_data(ttl=1800)
+@st.cache_data(ttl=3600)
 def _load_ambetter_disputes() -> pd.DataFrame:
     """Ambetter policies the carrier's own export confirms you're owed on
     (Eligible for Commission = Yes + member paid-through current) but the payments
@@ -1360,7 +1361,7 @@ def _load_ambetter_disputes() -> pd.DataFrame:
         return pd.DataFrame(columns=cols)
 
 
-@st.cache_data(ttl=1800)
+@st.cache_data(ttl=3600)
 def _gap_audit_from_sheet() -> dict:
     """name_key -> {Policy #, Ever Paid, Dispute} from the Commission Gaps tab the
     report wrote (policy-verified). Lets the cloud app show the audit columns even
@@ -1390,7 +1391,7 @@ def _gap_audit_from_sheet() -> dict:
     return out
 
 
-@st.cache_data(ttl=900)
+@st.cache_data(ttl=3600)
 def _load_aor_defense() -> pd.DataFrame:
     """The AOR-at-risk defense table. Local mode builds it live from the scraped
     data/aor_at_risk.json + latest HealthSherpa export; cloud mode reads the
@@ -1421,7 +1422,7 @@ def _load_aor_defense() -> pd.DataFrame:
     return pd.DataFrame()
 
 
-@st.cache_data(ttl=1800)
+@st.cache_data(ttl=3600)
 def _load_pastdue() -> pd.DataFrame:
     """Active health plans with a premium > $0 that are behind on payment
     (Ambetter paid-through passed / Oscar balance owed). Cloud reads the Health
@@ -1439,7 +1440,7 @@ def _load_pastdue() -> pd.DataFrame:
         return pd.DataFrame(columns=cols)
 
 
-@st.cache_data(ttl=1800)
+@st.cache_data(ttl=3600)
 def _load_follow_ups() -> pd.DataFrame:
     """HealthSherpa verification follow-ups (DMI/SVI): Open = save the subsidy,
     Expired = lost. Cloud reads the Follow-ups tab; local builds from the export."""
@@ -1469,7 +1470,7 @@ def _load_follow_ups() -> pd.DataFrame:
         return pd.DataFrame(columns=cols)
 
 
-@st.cache_data(ttl=1800)
+@st.cache_data(ttl=3600)
 def _expired_followup_keys() -> set:
     """name_keys of clients whose verification has EXPIRED — excluded from the
     past-due reach-out lists (subsidy lost; they're handled as Cancelled outreach)."""
@@ -1484,7 +1485,7 @@ def _expired_followup_keys() -> set:
         return set()
 
 
-@st.cache_data(ttl=1800)
+@st.cache_data(ttl=3600)
 def _load_daily_detail() -> pd.DataFrame:
     """Per-policy submission detail (Date, Month, First/Last Name, Members,
     Carrier, State) for the Daily Tracker drill-down. Cloud reads the Daily
@@ -1518,7 +1519,7 @@ def _aep_tab_name(year=None) -> str:
     return f"{_AEP_TAB_PREFIX}{y}"
 
 
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=3600)
 def _read_aep_tab(tab_name: str) -> pd.DataFrame:
     """Read the AEP Tracker tab from Google Sheets. Returns empty DF if tab missing."""
     if not _running_in_cloud():
@@ -1607,7 +1608,7 @@ def _read_app_settings_raw() -> dict:
         return {}
 
 
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=3600)
 def _read_app_settings() -> dict:
     return _read_app_settings_raw()
 
@@ -1640,7 +1641,7 @@ def _persist_settings(**updates) -> bool:
 
 # Long TTL: navigation stays instant (no Sheets re-fetch). The "Refresh data"
 # button clears the cache, so the agent pulls fresh data only when they want it.
-@st.cache_data(ttl=1800)
+@st.cache_data(ttl=3600)
 def load_data():
     if _running_in_cloud():
         return _load_from_sheets()
