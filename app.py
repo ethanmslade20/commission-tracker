@@ -197,7 +197,7 @@ if not st.session_state.authenticated:
         unsafe_allow_html=True,
     )
     if submitted:
-        if pin == "2026":
+        if pin == "1212":
             st.session_state.authenticated = True
             st.query_params["k"] = _AUTH_TOKEN
             st.rerun()
