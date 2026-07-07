@@ -95,7 +95,11 @@ def classify_ambetter(amb: pd.DataFrame, payments: pd.DataFrame, today=None,
     today = pd.Timestamp(today) if today else pd.Timestamp.today().normalize()
     cur = pd.Timestamp(today.year, today.month, 1)             # first of this month
     complete_latest = (cur.to_period("M") - 1).to_timestamp()  # last fully-paid month
-    grace_cutoff = cur   # effective on/after the 1st of this month = still in grace
+    # Ambetter pays +1 MONTH in arrears: a June-1 effective's first check is in
+    # the JULY statements. Grace must cover effective dates through LAST month,
+    # or every 1-month-old policy false-flags the day the month rolls over
+    # (34 phantom disputes on 2026-07-07).
+    grace_cutoff = cur - pd.offsets.MonthBegin(1)
 
     out = amb.copy()
 
