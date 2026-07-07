@@ -674,6 +674,12 @@ def _nav_icon_css():
 
 st.markdown(_nav_icon_css(), unsafe_allow_html=True)
 
+# No data export: hide the dataframe hover toolbar (CSV download / search /
+# fullscreen) on every table (Ethan 2026-07-07).
+st.markdown("""<style>
+  [data-testid="stElementToolbar"] {display:none !important;}
+</style>""", unsafe_allow_html=True)
+
 
 # ── UI helpers: icons, sparklines, cards, section headers ─────────────────────
 ICONS = {
@@ -1895,18 +1901,8 @@ with st.sidebar:
             st.session_state.pop(_k, None)
         st.rerun()
 
-    # Export Report — download the current book of business as CSV
-    try:
-        _export_csv = all_clients.to_csv(index=False).encode("utf-8")
-        st.download_button(
-            "⬇️ Export Report",
-            data=_export_csv,
-            file_name=f"commission-tracker-{latest_m}.csv",
-            mime="text/csv",
-            use_container_width=True,
-        )
-    except Exception:
-        pass
+    # Export Report button removed on purpose (Ethan 2026-07-07): no data
+    # export from the site — tables also have their download toolbars hidden.
 
 
 # ══════════════════════════════════════════════════════════════════════════════
