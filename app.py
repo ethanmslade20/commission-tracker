@@ -951,8 +951,7 @@ def _load_from_parquet():
 def _read_all_clients_from_sheet(spreadsheet) -> pd.DataFrame:
     """Parse the All Clients tab — skips the 2-row summary header."""
     import re
-    ws = spreadsheet.worksheet("All Clients")
-    all_values = ws.get_all_values()
+    all_values = _tab_values("All Clients")
     if len(all_values) < 3:
         return pd.DataFrame()
 
@@ -973,10 +972,8 @@ def _read_all_clients_from_sheet(spreadsheet) -> pd.DataFrame:
 def _read_daily_tab_from_sheet(spreadsheet, tab_name: str) -> pd.DataFrame:
     """Read a Daily Tracker tab — finds the DATE header row and parses below it."""
     import re
-    try:
-        ws = spreadsheet.worksheet(tab_name)
-        all_values = ws.get_all_values()
-    except Exception:
+    all_values = _tab_values(tab_name)
+    if not all_values:
         return pd.DataFrame()
 
     # Locate the DATE header row
@@ -1014,8 +1011,7 @@ def _read_supplemental_df_from_sheet(spreadsheet) -> pd.DataFrame:
     cols = ["first_name", "last_name", "carrier", "product", "premium",
             "status", "status_detail", "term_date", "state", "email", "phone"]
     try:
-        ws = spreadsheet.worksheet("Supplemental")
-        rows = ws.get_all_records()
+        rows = _tab_records("Supplemental")
     except Exception:
         return pd.DataFrame(columns=cols)
     if not rows:
@@ -1053,8 +1049,7 @@ def _read_pastdue_df_from_sheet(spreadsheet) -> pd.DataFrame:
     cols = ["first_name", "last_name", "carrier", "state", "status", "premium", "members",
             "paid_through", "balance", "days_overdue", "reason", "phone", "email"]
     try:
-        ws = spreadsheet.worksheet("Health Past Due")
-        rows = ws.get_all_records()
+        rows = _tab_records("Health Past Due")
     except Exception:
         return pd.DataFrame(columns=cols)
     if not rows:
@@ -1172,18 +1167,9 @@ def _load_from_sheets():
     from tracker.dashboard import _build_mom_from_all_clients
     from tracker.sheets import _patch_retry_on_quota
 
-    creds = service_account.Credentials.from_service_account_info(
-        dict(st.secrets["gcp_service_account"]),
-        scopes=[
-            "https://www.googleapis.com/auth/spreadsheets",
-            "https://www.googleapis.com/auth/drive.readonly",
-        ],
-    )
-    client       = gspread.authorize(creds)
-    _patch_retry_on_quota(client)
-    spreadsheet  = client.open_by_url(st.secrets["sheet_url"])
-
-    all_clients  = _read_all_clients_from_sheet(spreadsheet)
+    _bulk = _main_sheet_values()          # every tab, 1-2 API calls
+    spreadsheet = None                     # readers now use the bulk cache
+    all_clients = _read_all_clients_from_sheet(spreadsheet)
     if not all_clients.empty and "carrier" in all_clients.columns:
         from tracker.carriers import normalize_carrier_series
         all_clients["carrier"] = normalize_carrier_series(all_clients["carrier"])
@@ -1213,11 +1199,11 @@ def _load_from_sheets():
 
     # Determine first snapshot month from Daily Tracker tabs
     _snapshot_months = []
-    for _ws in spreadsheet.worksheets():
-        if _ws.title.startswith("Daily Tracker - "):
+    for _t in _bulk.keys():
+        if _t.startswith("Daily Tracker - "):
             try:
                 _snapshot_months.append(
-                    pd.Timestamp(_ws.title.replace("Daily Tracker - ", "")).strftime("%Y-%m")
+                    pd.Timestamp(_t.replace("Daily Tracker - ", "")).strftime("%Y-%m")
                 )
             except Exception:
                 pass
@@ -1270,13 +1256,13 @@ def _load_from_sheets():
 
     # Read all Daily Tracker tabs dynamically
     daily_months: dict = {}
-    for ws in spreadsheet.worksheets():
-        if ws.title.startswith("Daily Tracker - "):
+    for _t in list(_bulk.keys()):
+        if _t.startswith("Daily Tracker - "):
             try:
-                label = ws.title.replace("Daily Tracker - ", "")
+                label = _t.replace("Daily Tracker - ", "")
                 ts    = pd.Timestamp(label)
                 m_str = ts.strftime("%Y-%m")
-                ddf   = _read_daily_tab_from_sheet(spreadsheet, ws.title)
+                ddf   = _read_daily_tab_from_sheet(spreadsheet, _t)
                 if not ddf.empty:
                     daily_months[m_str] = ddf
             except Exception:
@@ -1309,6 +1295,41 @@ def _gspread_client():
     client = gspread.authorize(creds)
     _patch_retry_on_quota(client)
     return client
+
+
+@st.cache_data(ttl=3600, show_spinner="Loading your book (hourly refresh)…")
+def _main_sheet_values() -> dict:
+    """EVERY tab of the main sheet in 1-2 API calls via values_batch_get.
+    Replaces ~25 per-tab reads that tripped Google's per-minute quota and
+    made cold page loads crawl (20-60s retry sleeps)."""
+    ss = _gspread_client().open_by_url(st.secrets["sheet_url"])
+    titles = [w.title for w in ss.worksheets()]
+    out = {}
+    CH = 40
+    for i in range(0, len(titles), CH):
+        chunk = titles[i:i + CH]
+        resp = ss.values_batch_get([f"'{t}'" for t in chunk])
+        for t, vr in zip(chunk, resp.get("valueRanges", [])):
+            vals = vr.get("values", [])
+            w = max((len(r) for r in vals), default=0)
+            out[t] = [r + [""] * (w - len(r)) for r in vals]
+    return out
+
+
+def _tab_values(title: str) -> list:
+    """get_all_values() equivalent served from the bulk cache."""
+    try:
+        return _main_sheet_values().get(title, [])
+    except Exception:
+        return []
+
+
+def _tab_records(title: str) -> list:
+    """get_all_records() equivalent served from the bulk cache."""
+    v = _tab_values(title)
+    if len(v) < 2:
+        return []
+    return [dict(zip(v[0], r)) for r in v[1:]]
 
 
 @st.cache_data(ttl=3600)
@@ -1351,8 +1372,7 @@ def _load_ambetter_disputes() -> pd.DataFrame:
             "Monthly Premium", "Phone", "Email"]
     try:
         if _running_in_cloud():
-            ss = _gspread_client().open_by_url(st.secrets["sheet_url"])
-            rows = ss.worksheet("Ambetter Disputes").get_all_records()
+            rows = _tab_records("Ambetter Disputes")
             return pd.DataFrame(rows) if rows else pd.DataFrame(columns=cols)
         from tracker.carrier_status import (parse_ambetter_export,
                                             classify_ambetter, dispute_display)
@@ -1375,8 +1395,7 @@ def _gap_audit_from_sheet() -> dict:
     import re as _re
     def _nk(f, l): return _re.sub(r"[^a-z0-9]", "", (str(l) + str(f)).lower())[:12]
     try:
-        ss = _gspread_client().open_by_url(st.secrets["sheet_url"])
-        v = ss.worksheet("Commission Gaps").get_all_values()
+        v = _tab_values("Commission Gaps")
     except Exception:
         return {}
     hr = next((i for i, row in enumerate(v[:6]) if any(str(c).strip() == "First Name" for c in row)), 0)
@@ -1411,8 +1430,7 @@ def _load_aor_defense() -> pd.DataFrame:
     except Exception:
         pass
     try:
-        ss = _gspread_client().open_by_url(st.secrets["sheet_url"])
-        v = ss.worksheet("AOR Defense").get_all_values()
+        v = _tab_values("AOR Defense")
         if len(v) > 1:
             df = pd.DataFrame(v[1:], columns=v[0])
             for c in ("Members", "Est $/yr"):
@@ -1437,8 +1455,7 @@ def _load_pastdue() -> pd.DataFrame:
             "paid_through", "balance", "days_overdue", "reason", "phone", "email"]
     try:
         if _running_in_cloud():
-            ss = _gspread_client().open_by_url(st.secrets["sheet_url"])
-            return _read_pastdue_df_from_sheet(ss)
+            return _read_pastdue_df_from_sheet(None)
         from tracker.pastdue import load_health_pastdue
         df = load_health_pastdue()
         return df if df is not None and not df.empty else pd.DataFrame(columns=cols)
@@ -1454,8 +1471,7 @@ def _load_follow_ups() -> pd.DataFrame:
             "Detail", "Phone", "Email"]
     try:
         if _running_in_cloud():
-            ss = _gspread_client().open_by_url(st.secrets["sheet_url"])
-            rows = ss.worksheet("Follow-ups").get_all_records()
+            rows = _tab_records("Follow-ups")
             return pd.DataFrame(rows) if rows else pd.DataFrame(columns=cols)
         from tracker.report import _build_follow_ups
         src = Path(__file__).parent / "input" / "healthsherpa.csv"
@@ -1499,8 +1515,7 @@ def _load_daily_detail() -> pd.DataFrame:
     cols = ["Date", "Month", "First Name", "Last Name", "Members", "Carrier", "State"]
     try:
         if _running_in_cloud():
-            ss = _gspread_client().open_by_url(st.secrets["sheet_url"])
-            rows = ss.worksheet("Daily Detail").get_all_records()
+            rows = _tab_records("Daily Detail")
             return pd.DataFrame(rows) if rows else pd.DataFrame(columns=cols)
         from tracker.ingest import load_all_snapshots
         from tracker.sheets import _build_daily_detail
@@ -4296,8 +4311,7 @@ elif page == "Settings":
         pass
     if _fresh.empty:
         try:   # cloud: the tab the report wrote
-            _ss = _gspread_client().open_by_url(st.secrets["sheet_url"])
-            _v = _ss.worksheet("Data Freshness").get_all_values()
+            _v = _tab_values("Data Freshness")
             if len(_v) > 1:
                 _fresh = pd.DataFrame(_v[1:], columns=_v[0])
         except Exception:
