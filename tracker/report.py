@@ -394,6 +394,7 @@ def _upload_summary(all_clients, pastdue, snapshot_dir, today=None) -> None:
         return f"{f} {l}".strip().title()
 
     lost, aor, pol, polmem = {}, {}, set(), {}
+    active_mine = {}   # currently active AND credited to the agent — win-back proof
     for _, r in all_clients.iterrows():
         f, l = r.get("first_name", ""), r.get("last_name", "")
         k = _key(f, l)
@@ -409,6 +410,8 @@ def _upload_summary(all_clients, pastdue, snapshot_dir, today=None) -> None:
             # slipping through here caused false "taken" alerts (2026-07-06).
             if a.strip().lower() not in ("", "none", "nan") and NPN not in a and not _is_e(a):
                 aor[k] = _disp(f, l)
+            else:
+                active_mine[k] = _disp(f, l)
         pid = re.sub(r"\.0$", "", str(r.get("ffm_app_id") or "").strip())
         if pid and pid.lower() != "nan":
             pol.add(pid)
@@ -439,6 +442,13 @@ def _upload_summary(all_clients, pastdue, snapshot_dir, today=None) -> None:
     new_lost = _new(lost, base_lost)
     new_aor = _new(aor, base_aor)
     new_pd = _new(pdue, base_pd)
+    # Win-backs: was lost/taken at the last text, now active AND his again.
+    # (Ethan 2026-07-08: "if I ever get a person back that was lost or win them
+    # back from an AOR I want you to include that in the text".)
+    won_lost = [v for k, v in (base_lost or {}).items()
+                if k not in lost and k in active_mine]
+    won_aor = [v for k, v in (base_aor or {}).items()
+               if k not in aor and k in active_mine]
     base_pol_set = set(base_pol or [])
     new_pol = [p for p in pol if p not in base_pol_set]
     new_pol_n = 0 if first_run else len(new_pol)
@@ -476,6 +486,10 @@ def _upload_summary(all_clients, pastdue, snapshot_dir, today=None) -> None:
             lines.append(f" • Behind on payment: {_fmt(new_pd)}")
         if new_aor:
             lines.append(f" • Taken by another agent: {_fmt(new_aor)}")
+    if won_lost:
+        lines.append(f"🎉 Won back (were cancelled): {_fmt(won_lost)}")
+    if won_aor:
+        lines.append(f"🏆 Won back from another agent: {_fmt(won_aor)}")
     msg = "\n".join(lines)
     print("  Upload summary:\n    " + msg.replace("\n", "\n    "))
 
