@@ -2674,9 +2674,12 @@ elif page == "Book":
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # Duplicate detection
-    dup_mask = all_clients.duplicated(subset=["first_name", "last_name"], keep=False)
-    dups = all_clients[dup_mask][["first_name", "last_name", "carrier", "state", "status", "effective_date"]].copy()
+    # Duplicate detection — only among policies still in force. A Terminated/
+    # Cancelled row alongside an active one is a plan switch, not a duplicate
+    # (Ethan 2026-07-10: "if its terminated dont worry about a duplicate").
+    _live = all_clients[~all_clients["status"].isin(["Terminated", "Cancelled"])]
+    dup_mask = _live.duplicated(subset=["first_name", "last_name"], keep=False)
+    dups = _live[dup_mask][["first_name", "last_name", "carrier", "state", "status", "effective_date"]].copy()
     dups = dups.sort_values(["last_name", "first_name"])
     if not dups.empty:
         st.warning(f"⚠️ {len(dups)} duplicate client names detected ({dups.groupby(['first_name','last_name']).ngroups} unique names appear more than once)")
