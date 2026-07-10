@@ -849,6 +849,7 @@ def run_report(settings: dict) -> None:
     # by reading the actual payments sheet and reconciling against the book.
     commission_gaps = None
     ambetter_disputes = None
+    _payments = None
     _pay_url = settings.get("payments_sheet_url")
     if _pay_url:
         try:
@@ -896,6 +897,47 @@ def run_report(settings: dict) -> None:
                           f"confirms owed but show no payment")
         except Exception as e:
             print(f"  (commission gaps / Ambetter disputes skipped: {e})")
+
+    # Fill missing carrier policy IDs. HealthSherpa's issuer_assigned_policy_id
+    # covers only part of the book — the carrier portals (Ambetter/Oscar/Anthem)
+    # and the commission statements know the rest. Matched per-carrier by name
+    # so a same-name client can't inherit another carrier's number. Priority:
+    # HealthSherpa (kept) > carrier book > statement policy id.
+    if not all_clients.empty and "policy_number" in all_clients.columns:
+        try:
+            from tracker.commissions import (carrier_policy_map, _route_carrier,
+                                             _norm_id, _person_key)
+            _pmap = carrier_policy_map(str(Path(__file__).resolve().parent.parent / "carrier_books"))
+            _stmt = {}
+            if _payments is not None and len(_payments):
+                for _, pr in _payments.iterrows():
+                    _rt = _route_carrier(pr.get("carrier"))
+                    _pid = str(pr.get("policy_id") or "").strip()
+                    if _rt and _pid:
+                        _stmt.setdefault((_rt, pr.get("name_key")), _pid)
+            _filled_book = _filled_stmt = 0
+            for _i, _r in all_clients.iterrows():
+                _cur = str(_r.get("policy_number") or "").strip()
+                if _cur and _cur.lower() not in ("nan", "none"):
+                    continue
+                _rt = _route_carrier(_r.get("carrier"))
+                if not _rt:
+                    continue
+                _f, _l = str(_r.get("first_name") or ""), str(_r.get("last_name") or "")
+                _pid = _pmap.get(_rt, {}).get(_norm_id(_l + _f)[:12])
+                if _pid:
+                    _filled_book += 1
+                else:
+                    _pid = _stmt.get((_rt, _person_key(_f, _l)))
+                    if _pid:
+                        _filled_stmt += 1
+                if _pid:
+                    all_clients.at[_i, "policy_number"] = _pid
+            if _filled_book or _filled_stmt:
+                print(f"  Policy IDs: filled {_filled_book} from carrier books, "
+                      f"{_filled_stmt} from commission statements")
+        except Exception as e:
+            print(f"  (policy-id fill skipped: {e})")
 
     # HealthSherpa verification follow-ups (open = save the subsidy; expired = lost).
     follow_ups = _build_follow_ups(all_clients)
