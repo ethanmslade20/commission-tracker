@@ -85,6 +85,9 @@ sources:
       agent:                "agent"
       email:                "email"
       phone:                "phone"
+      # Carrier-assigned policy ID (what's on the member's ID card, e.g.
+      # OSC74820849) — NOT healthsherpa_id, which is HS's internal number.
+      policy_number:        "issuer_assigned_policy_id"
       cancel_notes:         "policy_status_notes"
       # HealthSherpa verification follow-ups (DMI = Data Matching Issue,
       # SVI = SEP Verification Issue). Expired => subsidy/eligibility lost.

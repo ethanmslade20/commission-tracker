@@ -62,7 +62,8 @@ def _filter_excluded(df: pd.DataFrame, exclusions: list) -> pd.DataFrame:
 
 _ALL_CLIENTS_COLS = ["first_name", "last_name", "carrier", "effective_date", "term_date",
                      "status", "state", "ffm_app_id", "net_premium", "applicant_count", "months_on_book",
-                     "client_since", "cancel_reason", "term_estimated", "phone", "email"]
+                     "client_since", "cancel_reason", "term_estimated", "phone", "email",
+                     "policy_number"]
 
 _ACTIVE_COLS = ["first_name", "last_name", "carrier", "effective_date",
                 "status", "state", "ffm_app_id", "net_premium", "applicant_count", "months_on_book"]
@@ -147,6 +148,7 @@ def _build_supplemental_display(supp: pd.DataFrame) -> pd.DataFrame:
         "First Name":      df["first_name"],
         "Last Name":       df["last_name"],
         "Carrier":         df["carrier"],
+        "Policy Number":   df.get("policy_number", ""),
         "Product":         df["product"],
         "Monthly Premium": df["premium"].round(2),
         "Status":          df["status"],

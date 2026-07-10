@@ -47,6 +47,8 @@ EXTRA_COLS = [
     "agent",
     "email",
     "phone",
+    # Carrier-assigned policy ID (what's on the member's ID card)
+    "policy_number",
     "cancel_notes",
     # HealthSherpa verification follow-ups (DMI/SVI)
     "dmi_outstanding",

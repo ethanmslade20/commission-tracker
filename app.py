@@ -1008,7 +1008,7 @@ def _read_supplemental_df_from_sheet(spreadsheet) -> pd.DataFrame:
     """Read the Supplemental tab into the normalized roster shape used elsewhere
     (first_name, last_name, carrier, product, premium, status, term_date, ...).
     Empty frame if the tab is missing/empty."""
-    cols = ["first_name", "last_name", "carrier", "product", "premium",
+    cols = ["first_name", "last_name", "carrier", "policy_number", "product", "premium",
             "status", "status_detail", "term_date", "state", "email", "phone"]
     try:
         rows = _tab_records("Supplemental")
@@ -1023,6 +1023,7 @@ def _read_supplemental_df_from_sheet(spreadsheet) -> pd.DataFrame:
         "first_name": df.get("First Name"),
         "last_name": df.get("Last Name"),
         "carrier": df.get("Carrier"),
+        "policy_number": df.get("Policy Number", pd.Series("", index=df.index)).astype(str).str.strip(),
         "product": df.get("Product"),
         "premium": pd.to_numeric(
             df.get("Monthly Premium", "").astype(str).str.replace(r"[$,]", "", regex=True),
@@ -2841,11 +2842,11 @@ elif page == "Client Lookup":
             with st.container(border=True):
                 st.markdown(chart_head("Policies", f"{len(rows)} on record for {person}", "file"),
                             unsafe_allow_html=True)
-                _pc = [c for c in ["carrier", "status", "effective_date", "term_date",
+                _pc = [c for c in ["carrier", "policy_number", "status", "effective_date", "term_date",
                                    "net_premium", "applicant_count", "cancel_reason"] if c in rows.columns]
                 _pt = rows[_pc].rename(columns={
-                    "carrier": "Carrier", "status": "Status", "effective_date": "Effective",
-                    "term_date": "Term Date", "net_premium": "Premium",
+                    "carrier": "Carrier", "policy_number": "Policy ID", "status": "Status",
+                    "effective_date": "Effective", "term_date": "Term Date", "net_premium": "Premium",
                     "applicant_count": "Members", "cancel_reason": "Why Ended"})
                 st.dataframe(_pt, use_container_width=True, hide_index=True,
                              column_config={
@@ -2892,14 +2893,20 @@ elif page == "Client Lookup":
                         st.dataframe(_pv, use_container_width=True, hide_index=True,
                                      height=min(46 + 35 * len(_pv), 320))
 
-            # ── Supplemental coverage ─────────────────────────────────────────
+            # ── Supplemental coverage (one line per policy, with policy #) ────
             _supp = dd.get("supp_df")
             if _supp is not None and not getattr(_supp, "empty", True):
-                _en = _attach_supplemental(rows.head(1), _supp)
-                _sp = str(_en["_supp_products"].iloc[0] or "").strip()
-                if _sp:
-                    st.markdown(f"**🦷 Supplemental:** {_sp} — ${_en['_supp_premium'].iloc[0]}/mo "
-                                f"({_en['_supp_status'].iloc[0]})")
+                _skey = _supp_name_key(r.get("first_name", ""), r.get("last_name", ""))
+                _mine_supp = [t for t in _supp.itertuples(index=False)
+                              if _supp_name_key(getattr(t, "first_name", ""),
+                                                getattr(t, "last_name", "")) == _skey]
+                for _t in _mine_supp:
+                    _pn = str(getattr(_t, "policy_number", "") or "").strip()
+                    _pn_txt = f" · Policy #{_pn}" if _pn and _pn.lower() != "nan" else ""
+                    _prem_s = float(getattr(_t, "premium", 0) or 0)
+                    st.markdown(f"**🦷 Supplemental:** {getattr(_t, 'product', '')} "
+                                f"({_supp_carrier_label(getattr(_t, 'carrier', ''))}){_pn_txt} — "
+                                f"${_prem_s:,.2f}/mo ({getattr(_t, 'status', '')})")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # COMMISSIONS

@@ -11,8 +11,8 @@ only. When the agent provides comp rates, multiply premium by the rate per
 carrier to get commission.
 
 Normalized columns:
-  first_name, last_name, carrier, product, premium, status, status_detail,
-  state, email, phone
+  first_name, last_name, carrier, policy_number, product, premium, status,
+  status_detail, state, email, phone
 where `status` is collapsed to "Active" / "Inactive".
 """
 
@@ -55,6 +55,7 @@ def _load_uhc(path: Path) -> pd.DataFrame:
         "first_name": df["First Name"],
         "last_name": df["Last Name"],
         "carrier": _UHC,
+        "policy_number": df.get("Policy Number", pd.Series("", index=df.index)).astype(str).str.strip(),
         "product": df["Plan Name"],
         "premium": _money(df["Premium"]),
         "status_detail": df["Status"].astype(str).str.strip(),
@@ -84,6 +85,7 @@ def _load_natgen(path: Path) -> pd.DataFrame:
         "first_name": df["Member First Name"],
         "last_name": df["Member Last Name"],
         "carrier": _ALLSTATE,
+        "policy_number": df.get("Policy Number", pd.Series("", index=df.index)).astype(str).str.strip(),
         "product": df["Product Name"],
         "premium": _money(df["Premium Amount"]),
         "status_detail": df["Policy Status"].astype(str).str.strip(),
@@ -112,7 +114,7 @@ def load_supplemental(carrier_books_dir: str = _DEFAULT_BOOKS) -> pd.DataFrame:
         _load_natgen(base / "supp_natgen.csv"),
     ]
     frames = [f for f in frames if not f.empty]
-    cols = ["first_name", "last_name", "carrier", "product", "premium",
+    cols = ["first_name", "last_name", "carrier", "policy_number", "product", "premium",
             "status", "status_detail", "term_date", "state", "email", "phone"]
     if not frames:
         return pd.DataFrame(columns=cols)
