@@ -143,6 +143,7 @@ def build_all_clients(months: dict) -> pd.DataFrame:
     all_df["_srank"] = all_df["status"].map(_STATUS_RANK).fillna(0)
     all_df["effective_date"] = pd.to_datetime(all_df.get("effective_date"), errors="coerce")
     all_df["term_date"]      = pd.to_datetime(all_df.get("term_date"),      errors="coerce")
+    all_df["submission_date"] = pd.to_datetime(all_df.get("submission_date"), errors="coerce")
 
     # Sort: oldest month first, within same month inactive before active
     # → "last" in each group = most recent month, most active row
@@ -159,6 +160,8 @@ def build_all_clients(months: dict) -> pd.DataFrame:
             "dmi_outstanding", "dmi_expired", "svi_outstanding", "svi_expired", "followup_docs",
             # current agent of record (for AOR-taken detection on Re-Engage)
             "policy_aor", "last_ede_sync",
+            # carrier-assigned policy ID (member's card) — most recent plan's
+            "policy_number",
         ]
         if col in all_df.columns
     }
@@ -169,6 +172,7 @@ def build_all_clients(months: dict) -> pd.DataFrame:
             first_seen        = ("month",          "min"),
             last_seen         = ("month",          "max"),
             effective_date    = ("effective_date", "min"),   # earliest plan start
+            submission_date   = ("submission_date", "min"),  # first time they signed with us
             _term_date_last   = ("term_date",      "last"),  # most recent term_date
             _has_active       = ("_srank",         "max"),   # 1 if any active plan exists
             **last_fields,
@@ -203,7 +207,7 @@ def build_all_clients(months: dict) -> pd.DataFrame:
         "effective_date", "term_date", "status", "state", "ffm_app_id", "ffm_subscriber_id",
         "email", "phone", "cancel_notes", "net_premium", "applicant_count", "first_seen", "last_seen", "months_on_book",
         "dmi_outstanding", "dmi_expired", "svi_outstanding", "svi_expired", "followup_docs",
-        "policy_aor", "last_ede_sync",
+        "policy_aor", "last_ede_sync", "policy_number", "submission_date",
     ]
     return agg[[c for c in cols if c in agg.columns]]
 
