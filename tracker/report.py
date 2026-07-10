@@ -695,16 +695,29 @@ def run_report(settings: dict) -> None:
         fs = row.get("first_seen")
         if isinstance(fs, str) and fs:
             try:
-                return pd.Timestamp(fs + "-01")
+                start = pd.Timestamp(fs + "-01")
             except Exception:
-                pass
+                start = None
+            if start is not None:
+                # first_seen is month-granular; if they signed during that same
+                # month, the submission date gives the real day.
+                sub = pd.to_datetime(row.get("submission_date"), errors="coerce")
+                if pd.notna(sub) and (sub.year, sub.month) == (start.year, start.month):
+                    return sub.normalize()
+                return start
         return pd.Timestamp(_earliest_month + "-01")
 
     if not all_clients.empty:
         all_clients["client_since"] = all_clients.apply(_tenure_start, axis=1)
         _cs = pd.to_datetime(all_clients["client_since"], errors="coerce")
-        all_clients["months_on_book"] = ((_latest_y - _cs.dt.year) * 12
-                                         + (_latest_m - _cs.dt.month) + 1).clip(lower=1)
+        # COMPLETED months since client_since (day-aware) — "4" used to mean
+        # "their 4th calendar month", which read as double the real tenure
+        # (Ethan 2026-07-10: "why does it say 4 months when May was not 4
+        # months ago"). A brand-new client is 0 (i.e. under a month).
+        _now = pd.Timestamp.today().normalize()
+        all_clients["months_on_book"] = ((_now.year - _cs.dt.year) * 12
+                                         + (_now.month - _cs.dt.month)
+                                         - (_now.day < _cs.dt.day).astype(int)).clip(lower=0)
 
     # Cancellation reason for the Re-Engage view: use HealthSherpa's own notes
     # ("Canceled at member's request" etc.) when present, else a derived

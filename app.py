@@ -2807,7 +2807,7 @@ elif page == "Client Lookup":
                                       "dollar", GREEN), unsafe_allow_html=True)
             with k3:
                 st.markdown(stat_card("Months on Book",
-                                      f"{int(_mob)}" if pd.notna(_mob) else "—",
+                                      ("<1" if int(_mob) == 0 else f"{int(_mob)}") if pd.notna(_mob) else "—",
                                       "calendar", ELEC), unsafe_allow_html=True)
             with k4:
                 st.markdown(stat_card("Est Commission / Yr",
@@ -2818,11 +2818,15 @@ elif page == "Client Lookup":
             _ph = _re.sub(r"\D", "", str(r.get("phone") or ""))
             _ph_fmt = f"({_ph[:3]}) {_ph[3:6]}-{_ph[6:10]}" if len(_ph) >= 10 else (_ph or "—")
             _em = str(r.get("email") or "").strip() or "—"
-            c1, c2 = st.columns(2)
+            _cs = pd.to_datetime(r.get("client_since"), errors="coerce")
+            _cs_fmt = _cs.strftime("%b %-d, %Y") if pd.notna(_cs) else "—"
+            c1, c2, c3 = st.columns(3)
             with c1:
                 st.markdown(f"**📞 Phone:** {_ph_fmt}")
             with c2:
                 st.markdown(f"**✉️ Email:** {_em}")
+            with c3:
+                st.markdown(f"**🗓️ Client since:** {_cs_fmt}")
 
             # ── Why they left (if churned) ────────────────────────────────────
             _reason = str(r.get("cancel_reason") or "").strip()

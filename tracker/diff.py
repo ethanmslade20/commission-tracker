@@ -191,7 +191,8 @@ def build_all_clients(months: dict) -> pd.DataFrame:
             eff = pd.Timestamp(eff_date)
             if pd.isna(eff):
                 return None
-            return (latest_y - eff.year) * 12 + (latest_m - eff.month) + 1
+            # completed months (matches report.py's day-aware tenure)
+            return max((latest_y - eff.year) * 12 + (latest_m - eff.month), 0)
         except Exception:
             return None
 
