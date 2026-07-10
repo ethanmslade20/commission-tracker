@@ -38,7 +38,10 @@ def build_freshness(now=None) -> pd.DataFrame:
     rows = []
     for label, path in _SOURCES:
         if Path(path).exists():
-            ts = pd.Timestamp(Path(path).stat().st_mtime, unit="s")
+            # fromtimestamp gives LOCAL time; pd.Timestamp(mtime, unit="s") is
+            # UTC and made every timestamp read 6h ahead (and ages 6h young).
+            from datetime import datetime
+            ts = pd.Timestamp(datetime.fromtimestamp(Path(path).stat().st_mtime))
             age = (now - ts).total_seconds() / 86400
             rows.append({"Source": label,
                          "Last Updated": ts.strftime("%b %d, %Y · %I:%M %p"),
