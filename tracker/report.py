@@ -393,7 +393,7 @@ def _upload_summary(all_clients, pastdue, snapshot_dir, today=None) -> None:
     def _disp(f, l):
         return f"{f} {l}".strip().title()
 
-    lost, aor, pol, polmem = {}, {}, set(), {}
+    lost, vexp, aor, pol, polmem = {}, {}, {}, set(), {}
     active_mine = {}   # currently active AND credited to the agent — win-back proof
     for _, r in all_clients.iterrows():
         f, l = r.get("first_name", ""), r.get("last_name", "")
@@ -402,7 +402,13 @@ def _upload_summary(all_clients, pastdue, snapshot_dir, today=None) -> None:
             continue
         st = str(r.get("status") or "")
         if st in ("Cancelled", "Terminated"):
-            lost[k] = _disp(f, l)
+            # Expired DMI/SVI verification ≠ cancelled: coverage is usually still
+            # active with a termination date pending, so the client is SAVEABLE
+            # (Ahmed Elzubair 2026-07-10 — Effectuated + paid, terming 7/31).
+            if "Verification expired" in str(r.get("cancel_reason") or ""):
+                vexp[k] = _disp(f, l)
+            else:
+                lost[k] = _disp(f, l)
         if st in ("Effectuated", "PendingEffectuation", "PendingFollowups"):
             _a = r.get("policy_aor")
             a = "" if pd.isna(_a) else str(_a)
@@ -440,6 +446,9 @@ def _upload_summary(all_clients, pastdue, snapshot_dir, today=None) -> None:
     def _new(cur, base):
         return [] if base is None else [v for k, v in cur.items() if k not in base]
     new_lost = _new(lost, base_lost)
+    # Expired verifications share the known_lapsed baseline so a client already
+    # texted under either label never re-alerts when they move between buckets.
+    new_vexp = _new(vexp, base_lost)
     new_aor = _new(aor, base_aor)
     new_pd = _new(pdue, base_pd)
     # Win-backs: was lost/taken at the last text, now active AND his again.
@@ -459,7 +468,7 @@ def _upload_summary(all_clients, pastdue, snapshot_dir, today=None) -> None:
     # send after the marker write "consumed" the upload event, and the next
     # run's gate stayed silent forever.
     def _save_state():
-        (_data / "known_lapsed.json").write_text(json.dumps(lost, indent=2))
+        (_data / "known_lapsed.json").write_text(json.dumps({**vexp, **lost}, indent=2))
         (_data / "known_aor.json").write_text(json.dumps(aor, indent=2))
         (_data / "known_pastdue.json").write_text(json.dumps(pdue, indent=2))
         (_data / "known_policies.json").write_text(json.dumps(sorted(pol), indent=2))
@@ -477,7 +486,8 @@ def _upload_summary(all_clients, pastdue, snapshot_dir, today=None) -> None:
              f"✅ Signed: {new_pol_n} new policies / {new_mem} members"]
     total = len(new_lost) + len(new_pd) + len(new_aor)
     if total == 0:
-        lines.append("⬇️ Lost 0 clients — all clear.")
+        if not new_vexp:
+            lines.append("⬇️ Lost 0 clients — all clear.")
     else:
         lines.append(f"⬇️ Lost {total} clients:")
         if new_lost:
@@ -486,6 +496,9 @@ def _upload_summary(all_clients, pastdue, snapshot_dir, today=None) -> None:
             lines.append(f" • Behind on payment: {_fmt(new_pd)}")
         if new_aor:
             lines.append(f" • Taken by another agent: {_fmt(new_aor)}")
+    if new_vexp:
+        lines.append(f"⚠️ Verification expired — still active but will be termed "
+                     f"unless docs go in: {_fmt(new_vexp)}")
     if won_lost:
         lines.append(f"🎉 Won back (were cancelled): {_fmt(won_lost)}")
     if won_aor:
