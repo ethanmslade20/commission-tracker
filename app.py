@@ -2780,7 +2780,11 @@ elif page == "Client Lookup":
                 f"<span style='background:{_pill_bg};color:{_pill_tx};padding:3px 12px;border-radius:999px;"
                 f"font-size:.8rem;font-weight:700;'>{r.get('status','?')}</span></div>"
                 f"<div style='color:#94a3b8;font-size:.95rem;margin-bottom:10px;'>"
-                f"{r.get('carrier','—')} · {r.get('state','—')}</div>",
+                f"{r.get('carrier','—')} · {r.get('state','—')}"
+                + (f" · Policy ID: <span style='color:#e2e8f0;font-weight:600;'>{_pid_hdr}</span>"
+                   if (_pid_hdr := str(r.get('policy_number') or '').strip()) and _pid_hdr.lower() not in ('nan', 'none')
+                   else "")
+                + "</div>",
                 unsafe_allow_html=True)
 
             # ── Agent-of-record banner ────────────────────────────────────────
