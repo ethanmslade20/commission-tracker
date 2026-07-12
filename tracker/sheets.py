@@ -188,6 +188,30 @@ def _coalesce_sale_date(df: pd.DataFrame) -> pd.Series:
     return sub
 
 
+def _daily_counts_from_detail(detail: pd.DataFrame, month_str: str) -> pd.DataFrame:
+    """One row per calendar day of month_str from Daily Detail rows:
+    Date (Mon DD), Policies (row count), Members (sum). Zero-filled days."""
+    import calendar
+    year, month = int(month_str[:4]), int(month_str[5:7])
+    days_in_month = calendar.monthrange(year, month)[1]
+    all_days = pd.date_range(f"{month_str}-01", periods=days_in_month, freq="D")
+    base = pd.DataFrame({"date": all_days})
+    if detail is None or detail.empty:
+        g = pd.DataFrame(columns=["date", "Policies", "Members"])
+    else:
+        dts = pd.to_datetime(detail["Date"], errors="coerce")
+        mem = pd.to_numeric(detail["Members"], errors="coerce").fillna(1)
+        sel = (dts >= all_days[0]) & (dts <= all_days[-1])
+        g = (pd.DataFrame({"date": dts[sel].dt.normalize(), "mem": mem[sel]})
+             .groupby("date").agg(Policies=("mem", "count"), Members=("mem", "sum"))
+             .reset_index())
+    out = base.merge(g, on="date", how="left").fillna(0)
+    out["Policies"] = out["Policies"].astype(int)
+    out["Members"] = out["Members"].astype(int)
+    out["Date"] = out["date"].dt.strftime("%b %d")
+    return out[["Date", "Policies", "Members"]]
+
+
 def _build_daily_tracker_data(df: pd.DataFrame, month_str: str) -> pd.DataFrame:
     """Return a DataFrame with one row per calendar day of month_str.
     Columns: Date (Mon DD), Policies (count), Members (applicant_count sum).
@@ -276,18 +300,39 @@ def _build_daily_detail(months: Dict[str, pd.DataFrame]) -> pd.DataFrame:
     def _key(f, l):
         return _re.sub(r"[^a-z]", "", f"{f}{l}".lower())
 
+    # Prior-existence check across ALL snapshots. HealthSherpa ARCHIVES the old
+    # application on a re-enroll / plan switch, so in the latest export an
+    # existing client's renewal looks like their first submission. The monthly
+    # snapshot history proves who already existed: anyone first seen in an
+    # EARLIER month than a sale is a renewal, not new business (Ethan
+    # 2026-07-12: "they have to be brand new to me to count").
+    first_seen_month: dict = {}
+    for m in sorted(months.keys()):
+        df_m = months[m]
+        if df_m is None or df_m.empty:
+            continue
+        for f, l in zip(df_m.get("first_name", pd.Series(dtype=str)).fillna(""),
+                        df_m.get("last_name", pd.Series(dtype=str)).fillna("")):
+            k = _key(str(f), str(l))
+            if k:
+                first_seen_month.setdefault(k, m)
+
     d["_k"] = [_key(str(a), str(b)) for a, b in
                zip(d.get("first_name", "").fillna(""), d.get("last_name", "").fillna(""))]
     _first_sale = d.groupby("_k")["_sale"].transform("min")
+    _sale_month = d["_sale"].dt.strftime("%Y-%m")
+    _prior = d["_k"].map(first_seen_month)
+    _is_new = ((d["_sale"] == _first_sale)
+               & (_prior.isna() | (_prior >= _sale_month)))
     out = pd.DataFrame({
         "Date": d["_sale"].dt.strftime("%Y-%m-%d"),
-        "Month": d["_sale"].dt.strftime("%Y-%m"),
+        "Month": _sale_month,
         "First Name": d.get("first_name", ""),
         "Last Name": d.get("last_name", ""),
         "Members": pd.to_numeric(d.get("applicant_count", 1), errors="coerce").fillna(1).astype(int),
         "Carrier": d.get("carrier", ""),
         "State": d.get("state", ""),
-        "Is New": (d["_sale"] == _first_sale).map({True: "Yes", False: "No"}),
+        "Is New": _is_new.map({True: "Yes", False: "No"}),
     })
     return out.sort_values(["Month", "Date", "Last Name"]).reset_index(drop=True)
 
@@ -307,13 +352,13 @@ def _write_daily_tracker_tab(
     sheet_id = ws.id
 
     # ── Data ─────────────────────────────────────────────────────────────────
-    # Build every month's tab from the NEWEST snapshot (a full-history export):
-    # each month's own backfill snapshot missed applications that only surfaced
-    # in later exports, undercounting daily totals.
-    _newest = max(months.keys()) if months else None
-    daily_df = _build_daily_tracker_data(
-        months.get(_newest, pd.DataFrame()) if _newest else pd.DataFrame(), latest_month
-    )
+    # Count BRAND-NEW enrollments only (same rows as the Daily Detail's
+    # "Is New" — first-ever sale, not previously seen in any snapshot), so
+    # OEP re-enrollments and plan switches never inflate a day's bar.
+    _detail = _build_daily_detail(months)
+    _new_rows = (_detail[_detail["Is New"] == "Yes"]
+                 if not _detail.empty else _detail)
+    daily_df = _daily_counts_from_detail(_new_rows, latest_month)
     n = len(daily_df)                              # days in month (e.g. 30)
 
     total_pol   = int(daily_df["Policies"].sum())
