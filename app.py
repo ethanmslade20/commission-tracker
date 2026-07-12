@@ -3392,12 +3392,92 @@ elif page == "Goals":
     _prev_goal_members = st.session_state.get("goal_members", 2000)
     _prev_goal_date     = st.session_state.get("goal_date", dt.date(2027, 2, 1))
 
-    gi1, gi2 = st.columns(2)
+    # Goal input cards — dark filled tiles with gradient borders, icon squares,
+    # big values. Native number/date widgets underneath (steppers + picker keep
+    # working); everything here is styling only.
+    _USERS_SVG = ("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' "
+                  "fill='none' stroke='%23a78bfa' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'>"
+                  "<path d='M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2'/><circle cx='9' cy='7' r='4'/>"
+                  "<path d='M23 21v-2a4 4 0 0 0-3-3.87'/><path d='M16 3.13a4 4 0 0 1 0 7.75'/></svg>")
+    _CAL_SVG = ("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' "
+                "fill='none' stroke='%23a78bfa' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'>"
+                "<rect x='3' y='4' width='18' height='18' rx='2' ry='2'/><line x1='16' y1='2' x2='16' y2='6'/>"
+                "<line x1='8' y1='2' x2='8' y2='6'/><line x1='3' y1='10' x2='21' y2='10'/></svg>")
+    st.markdown(f"""
+    <style>
+      .st-key-goal_card_members, .st-key-goal_card_date {{
+        position:relative; border-radius:20px; background:#0c1424;
+        padding:30px 30px 30px 112px; min-height:132px; justify-content:center;
+      }}
+      .st-key-goal_card_members {{ box-shadow:0 0 24px rgba(139,92,246,.16); }}
+      .st-key-goal_card_members::before {{
+        content:""; position:absolute; inset:0; border-radius:20px; padding:1.5px;
+        background:linear-gradient(120deg,#4285F4,#8b5cf6 55%,#b06ef7);
+        -webkit-mask:linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+        -webkit-mask-composite:xor; mask-composite:exclude; pointer-events:none;
+      }}
+      .st-key-goal_card_date {{ box-shadow:0 0 20px rgba(66,133,244,.10); }}
+      .st-key-goal_card_date::before {{
+        content:""; position:absolute; inset:0; border-radius:20px; padding:1.5px;
+        background:linear-gradient(120deg,rgba(66,133,244,.55),rgba(96,120,200,.30));
+        -webkit-mask:linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+        -webkit-mask-composite:xor; mask-composite:exclude; pointer-events:none;
+      }}
+      .st-key-goal_card_members::after, .st-key-goal_card_date::after {{
+        content:""; position:absolute; left:28px; top:50%; transform:translateY(-50%);
+        width:56px; height:56px; border-radius:16px; background-color:#161f38;
+        background-repeat:no-repeat; background-position:center; background-size:28px 28px;
+        box-shadow:inset 0 0 0 1px rgba(139,92,246,.28); pointer-events:none;
+      }}
+      .st-key-goal_card_members::after {{ background-image:url("{_USERS_SVG}"); }}
+      .st-key-goal_card_date::after    {{ background-image:url("{_CAL_SVG}"); }}
+
+      .st-key-goal_card_members [data-testid="stWidgetLabel"] p,
+      .st-key-goal_card_date [data-testid="stWidgetLabel"] p {{
+        font-size:.85rem !important; color:#8aacd6 !important;
+      }}
+      .st-key-goal_card_members [data-testid="stNumberInputContainer"],
+      .st-key-goal_card_members div[data-baseweb="input"],
+      .st-key-goal_card_members div[data-baseweb="input"] > div,
+      .st-key-goal_card_members [data-baseweb="base-input"],
+      .st-key-goal_card_date div[data-baseweb="input"],
+      .st-key-goal_card_date div[data-baseweb="input"] > div,
+      .st-key-goal_card_date [data-baseweb="base-input"] {{
+        background:transparent !important; border:none !important; box-shadow:none !important;
+      }}
+      .st-key-goal_card_members input, .st-key-goal_card_date input {{
+        font-size:1.9rem !important; font-weight:700 !important; color:#f2f5fb !important;
+        background:transparent !important; padding-left:0 !important;
+      }}
+      /* minus / plus steppers with divider lines */
+      .st-key-goal_card_members button[data-testid*="StepDown"],
+      .st-key-goal_card_members button[data-testid*="StepUp"] {{
+        background:transparent !important; border-radius:0 !important;
+        border-left:1px solid rgba(138,172,214,.18) !important;
+        width:54px !important; color:#e8edf5 !important;
+      }}
+      .st-key-goal_card_members button[data-testid*="StepDown"]:hover,
+      .st-key-goal_card_members button[data-testid*="StepUp"]:hover {{
+        background:rgba(139,92,246,.12) !important;
+      }}
+      /* purple calendar glyph on the far right of the date card */
+      .st-key-goal_card_date div[data-baseweb="input"] {{ position:relative; }}
+      .st-key-goal_card_date div[data-baseweb="input"]::after {{
+        content:""; position:absolute; right:6px; top:50%; transform:translateY(-50%);
+        width:26px; height:26px; background:url("{_CAL_SVG}") no-repeat center/26px 26px;
+        pointer-events:none; opacity:.9;
+      }}
+    </style>
+    """, unsafe_allow_html=True)
+
+    gi1, gi2 = st.columns(2, gap="large")
     with gi1:
-        GOAL = st.number_input("Member goal", min_value=1, value=_prev_goal_members, step=50)
+        with st.container(key="goal_card_members"):
+            GOAL = st.number_input("Member goal", min_value=1, value=_prev_goal_members, step=50)
         st.session_state["goal_members"] = GOAL
     with gi2:
-        GOAL_DATE = st.date_input("Target date", value=_prev_goal_date)
+        with st.container(key="goal_card_date"):
+            GOAL_DATE = st.date_input("Target date", value=_prev_goal_date)
         st.session_state["goal_date"] = GOAL_DATE
 
     if (GOAL != _prev_goal_members or GOAL_DATE != _prev_goal_date) and _running_in_cloud():
