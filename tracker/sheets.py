@@ -317,13 +317,53 @@ def _build_daily_detail(months: Dict[str, pd.DataFrame]) -> pd.DataFrame:
             if k:
                 first_seen_month.setdefault(k, m)
 
+    # Earliest hard evidence a person already existed BEFORE a sale month:
+    #  - any effective date on ANY of their HS rows (pre-filter — old policy
+    #    rows survive even when the application itself was archived), and
+    #  - the carrier books' own dates (Ambetter "Broker Effective Date",
+    #    Anthem "Original Effective Date"), which don't depend on HS history.
+    # Cross-checking Nov 2025 against Ambetter showed 40 of 286 "new" people
+    # were pre-existing clients re-enrolling — this catches them.
+    _evidence: dict = {}
+    def _note(k, ts):
+        if k and pd.notna(ts) and (k not in _evidence or ts < _evidence[k]):
+            _evidence[k] = ts
+    _raw = months[max(months.keys())]
+    _raw_eff = pd.to_datetime(_raw.get("effective_date"), errors="coerce")
+    for f, l, e in zip(_raw.get("first_name", pd.Series(dtype=str)).fillna(""),
+                       _raw.get("last_name", pd.Series(dtype=str)).fillna(""), _raw_eff):
+        _note(_key(str(f), str(l)), e)
+    try:
+        from pathlib import Path
+        _books = Path(__file__).resolve().parent.parent / "carrier_books"
+        _amb = _books / "ambetter.csv"
+        if _amb.exists():
+            _a = pd.read_csv(_amb, dtype=str)
+            _abed = pd.to_datetime(_a.get("Broker Effective Date"), errors="coerce")
+            for f, l, e in zip(_a.get("Insured First Name", pd.Series(dtype=str)).fillna(""),
+                               _a.get("Insured Last Name", pd.Series(dtype=str)).fillna(""), _abed):
+                _note(_key(str(f), str(l)), e)
+        _ant = _books / "anthem.csv"
+        if _ant.exists():
+            _n = pd.read_csv(_ant, dtype=str, skiprows=1)
+            _noed = pd.to_datetime(_n.get("Original Effective Date"), errors="coerce")
+            for nm, e in zip(_n.get("Client Name", pd.Series(dtype=str)).fillna(""), _noed):
+                if "," in str(nm):
+                    _last, _first = [x.strip() for x in str(nm).split(",", 1)]
+                    _note(_key(_first, _last), e)
+    except Exception:
+        pass  # carrier books are local-only; the HS + snapshot checks still apply
+
     d["_k"] = [_key(str(a), str(b)) for a, b in
                zip(d.get("first_name", "").fillna(""), d.get("last_name", "").fillna(""))]
     _first_sale = d.groupby("_k")["_sale"].transform("min")
     _sale_month = d["_sale"].dt.strftime("%Y-%m")
+    _month_start = pd.to_datetime(_sale_month + "-01")
     _prior = d["_k"].map(first_seen_month)
+    _evid = d["_k"].map(_evidence)
     _is_new = ((d["_sale"] == _first_sale)
-               & (_prior.isna() | (_prior >= _sale_month)))
+               & (_prior.isna() | (_prior >= _sale_month))
+               & (_evid.isna() | (_evid >= _month_start)))
     out = pd.DataFrame({
         "Date": d["_sale"].dt.strftime("%Y-%m-%d"),
         "Month": _sale_month,
