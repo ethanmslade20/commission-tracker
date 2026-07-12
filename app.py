@@ -273,10 +273,10 @@ st.markdown(f"""
     padding: 6px 4px 2px;
   }}
   /* Nav items (radio styled as menu) */
-  section[data-testid="stSidebar"] div[role="radiogroup"] {{ gap: 3px; }}
+  section[data-testid="stSidebar"] div[role="radiogroup"] {{ gap: 6px; }}
   section[data-testid="stSidebar"] div[role="radiogroup"] > label {{
-    display: flex; align-items: center; gap: 13px;
-    padding: 11px 14px; border-radius: 12px; margin: 2px 0;
+    display: flex; align-items: center; gap: 14px; width: 100%;
+    padding: 13px 16px; border-radius: 14px; margin: 2px 0;
     transition: background .15s ease, box-shadow .15s ease;
     cursor: pointer;
   }}
@@ -287,27 +287,46 @@ st.markdown(f"""
     opacity: 0.85;
   }}
   section[data-testid="stSidebar"] div[role="radiogroup"] > label:hover {{
-    background: rgba(96,165,250,0.08);
+    background: rgba(96,165,250,0.07);
   }}
+  /* selected page: dark pill with a blue→purple ring, soft glow, red dot */
   section[data-testid="stSidebar"] div[role="radiogroup"] > label:has(input:checked) {{
-    background: linear-gradient(90deg, rgba(59,130,246,0.38), rgba(124,58,237,0.22));
-    box-shadow: inset 3px 0 0 0 #60a5fa,
-                inset 0 0 0 1px rgba(96,165,250,0.45),
-                0 0 14px rgba(96,165,250,0.18);
+    background: rgba(30,48,92,0.45);
+    box-shadow: inset 0 0 0 1.5px rgba(96,165,250,0.75),
+                0 0 0 1px rgba(139,92,246,0.45),
+                0 0 18px rgba(96,165,250,0.22);
   }}
   section[data-testid="stSidebar"] div[role="radiogroup"] > label:has(input:checked)::before {{
     opacity: 1;
   }}
   section[data-testid="stSidebar"] div[role="radiogroup"] > label:has(input:checked) p {{
-    font-weight: 600; color: #ffffff;
+    font-weight: 700; color: #dbe7ff;
+  }}
+  section[data-testid="stSidebar"] div[role="radiogroup"] > label:has(input:checked) > div:last-child,
+  section[data-testid="stSidebar"] div[role="radiogroup"] > label:has(input:checked) [data-testid="stMarkdownContainer"] {{
+    flex: 1; width: 100%;
+  }}
+  section[data-testid="stSidebar"] div[role="radiogroup"] > label:has(input:checked) p::after {{
+    content: ""; margin-left: auto; width: 10px; height: 10px; border-radius: 50%;
+    background: #f43f5e; box-shadow: 0 0 9px rgba(244,63,94,0.85);
   }}
   /* hide the radio dot so it reads as a clean nav item */
   section[data-testid="stSidebar"] div[role="radiogroup"] > label > div:first-child {{
     display: none;
   }}
   section[data-testid="stSidebar"] div[role="radiogroup"] label p {{
-    font-size: 0.92rem; font-weight: 500; color: #cbd5e1;
+    font-size: 0.97rem; font-weight: 500; color: #cbd5e1;
+    display: flex; align-items: center; width: 100%;
   }}
+  /* sidebar footer info rows (snapshot / client count) */
+  .sb-foot {{ display: flex; align-items: center; gap: 11px; margin: 7px 2px; }}
+  .sb-foot .tile {{
+    flex: 0 0 auto; width: 32px; height: 32px; border-radius: 9px;
+    background: #131f3a; box-shadow: inset 0 0 0 1px rgba(96,165,250,0.14);
+    display: flex; align-items: center; justify-content: center; font-size: .85rem;
+  }}
+  .sb-foot .txt {{ font-size: .88rem; color: #9fb2cc; }}
+  .sb-foot .txt b {{ color: #e8edf5; }}
   /* Brand logo row */
   .brand-row {{ display: flex; align-items: center; gap: 11px; padding: 8px 4px 2px; }}
   .brand-row .brand-logo {{
@@ -665,8 +684,10 @@ def _nav_icon_css():
         )
     rules += (
         f'{_SB}:nth-of-type(1) {{margin-top:20px;}}'
-        # Settings: pinned visually apart with a hairline divider above it.
-        f'{_SB}:nth-of-type(14) {{margin-top:30px; position:relative; overflow:visible;}}'
+        # Settings: pinned visually apart — hairline divider above + its own
+        # filled rounded row (matches the reference sidebar).
+        f'{_SB}:nth-of-type(14) {{margin-top:30px; position:relative; overflow:visible;'
+        f'background:rgba(19,31,58,.55);}}'
         f'{_SB}:nth-of-type(14)::after {{content:""; position:absolute; top:-15px; left:10px; right:10px;'
         f'height:1px; background:rgba(148,163,184,.16);}}'
     )
@@ -1890,7 +1911,17 @@ with st.sidebar:
 
     # Compact mode: icons-only rail for more content width.
     _compact = st.session_state.get("nav_compact", False)
-    if st.button("⇥  expand" if _compact else "⇤  compact", key="nav_compact_btn",
+    st.markdown("""<style>
+      section[data-testid="stSidebar"] .st-key-nav_compact_btn button {
+        background: rgba(19,31,58,.6) !important; color: #60a5fa !important;
+        box-shadow: none !important; border: 1px solid rgba(96,165,250,.14) !important;
+        font-weight: 600;
+      }
+      section[data-testid="stSidebar"] .st-key-nav_compact_btn button:hover {
+        border-color: rgba(96,165,250,.4) !important; transform: none;
+      }
+    </style>""", unsafe_allow_html=True)
+    if st.button("⇥  Expand" if _compact else "⇤  Compact", key="nav_compact_btn",
                  use_container_width=True, help="Collapse the sidebar to icons only"):
         st.session_state["nav_compact"] = not _compact
         st.rerun()
@@ -1902,14 +1933,20 @@ with st.sidebar:
           section[data-testid="stSidebar"] div[role="radiogroup"] > label {justify-content:center; padding:11px 6px;}
           section[data-testid="stSidebar"] div[role="radiogroup"] > label::after {display:none !important;}
           section[data-testid="stSidebar"] div[data-testid="stCaptionContainer"] {display:none;}
+          section[data-testid="stSidebar"] .sb-foot {display:none;}
           section[data-testid="stSidebar"] div[data-testid="stDownloadButton"] {display:none;}
           section[data-testid="stSidebar"] .st-key-refresh_btn {display:none;}
           section[data-testid="stSidebar"] .st-key-nav_compact_btn button {padding:4px 2px; font-size:.8rem;}
         </style>""", unsafe_allow_html=True)
 
     st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
-    st.caption(f"📅 Latest snapshot: **{latest_label}**")
-    st.caption(f"👥 {len(all_clients):,} total clients tracked")
+    st.markdown(
+        f'<div class="sb-foot"><div class="tile">📅</div>'
+        f'<div class="txt">Latest snapshot: <b>{latest_label}</b></div></div>'
+        f'<div class="sb-foot"><div class="tile">👥</div>'
+        f'<div class="txt"><b>{len(all_clients):,}</b> total clients tracked</div></div>',
+        unsafe_allow_html=True,
+    )
 
     if st.button("🔄 Refresh data", use_container_width=True, key="refresh_btn"):
         st.cache_data.clear()
