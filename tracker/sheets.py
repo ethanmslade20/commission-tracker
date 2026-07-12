@@ -247,65 +247,49 @@ def _build_daily_tracker_data(df: pd.DataFrame, month_str: str) -> pd.DataFrame:
 
 
 def _build_daily_detail(months: Dict[str, pd.DataFrame]) -> pd.DataFrame:
-    """Per-policy submission detail across all months (same coalesced-sale-date +
-    Option-A new-business logic as the daily tracker). Each policy is counted ONCE
-    in the month it was submitted (avoids the same policy reappearing in every
-    later monthly snapshot). Adds "Is New": "Yes" for a person's FIRST-ever
-    submission, "No" for later ones (OEP renewals / re-submissions), so records
-    can reflect genuinely new clients vs. the annual renewal wave.
+    """Per-policy submission detail, built from the NEWEST snapshot only. Every
+    export is a full-history pull (the downloads watcher rejects partial ones),
+    so the latest snapshot already holds every submission since 2025-01-01.
+    Stitching one month per snapshot (the old way) undercounted: applications
+    that only surfaced in later exports were missing from their month (Nov 2025
+    best day showed 26 policies vs 28 actual). "Is New": "Yes" on a person's
+    first-ever submission, "No" on later ones (OEP renewals / re-submissions).
     Columns: Date, Month, First Name, Last Name, Members, Carrier, State, Is New."""
     import re as _re
     cols = ["Date", "Month", "First Name", "Last Name", "Members", "Carrier", "State", "Is New"]
+    if not months:
+        return pd.DataFrame(columns=cols)
+    d = months[max(months.keys())]
+    if d is None or d.empty:
+        return pd.DataFrame(columns=cols)
+    d = d.copy()
+    d["_sale"] = _coalesce_sale_date(d)
+    d = d[d["_sale"].notna()]
+    # Option A — new business only: coverage starts after the sale date (same
+    # rule as the daily tracker tabs), excluding claimed/serviced old policies.
+    if "effective_date" in d.columns:
+        eff = pd.to_datetime(d["effective_date"], errors="coerce")
+        d = d[(eff > d["_sale"]).fillna(False)]
+    if d.empty:
+        return pd.DataFrame(columns=cols)
 
     def _key(f, l):
         return _re.sub(r"[^a-z]", "", f"{f}{l}".lower())
 
-    # first_seen = earliest snapshot month each person appears (any row). A sale
-    # is "new business" only if it happens in that first month; a submission in a
-    # later month (the OEP renewal wave, etc.) is a renewal.
-    first_seen = {}
-    for m in sorted((months or {}).keys()):
-        df = months[m]
-        if df is None or df.empty:
-            continue
-        for f, l in zip(df.get("first_name", pd.Series(dtype=str)).fillna(""),
-                        df.get("last_name", pd.Series(dtype=str)).fillna("")):
-            k = _key(str(f), str(l))
-            if k:
-                first_seen.setdefault(k, m)
-
-    frames = []
-    for m, df in (months or {}).items():
-        if df is None or df.empty:
-            continue
-        d = df.copy()
-        d["_sale"] = _coalesce_sale_date(d)
-        if "effective_date" in d.columns:
-            eff = pd.to_datetime(d["effective_date"], errors="coerce")
-            d = d[(eff > d["_sale"]).fillna(False)]
-        d = d[d["_sale"].notna()]
-        # Count each submission only in the month it was actually submitted.
-        m_start = pd.Timestamp(m + "-01")
-        m_end = m_start + pd.offsets.MonthEnd(0)
-        d = d[(d["_sale"] >= m_start) & (d["_sale"] <= m_end)]
-        if d.empty:
-            continue
-        _keys = [_key(str(a), str(b)) for a, b in
-                 zip(d.get("first_name", "").fillna(""), d.get("last_name", "").fillna(""))]
-        frames.append(pd.DataFrame({
-            "Date": d["_sale"].dt.strftime("%Y-%m-%d"),
-            "Month": m,
-            "First Name": d.get("first_name", ""),
-            "Last Name": d.get("last_name", ""),
-            "Members": pd.to_numeric(d.get("applicant_count", 1), errors="coerce").fillna(1).astype(int),
-            "Carrier": d.get("carrier", ""),
-            "State": d.get("state", ""),
-            "Is New": ["Yes" if first_seen.get(k) == m else "No" for k in _keys],
-        }))
-    if not frames:
-        return pd.DataFrame(columns=cols)
-    return (pd.concat(frames, ignore_index=True)
-            .sort_values(["Month", "Date", "Last Name"]).reset_index(drop=True))
+    d["_k"] = [_key(str(a), str(b)) for a, b in
+               zip(d.get("first_name", "").fillna(""), d.get("last_name", "").fillna(""))]
+    _first_sale = d.groupby("_k")["_sale"].transform("min")
+    out = pd.DataFrame({
+        "Date": d["_sale"].dt.strftime("%Y-%m-%d"),
+        "Month": d["_sale"].dt.strftime("%Y-%m"),
+        "First Name": d.get("first_name", ""),
+        "Last Name": d.get("last_name", ""),
+        "Members": pd.to_numeric(d.get("applicant_count", 1), errors="coerce").fillna(1).astype(int),
+        "Carrier": d.get("carrier", ""),
+        "State": d.get("state", ""),
+        "Is New": (d["_sale"] == _first_sale).map({True: "Yes", False: "No"}),
+    })
+    return out.sort_values(["Month", "Date", "Last Name"]).reset_index(drop=True)
 
 
 def _write_daily_tracker_tab(
@@ -323,10 +307,12 @@ def _write_daily_tracker_tab(
     sheet_id = ws.id
 
     # ── Data ─────────────────────────────────────────────────────────────────
-    # months may not contain an entry for this month (e.g. Feb–Apr before CSVs
-    # were ingested) — fall back to an empty DataFrame so the tab still renders.
+    # Build every month's tab from the NEWEST snapshot (a full-history export):
+    # each month's own backfill snapshot missed applications that only surfaced
+    # in later exports, undercounting daily totals.
+    _newest = max(months.keys()) if months else None
     daily_df = _build_daily_tracker_data(
-        months.get(latest_month, pd.DataFrame()), latest_month
+        months.get(_newest, pd.DataFrame()) if _newest else pd.DataFrame(), latest_month
     )
     n = len(daily_df)                              # days in month (e.g. 30)
 
