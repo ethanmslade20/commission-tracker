@@ -763,6 +763,21 @@ def run_report(settings: dict) -> None:
         # filtered, so a foreign policy_aor here means "I enrolled them and lost
         # the AOR" — never a never-mine client.) The real takeover date set
         # below places each in the correct month for trends.
+        #
+        # MARKETPLACE WINS: mark taken at the PERSON level — if ANY of a client's
+        # rows shows a foreign marketplace AOR, the whole client is taken. Carrier
+        # truth can add a second row stamped with MY name from the carrier book
+        # (which lags the marketplace), and that must not mask the steal (Ethan
+        # 2026-07-13: Kristen Southern — marketplace shows David Raigoza, BCBS
+        # book still shows me; she IS taken. "Marketplace wins, period.")
+        _pk = (all_clients["first_name"].fillna("").astype(str).str.lower().str.strip()
+               + "|" + all_clients["last_name"].fillna("").astype(str).str.lower().str.strip())
+        _taken_people = set(_pk[_aor_taken])
+        _who_by_person = {}
+        for _pkv, _nm in zip(_pk[_aor_taken], _aor_name[_aor_taken]):
+            _who_by_person.setdefault(_pkv, _nm)
+        _aor_taken = _pk.isin(_taken_people)                     # propagate to all rows
+        _aor_name = _pk.map(_who_by_person).where(_aor_taken, _aor_name)  # carry agent name
         _newly_taken = _aor_taken & ~all_clients["status"].isin(["Cancelled", "Terminated"])
         all_clients.loc[_newly_taken, "status"] = "Terminated"
         _churn = all_clients["status"].isin(["Cancelled", "Terminated"])
