@@ -749,12 +749,48 @@ def run_report(settings: dict) -> None:
             _aor_name  = pd.Series("", index=all_clients.index)
             _aor_taken = pd.Series(False, index=all_clients.index)
 
-        # When the AOR change registered (best proxy = last Marketplace sync).
-        # For AOR-taken clients this date becomes their Term Date.
-        if "last_ede_sync" in all_clients.columns:
-            _sync = pd.to_datetime(all_clients["last_ede_sync"], errors="coerce")
-        else:
-            _sync = pd.Series(pd.NaT, index=all_clients.index)
+        # When the AOR change registered. This date becomes the Term Date, which
+        # drives Re-Engage's "lost N days ago". It MUST match how AOR Defense
+        # dates each steal — that page uses the HealthSherpa AOR-at-risk scrape's
+        # `last_synced` (the day the change was detected). Using last_ede_sync
+        # (the last data refresh, ~always 2-3 days ago) made Re-Engage show every
+        # taken client as "lost 3 days ago" and disagree with AOR Defense
+        # (Ethan 2026-07-13: Aritha Woods — AOR Defense 90 days, Re-Engage 3).
+        import json as _json
+        _risk_path = Path(__file__).resolve().parent.parent / "data" / "aor_at_risk.json"
+        _steal_by_xid, _steal_by_name = {}, {}
+        try:
+            for _e in _json.loads(_risk_path.read_text()):
+                _ls = pd.to_datetime(_e.get("last_synced", ""), errors="coerce")
+                if pd.isna(_ls):
+                    continue
+                _xid = str(_e.get("exchange_id", "")).strip()
+                if _xid:
+                    _steal_by_xid[_xid] = _ls
+                _pn = str(_e.get("name", "")).split()
+                if _pn:
+                    _steal_by_name[re.sub(r"[^a-z]", "", (_pn[0] + _pn[-1]).lower())] = _ls
+        except Exception:
+            pass
+
+        def _steal_date(row):
+            _x = re.sub(r"\.0$", "", str(row.get("ffm_app_id", "")).strip())
+            if _x in _steal_by_xid:
+                return _steal_by_xid[_x]
+            _p = f"{row.get('first_name','')} {row.get('last_name','')}".split()
+            if _p:
+                _k = re.sub(r"[^a-z]", "", (_p[0] + _p[-1]).lower())
+                if _k in _steal_by_name:
+                    return _steal_by_name[_k]
+            return pd.NaT
+
+        _ede = (pd.to_datetime(all_clients["last_ede_sync"], errors="coerce")
+                if "last_ede_sync" in all_clients.columns
+                else pd.Series(pd.NaT, index=all_clients.index))
+        # scrape's detection date is primary; last_ede_sync only as a fallback
+        # for AOR clients the scrape never listed (known_aor-only) — matching
+        # AOR Defense, which also falls back to last_ede_sync for those.
+        _sync = all_clients.apply(_steal_date, axis=1).fillna(_ede)
 
         _keep_existing = _existing.str.contains("Verification expired", na=False)
         all_clients["cancel_reason"] = ""
