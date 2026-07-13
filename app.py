@@ -1982,12 +1982,40 @@ if page != "Client Lookup":   # the lookup page has its own big search box
         with st.container(key="global_finder"):
             st.selectbox("Find client", _gl_names, index=None, key="global_lookup",
                          on_change=_jump_to_client, label_visibility="collapsed",
-                         placeholder="🔎 Find a client…")
+                         placeholder="Find a client…")
     st.markdown("""<style>
+      /* pill control with an inset magnifier, soft glow, focus ring */
       .st-key-global_finder div[data-baseweb="select"] > div {
-          font-size:.85rem; border-radius:10px;
-          background:rgba(15,23,42,.55); border:1px solid rgba(148,163,184,.28);}
-      .st-key-global_finder div[data-baseweb="select"] svg {width:16px;height:16px;}
+          font-size:.92rem; border-radius:13px; min-height:44px;
+          background-color:rgba(12,20,38,.9);
+          border:1px solid rgba(96,165,250,.26);
+          box-shadow:0 6px 20px rgba(2,8,20,.45);
+          padding-left:38px;
+          background-image:url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%237f93b3' stroke-width='2.2' stroke-linecap='round'><circle cx='11' cy='11' r='7'/><line x1='21' y1='21' x2='16.4' y2='16.4'/></svg>");
+          background-repeat:no-repeat; background-position:13px center; background-size:17px;
+          transition:border-color .15s ease, box-shadow .15s ease;
+      }
+      .st-key-global_finder div[data-baseweb="select"] > div:focus-within {
+          border-color:rgba(96,165,250,.65);
+          box-shadow:0 0 0 3px rgba(59,130,246,.16), 0 6px 20px rgba(2,8,20,.45);
+      }
+      .st-key-global_finder div[data-baseweb="select"] input {font-size:.92rem;}
+      .st-key-global_finder [data-baseweb="select"] [data-baseweb="placeholder"],
+      .st-key-global_finder div[data-baseweb="select"] > div > div {color:#8aa0c2;}
+      .st-key-global_finder div[data-baseweb="select"] svg {width:18px;height:18px;color:#7f93b3;}
+      /* dropdown menu: dark navy panel, rounded, blue hover */
+      div[data-baseweb="popover"] ul[role="listbox"] {
+          background:#0d1628; border:1px solid rgba(96,165,250,.22);
+          border-radius:13px; padding:6px;
+          box-shadow:0 18px 44px rgba(2,8,20,.65);
+      }
+      div[data-baseweb="popover"] li[role="option"] {
+          font-size:.9rem; color:#dbe4f3; border-radius:9px; padding-top:9px; padding-bottom:9px;
+      }
+      div[data-baseweb="popover"] li[role="option"]:hover,
+      div[data-baseweb="popover"] li[aria-selected="true"] {
+          background:rgba(59,130,246,.2) !important; color:#fff;
+      }
     </style>""", unsafe_allow_html=True)
 
 if page == "Dashboard":
