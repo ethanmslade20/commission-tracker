@@ -403,12 +403,17 @@ def _upload_summary(all_clients, pastdue, snapshot_dir, today=None) -> None:
         if not k:
             continue
         st = str(r.get("status") or "")
+        _reason = str(r.get("cancel_reason") or "")
         if st in ("Cancelled", "Terminated"):
             # Expired DMI/SVI verification ≠ cancelled: coverage is usually still
             # active with a termination date pending, so the client is SAVEABLE
             # (Ahmed Elzubair 2026-07-10 — Effectuated + paid, terming 7/31).
-            if "Verification expired" in str(r.get("cancel_reason") or ""):
+            if "Verification expired" in _reason:
                 vexp[k] = _disp(f, l)
+            elif "AOR taken" in _reason:
+                # taken clients are now reclassified Terminated, but they belong
+                # in the "taken by another agent" bucket, not generic "lost"
+                aor[k] = _disp(f, l)
             else:
                 lost[k] = _disp(f, l)
         if st in ("Effectuated", "PendingEffectuation", "PendingFollowups"):
@@ -748,6 +753,19 @@ def run_report(settings: dict) -> None:
         else:
             _aor_name  = pd.Series("", index=all_clients.index)
             _aor_taken = pd.Series(False, index=all_clients.index)
+
+        # ACCURACY (Ethan 2026-07-13, chose "pull them out as taken"): a client
+        # whose CURRENT agent-of-record is another agent is not part of the
+        # active book — even if the policy is still Effectuated, someone else
+        # gets paid. Reclassify every taken client as churned so they drop out
+        # of active counts / KPIs and flow to Re-Engage, exactly matching the
+        # authoritative AOR Defense list. (all_clients is already ownership-
+        # filtered, so a foreign policy_aor here means "I enrolled them and lost
+        # the AOR" — never a never-mine client.) The real takeover date set
+        # below places each in the correct month for trends.
+        _newly_taken = _aor_taken & ~all_clients["status"].isin(["Cancelled", "Terminated"])
+        all_clients.loc[_newly_taken, "status"] = "Terminated"
+        _churn = all_clients["status"].isin(["Cancelled", "Terminated"])
 
         # When the AOR change registered. This date becomes the Term Date, which
         # drives Re-Engage's "lost N days ago". It MUST match how AOR Defense
