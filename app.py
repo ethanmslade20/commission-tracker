@@ -1904,12 +1904,18 @@ with st.sidebar:
     except Exception:
         pass
 
+    # Display-only renames (internal routing keys stay the same so badges,
+    # deep links and page code are untouched).
+    _NAV_LABELS = {"Follow-ups": "Verifications"}
+    def _nav_label(p):
+        _l = _NAV_LABELS.get(p, p)
+        return f"{_l}  ·  {_badges[p]}" if _badges.get(p) else _l
     page = st.radio(
         "Navigation",
         _NAV,
         label_visibility="collapsed",
         key="nav",
-        format_func=lambda p: f"{p}  ·  {_badges[p]}" if _badges.get(p) else p,
+        format_func=_nav_label,
     )
 
     # Compact mode: icons-only rail for more content width.
@@ -4258,7 +4264,7 @@ elif page == "Supplemental Re-Engage":
 # FOLLOW-UPS  (HealthSherpa DMI/SVI verifications)
 # ══════════════════════════════════════════════════════════════════════════════
 elif page == "Follow-ups":
-    st.title("Follow-ups")
+    st.title("Verifications")
     st.caption("HealthSherpa verifications your clients still owe. **DMI** = income/coverage match; "
                "**SVI** = enrollment verification. If one **expires, the client loses their premium "
                "subsidy** and usually drops. **Open** ones are still savable — reach out before they expire.")
