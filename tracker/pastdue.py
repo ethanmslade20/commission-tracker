@@ -156,4 +156,51 @@ def load_health_pastdue(carrier_books_dir: str = _DEFAULT_BOOKS,
     frames = [f for f in frames if not f.empty]
     if not frames:
         return pd.DataFrame(columns=_COLS)
-    return pd.concat(frames, ignore_index=True)[_COLS]
+    return _drop_superseded(pd.concat(frames, ignore_index=True)[_COLS], today)
+
+
+def _drop_superseded(pastdue: pd.DataFrame, today) -> pd.DataFrame:
+    """Drop past-due rows for clients SWITCHED to a newer plan on a different
+    carrier (active/pending in HealthSherpa, effective in the last ~2 months or
+    later) — the old plan is meant to lapse, so there's nobody to call (Ethan
+    2026-07-13, Freddie Moss: Ambetter past-due but moved to BCBS-TN July 1).
+    History is untouched; the client only leaves the reach-out list."""
+    import glob
+    import re
+    if pastdue.empty:
+        return pastdue
+    try:
+        _snaps = sorted(glob.glob(str(Path(__file__).resolve().parent.parent
+                                      / "snapshots" / "*healthsherpa*.parquet")))
+        if not _snaps:
+            return pastdue
+        hs = pd.read_parquet(_snaps[-1])
+    except Exception:
+        return pastdue
+
+    def _k(f, l):
+        return re.sub(r"[^a-z]", "", f"{f}{l}".lower())
+
+    hs = hs[hs.get("status", pd.Series(dtype=str)).isin(
+        ["Effectuated", "PendingEffectuation"])].copy()
+    if hs.empty:
+        return pastdue
+    hs["_k"] = [_k(str(a), str(b)) for a, b in
+                zip(hs["first_name"].fillna(""), hs["last_name"].fillna(""))]
+    hs["_eff"] = pd.to_datetime(hs.get("effective_date"), errors="coerce")
+    _recent = pd.Timestamp(today).normalize().replace(day=1) - pd.offsets.MonthBegin(2)
+
+    keep = []
+    for _, r in pastdue.iterrows():
+        k = _k(str(r.get("first_name", "")), str(r.get("last_name", "")))
+        pd_carrier = str(r.get("carrier", "")).split()[0].lower()
+        superseded = False
+        if k and pd_carrier:
+            others = hs[(hs["_k"] == k)
+                        & ~hs["carrier"].astype(str).str.lower().str.contains(pd_carrier, regex=False)]
+            superseded = bool((others["_eff"] >= _recent).any())
+            if superseded:
+                print(f"  Past-due: {r.get('first_name')} {r.get('last_name')} skipped — "
+                      f"switched to {others.iloc[0]['carrier']}")
+        keep.append(not superseded)
+    return pastdue[pd.Series(keep, index=pastdue.index)].reset_index(drop=True)
