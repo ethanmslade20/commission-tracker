@@ -662,6 +662,7 @@ def _nav_icon_css():
         # ── MONEY ──
         "<line x1='12' y1='1' x2='12' y2='23'/><path d='M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6'/>",  # Commissions (dollar)
         "<circle cx='12' cy='12' r='10'/><line x1='12' y1='8' x2='12' y2='12'/><line x1='12' y1='16' x2='12.01' y2='16'/>",  # Money Owed (alert)
+        "<circle cx='12' cy='12' r='10'/><polyline points='12 6 12 12 16 14'/>",  # Past Due (clock)
         "<polyline points='23 6 13.5 15.5 8.5 10.5 1 18'/><polyline points='17 6 23 6 23 12'/>",  # Monthly Trends (trend)
         # ── WORKFLOWS ──
         "<path d='M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2'/><rect x='8' y='2' width='8' height='4' rx='1'/><polyline points='9 14 11 16 15 12'/>",  # Follow-ups (clipboard-check)
@@ -678,7 +679,7 @@ def _nav_icon_css():
     # Group headers (small dim uppercase) painted above the first tab of each
     # section, plus a divider before Settings. Positions follow _NAV order.
     _SB = 'section[data-testid="stSidebar"] div[role="radiogroup"] > label'
-    groups = [(1, "OVERVIEW"), (4, "CLIENTS"), (7, "MONEY"), (10, "WORKFLOWS")]
+    groups = [(1, "OVERVIEW"), (4, "CLIENTS"), (7, "MONEY"), (11, "WORKFLOWS")]
     for i, title in groups:
         rules += (
             f'{_SB}:nth-of-type({i}) {{margin-top:26px; position:relative; overflow:visible;}}'
@@ -689,9 +690,9 @@ def _nav_icon_css():
         f'{_SB}:nth-of-type(1) {{margin-top:20px;}}'
         # Settings: pinned visually apart — hairline divider above + its own
         # filled rounded row (matches the reference sidebar).
-        f'{_SB}:nth-of-type(14) {{margin-top:30px; position:relative; overflow:visible;'
+        f'{_SB}:nth-of-type(15) {{margin-top:30px; position:relative; overflow:visible;'
         f'background:rgba(19,31,58,.55);}}'
-        f'{_SB}:nth-of-type(14)::after {{content:""; position:absolute; top:-15px; left:10px; right:10px;'
+        f'{_SB}:nth-of-type(15)::after {{content:""; position:absolute; top:-15px; left:10px; right:10px;'
         f'height:1px; background:rgba(148,163,184,.16);}}'
     )
     return f"<style>{rules}</style>"
@@ -1867,7 +1868,7 @@ with st.sidebar:
     # this order, the icon list, and the header positions MUST stay in sync.
     _NAV = ["Dashboard", "Daily Tracker", "Goals",
             "Client Lookup", "Book", "AOR Defense",
-            "Commissions", "Money Owed", "Monthly Trends",
+            "Commissions", "Money Owed", "Past Due", "Monthly Trends",
             "Follow-ups", "Re-Engage", "Supplemental Re-Engage", "AEP Tracker",
             "Settings"]
     # Old page names still arrive via bookmarks / stale ?goto= links.
@@ -1887,7 +1888,7 @@ with st.sidebar:
     _badges = {}
     try:
         _bp = _load_pastdue()
-        _badges["Money Owed"] = 0 if _bp is None or _bp.empty else len(_bp)
+        _badges["Past Due"] = 0 if _bp is None or _bp.empty else len(_bp)
     except Exception:
         pass
     try:
@@ -2095,7 +2096,7 @@ if page == "Dashboard":
         _disp_n = 0 if _disp is None or _disp.empty else len(_disp)
     except Exception:
         _disp_n = 0
-    _c1 = link_card("Past-Due to Call", f"{_pd_n:,}", "clock", RED, "Money Owed", sec="pastdue",
+    _c1 = link_card("Past-Due to Call", f"{_pd_n:,}", "clock", RED, "Past Due",
                     tip="Clients still active but behind on their premium. Call them to update payment "
                         "before the carrier cancels them for non-payment — if they lapse, you lose the commission.")
     _c2 = link_card("Follow-ups Open", f"{_fu_open:,}", "shield", GOLD, "Follow-ups",
@@ -3111,7 +3112,8 @@ elif page == "Money Owed":
     from tracker.commissions import reconcile_book, build_gaps
     st.title("Money Owed")
     st.caption("Money you should be collecting but aren't yet — active clients you're not being "
-               "paid on, Ambetter disputes, and members behind on premium. Chase these to get paid.")
+               "paid on and Ambetter disputes. Chase these to get paid. "
+               "(Members behind on premium now live on the **Past Due** page.)")
     st.markdown(color_legend(), unsafe_allow_html=True)
     st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
     # Jump to the section the user clicked from the Dashboard (?sec=...), once.
@@ -3291,84 +3293,6 @@ elif page == "Money Owed":
             st.caption("📄 Saved to the **Ambetter Disputes** tab in your Google Sheet. Each row = a policy Ambetter "
                        "itself confirms you're the broker of record and eligible to be paid on.")
 
-        # ── Premium Past Due — members behind on payment, reach out before they lapse ──
-        pdue = _load_pastdue()
-        # Drop anyone whose HealthSherpa verification has EXPIRED — subsidy is lost,
-        # they're handled as Cancelled outreach instead (not a payment reach-out).
-        _exp_keys = _expired_followup_keys()
-        if pdue is not None and not pdue.empty and _exp_keys:
-            from tracker.carrier_status import _person_key as _pk_fn
-            _pk = pdue.apply(lambda r: _pk_fn(r.get("first_name", ""), r.get("last_name", "")), axis=1)
-            pdue = pdue[~_pk.isin(_exp_keys)].copy()
-        st.markdown("<br>", unsafe_allow_html=True)
-        st.markdown('<div id="mo-pastdue"></div>', unsafe_allow_html=True)
-        st.markdown(section_header("Premium Past Due — Reach Out", "clock"), unsafe_allow_html=True)
-        st.caption("Active clients **paying a premium** ($0 plans excluded) who haven't paid for a **full elapsed "
-                   "month** — call them before the carrier cancels for non-payment. A **May-start who never paid** "
-                   "shows here; a **June-start gets until end of June** (their first month isn't over yet). "
-                   "Covers Ambetter (paid-through passed) and Oscar (balance owed).")
-        if pdue is None or pdue.empty:
-            st.success("No paying clients are past due right now. 🎉")
-        else:
-            pv = pdue.copy()
-            pv["_name"] = ((pv["first_name"].fillna("").astype(str).str.strip() + " "
-                            + pv["last_name"].fillna("").astype(str).str.strip()).str.strip())
-            pv["premium"] = pd.to_numeric(pv.get("premium"), errors="coerce")
-            pv["members"] = pd.to_numeric(pv.get("members"), errors="coerce").fillna(1).astype(int)
-            pv["days_overdue"] = pd.to_numeric(pv.get("days_overdue"), errors="coerce")
-            _risk = int(pv["members"].sum()) * 23
-            qk1, qk2, qk3 = st.columns(3)
-            with qk1:
-                st.markdown(stat_card("Past-Due Policies", f"{len(pv):,}", "clock", GOLD), unsafe_allow_html=True)
-            with qk2:
-                st.markdown(stat_card("Commission at Risk / Mo", f"${_risk:,.0f}", "minus", RED), unsafe_allow_html=True)
-            with qk3:
-                st.markdown(stat_card("Members at Risk", f"{int(pv['members'].sum()):,}", "users", ELEC), unsafe_allow_html=True)
-            st.markdown("<br>", unsafe_allow_html=True)
-
-            pv["status"] = pv.get("status", pd.Series(index=pv.index, dtype=str)).fillna("Past due").replace("", "Past due")
-            qf1, qf2, qf3 = st.columns(3)
-            with qf1:
-                _qst = ["All"] + sorted(pv["status"].dropna().unique().tolist())
-                qstf = st.selectbox("Status", _qst, key="pastdue_comm_status")
-            with qf2:
-                _qc = ["All"] + sorted(pv["carrier"].dropna().unique().tolist())
-                qcf = st.selectbox("Carrier", _qc, key="pastdue_comm_carrier")
-            with qf3:
-                _qs = ["All"] + sorted(pv["state"].dropna().astype(str).unique().tolist()) if "state" in pv.columns else ["All"]
-                qsf = st.selectbox("State", _qs, key="pastdue_comm_state")
-            if qstf != "All":
-                pv = pv[pv["status"] == qstf]
-            if qcf != "All":
-                pv = pv[pv["carrier"] == qcf]
-            if qsf != "All" and "state" in pv.columns:
-                pv = pv[pv["state"].astype(str) == qsf]
-            # Most-recent paid-through month first — the freshest lapses are the
-            # most savable. Oscar rows (balance-based, no paid-through) fall to the
-            # bottom, ordered by balance owed.
-            pv["_pt"] = pd.to_datetime(pv.get("paid_through"), errors="coerce")
-            pv["_bal"] = pd.to_numeric(pv.get("balance"), errors="coerce")
-            pv = pv.sort_values(["_pt", "_bal"], ascending=[False, False], na_position="last").reset_index(drop=True)
-
-            qd = pd.DataFrame({
-                "Name": pv["_name"].str.title(),
-                "Status": pv["status"],
-                "Carrier": pv["carrier"],
-                "State": pv["state"] if "state" in pv.columns else "",
-                "Premium": pv["premium"].apply(lambda v: f"${v:,.2f}" if pd.notna(v) else "—"),
-                "Members": pv["members"],
-                "Behind Since / Owed": pv["reason"] if "reason" in pv.columns else "",
-                "Phone": pv["phone"] if "phone" in pv.columns else "",
-            })
-            st.caption(f"Showing **{len(qd)}** past-due paying clients"
-                       + (f" · {qstf}" if qstf != "All" else "")
-                       + (f" · {qcf}" if qcf != "All" else "") + (f" · {qsf}" if qsf != "All" else ""))
-            st.dataframe(qd, use_container_width=True, hide_index=True, height=min(120 + len(qd) * 34, 560))
-            st.caption("**Status** tells you the kind of call: *Grace period / Delinquent* = an existing client "
-                       "lapsing (catch them up before cancellation); *Unpaid binder* = a brand-new sale that hasn't "
-                       "paid to activate yet (call to turn coverage on). Covers Ambetter & Oscar — Anthem and "
-                       "UHC-medical exports don't include payment data.")
-
         cb = rec["chargebacks"]
         if cb is not None and not cb.empty:
             st.markdown("<br>", unsafe_allow_html=True)
@@ -3382,6 +3306,88 @@ elif page == "Money Owed":
                 st.dataframe(cbd, use_container_width=True, hide_index=True, height=min(80 + len(cbd) * 35, 400))
 
 
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PAST DUE
+# ══════════════════════════════════════════════════════════════════════════════
+elif page == "Past Due":
+    st.title("Past Due")
+    st.caption("Active clients **paying a premium** ($0 plans excluded) who haven't paid for a **full elapsed "
+               "month** — call them before the carrier cancels for non-payment. A **May-start who never paid** "
+               "shows here; a **June-start gets until end of June** (their first month isn't over yet). "
+               "Covers Ambetter (paid-through passed) and Oscar (balance owed).")
+    st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
+
+    pdue = _load_pastdue()
+    # Drop anyone whose HealthSherpa verification has EXPIRED — subsidy is lost,
+    # they're handled as Cancelled outreach instead (not a payment reach-out).
+    _exp_keys = _expired_followup_keys()
+    if pdue is not None and not pdue.empty and _exp_keys:
+        from tracker.carrier_status import _person_key as _pk_fn
+        _pk = pdue.apply(lambda r: _pk_fn(r.get("first_name", ""), r.get("last_name", "")), axis=1)
+        pdue = pdue[~_pk.isin(_exp_keys)].copy()
+    if pdue is None or pdue.empty:
+        st.success("No paying clients are past due right now. 🎉")
+    else:
+        pv = pdue.copy()
+        pv["_name"] = ((pv["first_name"].fillna("").astype(str).str.strip() + " "
+                        + pv["last_name"].fillna("").astype(str).str.strip()).str.strip())
+        pv["premium"] = pd.to_numeric(pv.get("premium"), errors="coerce")
+        pv["members"] = pd.to_numeric(pv.get("members"), errors="coerce").fillna(1).astype(int)
+        pv["days_overdue"] = pd.to_numeric(pv.get("days_overdue"), errors="coerce")
+        _risk = int(pv["members"].sum()) * 23
+        qk1, qk2, qk3 = st.columns(3)
+        with qk1:
+            st.markdown(stat_card("Past-Due Policies", f"{len(pv):,}", "clock", GOLD), unsafe_allow_html=True)
+        with qk2:
+            st.markdown(stat_card("Commission at Risk / Mo", f"${_risk:,.0f}", "minus", RED), unsafe_allow_html=True)
+        with qk3:
+            st.markdown(stat_card("Members at Risk", f"{int(pv['members'].sum()):,}", "users", ELEC), unsafe_allow_html=True)
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        pv["status"] = pv.get("status", pd.Series(index=pv.index, dtype=str)).fillna("Past due").replace("", "Past due")
+        qf1, qf2, qf3 = st.columns(3)
+        with qf1:
+            _qst = ["All"] + sorted(pv["status"].dropna().unique().tolist())
+            qstf = st.selectbox("Status", _qst, key="pastdue_comm_status")
+        with qf2:
+            _qc = ["All"] + sorted(pv["carrier"].dropna().unique().tolist())
+            qcf = st.selectbox("Carrier", _qc, key="pastdue_comm_carrier")
+        with qf3:
+            _qs = ["All"] + sorted(pv["state"].dropna().astype(str).unique().tolist()) if "state" in pv.columns else ["All"]
+            qsf = st.selectbox("State", _qs, key="pastdue_comm_state")
+        if qstf != "All":
+            pv = pv[pv["status"] == qstf]
+        if qcf != "All":
+            pv = pv[pv["carrier"] == qcf]
+        if qsf != "All" and "state" in pv.columns:
+            pv = pv[pv["state"].astype(str) == qsf]
+        # Most-recent paid-through month first — the freshest lapses are the
+        # most savable. Oscar rows (balance-based, no paid-through) fall to the
+        # bottom, ordered by balance owed.
+        pv["_pt"] = pd.to_datetime(pv.get("paid_through"), errors="coerce")
+        pv["_bal"] = pd.to_numeric(pv.get("balance"), errors="coerce")
+        pv = pv.sort_values(["_pt", "_bal"], ascending=[False, False], na_position="last").reset_index(drop=True)
+
+        qd = pd.DataFrame({
+            "Name": pv["_name"].str.title(),
+            "Status": pv["status"],
+            "Carrier": pv["carrier"],
+            "State": pv["state"] if "state" in pv.columns else "",
+            "Premium": pv["premium"].apply(lambda v: f"${v:,.2f}" if pd.notna(v) else "—"),
+            "Members": pv["members"],
+            "Behind Since / Owed": pv["reason"] if "reason" in pv.columns else "",
+            "Phone": pv["phone"] if "phone" in pv.columns else "",
+        })
+        st.caption(f"Showing **{len(qd)}** past-due paying clients"
+                   + (f" · {qstf}" if qstf != "All" else "")
+                   + (f" · {qcf}" if qcf != "All" else "") + (f" · {qsf}" if qsf != "All" else ""))
+        st.dataframe(qd, use_container_width=True, hide_index=True, height=min(120 + len(qd) * 34, 560))
+        st.caption("**Status** tells you the kind of call: *Grace period / Delinquent* = an existing client "
+                   "lapsing (catch them up before cancellation); *Unpaid binder* = a brand-new sale that hasn't "
+                   "paid to activate yet (call to turn coverage on). Covers Ambetter & Oscar — Anthem and "
+                   "UHC-medical exports don't include payment data.")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
