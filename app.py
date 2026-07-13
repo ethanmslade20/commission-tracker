@@ -310,9 +310,12 @@ st.markdown(f"""
     content: ""; margin-left: auto; width: 10px; height: 10px; border-radius: 50%;
     background: #f43f5e; box-shadow: 0 0 9px rgba(244,63,94,0.85);
   }}
-  /* hide the radio dot so it reads as a clean nav item */
-  section[data-testid="stSidebar"] div[role="radiogroup"] > label > div:first-child {{
-    display: none;
+  /* hide the radio dot so it reads as a clean nav item (streamlit is PINNED
+     to 1.50.0 in requirements.txt — an unpinned cloud version rendered a
+     different DOM where this rule missed and the dot showed) */
+  section[data-testid="stSidebar"] div[role="radiogroup"] > label > div:first-child,
+  section[data-testid="stSidebar"] div[role="radiogroup"] > label > span:first-child {{
+    display: none !important;
   }}
   section[data-testid="stSidebar"] div[role="radiogroup"] label p {{
     font-size: 0.97rem; font-weight: 500; color: #cbd5e1;
