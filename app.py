@@ -3411,30 +3411,6 @@ elif page == "AOR Defense":
         st.markdown("<br>", unsafe_allow_html=True)
         _show_handled = st.toggle("Show handled clients", value=False)
 
-        # ── Taken by day — how many AORs were taken on each date ──────────────
-        with st.container(border=True):
-            st.markdown(chart_head("Taken by day",
-                                   "How many clients were switched to another agent on each date "
-                                   "— newest first. Clusters usually mean one competing agent ran a batch.",
-                                   "calendar"), unsafe_allow_html=True)
-            _src = (_taken if _show_handled else _open_taken).copy()
-            _src["_d"] = pd.to_datetime(_src.get("Detected"), errors="coerce")
-            _g = _src.dropna(subset=["_d"]).groupby("_d").size().reset_index(name="People Taken")
-            if _g.empty:
-                st.caption("No dated takeovers to summarize.")
-            else:
-                _today0 = pd.Timestamp.today().normalize()
-                _g["Taken On"] = _g["_d"].dt.strftime("%b %d, %Y")
-                _g["Days Ago"] = (_today0 - _g["_d"]).dt.days.astype(int)
-                _g = _g.sort_values("_d", ascending=False)[["Taken On", "Days Ago", "People Taken"]]
-                _und = int((_src["_d"].isna()).sum())
-                st.dataframe(_g, use_container_width=True, hide_index=True,
-                             height=min(46 + 35 * max(len(_g), 1), 420))
-                st.caption(f"{int(_g['People Taken'].sum())} dated takeovers across {len(_g)} days"
-                           + (f" · {_und} with no recorded date" if _und else ""))
-
-        st.markdown("<br>", unsafe_allow_html=True)
-
         _cols_taken = [c for c in ["Client", "Taken By", "Detected", "Days Ago", "Carrier", "State",
                                    "Members", "Est $/yr", "Phone", "Policy Status", "Handled"]
                        if c in _adf.columns]
