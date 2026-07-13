@@ -93,6 +93,55 @@ def build_aor_defense(risk_path=_RISK_PATH, hs_path=_HS_PATH, handled_path=_HAND
                 })
         risk.append(entry)
 
+    # THIRD DETECTOR: the export's policy_aor is the GROUND TRUTH for who the
+    # agent of record is right now. Scan the WHOLE export — anyone whose
+    # policy_aor names another agent HAS been taken, regardless of policy status
+    # or whether the at-risk scrape / known_aor listed them. This makes AOR
+    # Defense the single complete, authoritative "taken" list, so it and
+    # Re-Engage finally agree (Ethan 2026-07-13: "the most accurate data
+    # possible of what's actually happening with my clients").
+    # No reliable steal-DATE exists for clients the scrape never caught, so we
+    # leave last_synced blank (shown as "unknown", sunk to the bottom) rather
+    # than faking a recent date off the last data refresh.
+    # Only clients who were EVER mine (I enrolled it — my NPN in npn_used — or I
+    # submitted it) count as "taken". Without this, the ~230 clients who merely
+    # appear in the HealthSherpa account under another agent (never mine) would
+    # all be mis-counted as steals (they're already dropped by the report's
+    # ownership filter; mirror that exact rule here).
+    _fn_low, _ln_low = _AGENT["first_name"].lower(), _AGENT["last_name"].lower()
+    def _ever_mine(row) -> bool:
+        if _ETHAN_NPN in str(row.get("npn_used", "") or ""):
+            return True
+        sub = str(row.get("submitting_agent_name", "") or "").lower()
+        return _fn_low in sub and _ln_low in sub
+
+    existing_keys = {_fl_key(r.get("name", "")) for r in risk}
+    if len(hs) and "policy_aor" in hs.columns:
+        for _, row in hs.reset_index().iterrows():
+            aor = str(row.get("policy_aor", "") or "")
+            a_low = aor.lower()
+            is_foreign = (aor.strip() != "" and "none" not in a_low and "nan" not in a_low
+                          and _ETHAN_NPN not in aor
+                          and _AGENT["last_name"].lower() not in a_low
+                          and _AGENT["first_name"].lower() not in a_low)
+            if not is_foreign or not _ever_mine(row):
+                continue
+            disp = f"{row.get('first_name','')} {row.get('last_name','')}".strip()
+            if not disp or _fl_key(disp) in existing_keys:
+                continue
+            existing_keys.add(_fl_key(disp))
+            _mn = pd.to_numeric(row.get("applicant_count"), errors="coerce")
+            risk.append({
+                "name": disp,
+                "exchange_id": str(row.get("ffm_app_id", "")).strip(),
+                "type": "changed",
+                "last_synced": "",  # honest: no scrape date for these
+                "taken_by": re.sub(r"\s*\(NPN.*\)", "", aor).strip().title(),
+                "carrier": str(row.get("issuer", ""))[:34],
+                "state": str(row.get("state", "")),
+                "members": 1 if pd.isna(_mn) else max(int(_mn), 1),
+            })
+
     rows = []
     for r in risk:
         xid = str(r.get("exchange_id", "")).strip()
