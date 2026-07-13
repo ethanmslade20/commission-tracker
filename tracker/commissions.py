@@ -138,15 +138,31 @@ def _member_key(member):
 
 
 def parse_payments_sheet(spreadsheet) -> pd.DataFrame:
+    # One values_batch_get for ALL monthly tabs instead of get_all_values per
+    # tab — the per-tab version took ~10s on every cold page load that touches
+    # payments (and risked 20-60s quota-retry sleeps).
+    titles = [ws.title for ws in spreadsheet.worksheets()]
+    vals_by_tab: dict = {}
+    CH = 40
+    for i in range(0, len(titles), CH):
+        chunk = titles[i:i + CH]
+        resp = spreadsheet.values_batch_get([f"'{t}'" for t in chunk])
+        for t, vr in zip(chunk, resp.get("valueRanges", [])):
+            vals_by_tab[t] = vr.get("values", [])
+
     rows = []
-    for ws in spreadsheet.worksheets():
-        if ws.title.strip().lower() == "year to date":
+    for title, tab_vals in vals_by_tab.items():
+        if title.strip().lower() == "year to date":
             continue
-        pm = _tab_month(ws.title)
+        pm = _tab_month(title)
         if pm is None:
             continue
-        for r in ws.get_all_values():
-            if len(r) < 12 or not r[2].strip():
+        for r in tab_vals:
+            # the values API trims trailing empty cells (get_all_values used to
+            # pad) — pad back so positional access behaves identically
+            if len(r) < 12:
+                r = list(r) + [""] * (12 - len(r))
+            if not r[2].strip():
                 continue
             if "Total Commission" in " ".join(r):
                 continue
