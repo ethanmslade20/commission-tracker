@@ -1907,7 +1907,9 @@ with st.sidebar:
 
     # Display-only renames (internal routing keys stay the same so badges,
     # deep links and page code are untouched).
-    _NAV_LABELS = {"Follow-ups": "Verifications"}
+    _NAV_LABELS = {"Follow-ups": "Verifications",
+                   "Money Owed": "Missing Commission",
+                   "Past Due": "Past Due Client $"}
     def _nav_label(p):
         _l = _NAV_LABELS.get(p, p)
         return f"{_l}  ·  {_badges[p]}" if _badges.get(p) else _l
@@ -2113,7 +2115,8 @@ if page == "Dashboard":
         + "</div>",
         unsafe_allow_html=True)
     st.caption("👆 Hover (or tap on phone) a box for what it means · on phone, tap once to read it, "
-               "tap again to open it — Past-Due & Disputes open **Money Owed**, Follow-ups opens **Follow-ups**.")
+               "tap again to open it — Past-Due opens **Past Due Client $**, Disputes open **Missing Commission**, "
+               "Follow-ups opens **Verifications**.")
     # On touch devices (iPhone), first tap reveals the explanation; a second tap follows the link.
     import streamlit.components.v1 as _c
     _c.html(
@@ -3110,7 +3113,7 @@ elif page == "Commissions":
 
 elif page == "Money Owed":
     from tracker.commissions import reconcile_book, build_gaps
-    st.title("Money Owed")
+    st.title("Missing Commission")
     st.caption("Money you should be collecting but aren't yet — active clients you're not being "
                "paid on and Ambetter disputes. Chase these to get paid. "
                "(Members behind on premium now live on the **Past Due** page.)")
@@ -3312,7 +3315,7 @@ elif page == "Money Owed":
 # PAST DUE
 # ══════════════════════════════════════════════════════════════════════════════
 elif page == "Past Due":
-    st.title("Past Due")
+    st.title("Past Due Client $")
     st.caption("Active clients **paying a premium** ($0 plans excluded) who haven't paid for a **full elapsed "
                "month** — call them before the carrier cancels for non-payment. A **May-start who never paid** "
                "shows here; a **June-start gets until end of June** (their first month isn't over yet). "
