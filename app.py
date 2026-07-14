@@ -679,7 +679,7 @@ def _nav_icon_css():
     # Group headers (small dim uppercase) painted above the first tab of each
     # section, plus a divider before Settings. Positions follow _NAV order.
     _SB = 'section[data-testid="stSidebar"] div[role="radiogroup"] > label'
-    groups = [(1, "OVERVIEW"), (4, "CLIENTS"), (7, "MONEY"), (10, "WORKFLOWS")]
+    groups = [(1, "OVERVIEW"), (4, "CLIENTS"), (7, "MONEY"), (10, "FOLLOW UPS")]
     for i, title in groups:
         rules += (
             f'{_SB}:nth-of-type({i}) {{margin-top:26px; position:relative; overflow:visible;}}'
