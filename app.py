@@ -3047,10 +3047,14 @@ elif page == "Commissions":
             mc["Label"] = mc["Month"].dt.strftime("%b %Y")
             fig = px.bar(mc, x="Label", y="Net", text="Net")
             fig.update_traces(marker_color=GREEN, marker_cornerradius=8,
-                              texttemplate="$%{text:,.0f}", textposition="outside")
-            fig.update_layout(height=320, margin=dict(l=10, r=10, t=10, b=10),
+                              texttemplate="$%{text:,.0f}", textposition="outside",
+                              cliponaxis=False)
+            _ymax = float(pd.to_numeric(mc["Net"], errors="coerce").max() or 0)
+            fig.update_layout(height=340, margin=dict(l=10, r=20, t=42, b=10),
+                              bargap=0.45,
                               paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                              xaxis_title=None, yaxis_title=None, font_color="#cbd5e1")
+                              xaxis_title=None, yaxis_title=None, font_color="#cbd5e1",
+                              yaxis=dict(range=[0, _ymax * 1.18]))
             show_chart(fig)
 
         # ── Each carrier by month (trend + exact numbers) ─────────────────────
