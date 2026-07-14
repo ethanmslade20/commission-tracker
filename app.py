@@ -658,13 +658,13 @@ def _nav_icon_css():
         # ── CLIENTS ──
         "<circle cx='11' cy='11' r='8'/><line x1='21' y1='21' x2='16.65' y2='16.65'/>",  # Client Lookup (magnifier)
         "<rect x='2' y='7' width='20' height='14' rx='2'/><path d='M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16'/>",  # Book (briefcase)
-        "<path d='M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2'/><circle cx='8.5' cy='7' r='4'/><line x1='18' y1='8' x2='23' y2='13'/><line x1='23' y1='8' x2='18' y2='13'/>",  # AOR Defense (user-x)
+        "<polyline points='23 6 13.5 15.5 8.5 10.5 1 18'/><polyline points='17 6 23 6 23 12'/>",  # Monthly Trends (trend)
         # ── MONEY ──
         "<line x1='12' y1='1' x2='12' y2='23'/><path d='M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6'/>",  # Commissions (dollar)
         "<circle cx='12' cy='12' r='10'/><line x1='12' y1='8' x2='12' y2='12'/><line x1='12' y1='16' x2='12.01' y2='16'/>",  # Money Owed (alert)
         "<circle cx='12' cy='12' r='10'/><polyline points='12 6 12 12 16 14'/>",  # Past Due (clock)
-        "<polyline points='23 6 13.5 15.5 8.5 10.5 1 18'/><polyline points='17 6 23 6 23 12'/>",  # Monthly Trends (trend)
         # ── WORKFLOWS ──
+        "<path d='M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2'/><circle cx='8.5' cy='7' r='4'/><line x1='18' y1='8' x2='23' y2='13'/><line x1='23' y1='8' x2='18' y2='13'/>",  # AOR Defense (user-x)
         "<path d='M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2'/><rect x='8' y='2' width='8' height='4' rx='1'/><polyline points='9 14 11 16 15 12'/>",  # Follow-ups (clipboard-check)
         "<path d='M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2'/><circle cx='9' cy='7' r='4'/><path d='M23 21v-2a4 4 0 0 0-3-3.87'/><path d='M16 3.13a4 4 0 0 1 0 7.75'/>",  # Re-Engage (users)
         "<polyline points='23 4 23 10 17 10'/><polyline points='1 20 1 14 7 14'/><path d='M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15'/>",  # Supplemental Re-Engage (refresh)
@@ -679,7 +679,7 @@ def _nav_icon_css():
     # Group headers (small dim uppercase) painted above the first tab of each
     # section, plus a divider before Settings. Positions follow _NAV order.
     _SB = 'section[data-testid="stSidebar"] div[role="radiogroup"] > label'
-    groups = [(1, "OVERVIEW"), (4, "CLIENTS"), (7, "MONEY"), (11, "WORKFLOWS")]
+    groups = [(1, "OVERVIEW"), (4, "CLIENTS"), (7, "MONEY"), (10, "WORKFLOWS")]
     for i, title in groups:
         rules += (
             f'{_SB}:nth-of-type({i}) {{margin-top:26px; position:relative; overflow:visible;}}'
@@ -1867,9 +1867,9 @@ with st.sidebar:
     # headers + dividers are painted by CSS in _nav_icon_css (nth-of-type), so
     # this order, the icon list, and the header positions MUST stay in sync.
     _NAV = ["Dashboard", "Daily Tracker", "Goals",
-            "Client Lookup", "Book", "AOR Defense",
-            "Commissions", "Money Owed", "Past Due", "Monthly Trends",
-            "Follow-ups", "Re-Engage", "Supplemental Re-Engage", "AEP Tracker",
+            "Client Lookup", "Book", "Monthly Trends",
+            "Commissions", "Money Owed", "Past Due",
+            "AOR Defense", "Follow-ups", "Re-Engage", "Supplemental Re-Engage", "AEP Tracker",
             "Settings"]
     # Old page names still arrive via bookmarks / stale ?goto= links.
     _ALIASES = {"Month-over-Month": "Monthly Trends", "Book of Business": "Book",
