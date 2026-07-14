@@ -944,6 +944,9 @@ def run_report(settings: dict) -> None:
             from tracker.commissions import audit_gaps
             _books = str(Path(__file__).resolve().parent.parent / "carrier_books")
             commission_gaps = audit_gaps(commission_gaps, _payments, _books)
+            # NOTE: "Too new" rows are kept IN this tab (clearly labeled) on purpose —
+            # the cloud app reads the label back from here to hide them from the page.
+            # Removing them here would strip the label and make them reappear blank.
             if commission_gaps is not None and not commission_gaps.empty:
                 _disp = (commission_gaps["Dispute"] == "✅ Dispute").sum() if "Dispute" in commission_gaps.columns else 0
                 print(f"  Commission gaps: {len(commission_gaps)} active clients with a payment gap "

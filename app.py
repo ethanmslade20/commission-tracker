@@ -3169,6 +3169,10 @@ elif page == "Money Owed":
                     gaps["Dispute"] = gaps.apply(lambda r: _au.get(_nkk(r), {}).get("Dispute", ""), axis=1)
         except Exception:
             pass
+    # "Too new" = coverage just started, the carrier's pay cycle hasn't run yet, so
+    # no commission is owed. It's not an actionable gap — hide it from this page.
+    if gaps is not None and not gaps.empty and "Dispute" in gaps.columns:
+        gaps = gaps[~gaps["Dispute"].astype(str).str.contains("Too new", na=False)].copy()
     if not _mo_ready:
         st.warning("Couldn't read the Insurance PAYMENTS sheet yet — the 'not getting paid' list needs it. Disputes & past-due below still work after a refresh.")
     if True:

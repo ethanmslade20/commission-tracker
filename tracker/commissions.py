@@ -434,11 +434,18 @@ def build_gaps(active: pd.DataFrame, payments: pd.DataFrame, today=None) -> pd.D
         client_since = r.get("client_since")
         if client_since is None or (hasattr(pd, "isna") and pd.isna(client_since)):
             client_since = r.get("broker_effective_date") or r.get("effective_date", "")
+        # Dispute timing keys off the CURRENT active plan's start, not the earliest
+        # plan ever (effective_date = MIN). A client with an old cancelled plan and a
+        # new June-1 plan must read as June-1 here, else "too new" is wrongly skipped
+        # and they're flagged as a real dispute when no commission is due yet.
+        cur_eff = r.get("current_effective")
+        if cur_eff is None or (hasattr(pd, "isna") and pd.isna(cur_eff)):
+            cur_eff = r.get("effective_date", "")
         return {
             "First Name": r.get("first_name", ""), "Last Name": r.get("last_name", ""),
             "Carrier": r.get("carrier", ""), "State": r.get("state", ""),
             "Client Since": client_since,
-            "Effective Date": r.get("effective_date", ""),
+            "Effective Date": cur_eff,
             "Mo. on Book": r.get("months_on_book", ""),
             "Premium": r.get("net_premium", ""), "Gap": gap,
             "Months Paid": (h["months"] if h else "(never)"),

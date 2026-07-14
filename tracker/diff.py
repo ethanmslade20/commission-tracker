@@ -171,7 +171,8 @@ def build_all_clients(months: dict) -> pd.DataFrame:
         .agg(
             first_seen        = ("month",          "min"),
             last_seen         = ("month",          "max"),
-            effective_date    = ("effective_date", "min"),   # earliest plan start
+            effective_date    = ("effective_date", "min"),   # earliest plan start (tenure)
+            current_effective = ("effective_date", "last"),  # most-recent active plan start (dispute/commission timing)
             submission_date   = ("submission_date", "min"),  # first time they signed with us
             _term_date_last   = ("term_date",      "last"),  # most recent term_date
             _has_active       = ("_srank",         "max"),   # 1 if any active plan exists
@@ -204,7 +205,7 @@ def build_all_clients(months: dict) -> pd.DataFrame:
 
     cols = [
         "name_key", "client_key", "first_name", "last_name", "carrier",
-        "effective_date", "term_date", "status", "state", "ffm_app_id", "ffm_subscriber_id",
+        "effective_date", "current_effective", "term_date", "status", "state", "ffm_app_id", "ffm_subscriber_id",
         "email", "phone", "cancel_notes", "net_premium", "applicant_count", "first_seen", "last_seen", "months_on_book",
         "dmi_outstanding", "dmi_expired", "svi_outstanding", "svi_expired", "followup_docs",
         "policy_aor", "last_ede_sync", "policy_number", "submission_date",
