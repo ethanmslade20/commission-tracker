@@ -440,6 +440,32 @@ def _upload_summary(all_clients, pastdue, snapshot_dir, today=None) -> None:
             if k:
                 pdue[k] = _disp(r.get("first_name", ""), r.get("last_name", ""))
 
+    # RACE GUARD (Jessica Austin / Patricia Williams false-loss ×3, 2026-07-15):
+    # the merged roster can momentarily lag a win-back / plan-change while ingest
+    # settles, so a client who is truly active leaks into the lost/taken buckets
+    # for one run. Re-read the freshest HealthSherpa snapshot straight from disk —
+    # if a person has ANY current row that is active AND credited to us, they can
+    # never be reported lost or taken. Ground truth wins over a stale in-memory build.
+    _active_now = set()
+    try:
+        _snap = pd.read_parquet(hs[-1])
+        for _, r in _snap.iterrows():
+            if str(r.get("status") or "") not in ("Effectuated", "PendingEffectuation", "PendingFollowups"):
+                continue
+            _a = str(r.get("policy_aor") or "")
+            if NPN in _a or _is_e(_a):
+                _active_now.add(_key(r.get("first_name", ""), r.get("last_name", "")))
+    except Exception:
+        pass
+    if _active_now:
+        _guarded = [n for k, n in {**lost, **aor, **vexp}.items() if k in _active_now]
+        if _guarded:
+            print(f"  Upload summary: race guard kept {len(_guarded)} active-and-mine "
+                  f"client(s) out of lost/taken: {', '.join(sorted(set(_guarded)))}")
+        lost = {k: v for k, v in lost.items() if k not in _active_now}
+        aor = {k: v for k, v in aor.items() if k not in _active_now}
+        vexp = {k: v for k, v in vexp.items() if k not in _active_now}
+
     def _load(name):
         p = _data / name
         try:
