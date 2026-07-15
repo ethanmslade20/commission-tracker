@@ -457,14 +457,17 @@ def _upload_summary(all_clients, pastdue, snapshot_dir, today=None) -> None:
                 _active_now.add(_key(r.get("first_name", ""), r.get("last_name", "")))
     except Exception:
         pass
+    # Guard ONLY the lost/taken buckets. Verification-expired (vexp) clients are
+    # active-and-mine BY DESIGN — active coverage with a term pending for missing
+    # docs — and that "⚠️ still active, get docs in" alert must still fire, so vexp
+    # is deliberately NOT guarded.
     if _active_now:
-        _guarded = [n for k, n in {**lost, **aor, **vexp}.items() if k in _active_now]
+        _guarded = [n for k, n in {**lost, **aor}.items() if k in _active_now]
         if _guarded:
             print(f"  Upload summary: race guard kept {len(_guarded)} active-and-mine "
                   f"client(s) out of lost/taken: {', '.join(sorted(set(_guarded)))}")
         lost = {k: v for k, v in lost.items() if k not in _active_now}
         aor = {k: v for k, v in aor.items() if k not in _active_now}
-        vexp = {k: v for k, v in vexp.items() if k not in _active_now}
 
     def _load(name):
         p = _data / name
