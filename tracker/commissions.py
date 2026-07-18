@@ -110,6 +110,30 @@ def aor_changed_keys() -> set:
     return keys
 
 
+def aor_changed_agents() -> dict:
+    """Map full-name key -> the taking agent's display string ("Name (NPN: #####)")
+    for confirmed-AOR-changed clients that name the new agent in data/aor_changed.json.
+    Lets the report stamp the REAL agent (so a stolen client reads "AOR taken —
+    Yitzchak Nassy" instead of a generic "another agent"). Entries with no agent
+    named are omitted; the report falls back to the generic label for those."""
+    import json
+    from pathlib import Path
+    p = Path(__file__).resolve().parent.parent / "data" / "aor_changed.json"
+    try:
+        items = json.loads(p.read_text())
+    except Exception:
+        return {}
+    out = {}
+    for it in items:
+        l = re.sub(r"[^a-z]", "", _norm(it.get("last", "")))
+        f = re.sub(r"[^a-z]", "", _norm(it.get("first", "")))
+        agent = str(it.get("agent", "")).strip()
+        if l and agent:
+            npn = str(it.get("npn", "")).strip()
+            out[l + f] = f"{agent} (NPN: {npn})" if npn else agent
+    return out
+
+
 def drop_aor_changed(df):
     """Remove rows whose (first_name,last_name) is on the confirmed-AOR-changed
     override list. Pairs with the policy_aor filter to catch lag cases the export

@@ -141,6 +141,15 @@ def build_all_clients(months: dict) -> pd.DataFrame:
 
     # Status rank: active rows sort last so "last" aggregation picks them
     all_df["_srank"] = all_df["status"].map(_STATUS_RANK).fillna(0)
+    # Was this person ever seen in a HealthSherpa (FFM) export? If so they're an
+    # FFM client and carrier-truth should reconcile them; if they only ever came
+    # from a state-based-marketplace (access) export, carrier-truth must leave
+    # them alone (they're legitimately absent from the FFM carrier-portal files).
+    # Missing source (legacy snapshots) defaults to HS to preserve old behavior.
+    all_df["_is_hs"] = (
+        all_df["source"].astype(str).str.lower() != "access"
+        if "source" in all_df.columns else True
+    )
     all_df["effective_date"] = pd.to_datetime(all_df.get("effective_date"), errors="coerce")
     all_df["term_date"]      = pd.to_datetime(all_df.get("term_date"),      errors="coerce")
     all_df["submission_date"] = pd.to_datetime(all_df.get("submission_date"), errors="coerce")
@@ -176,6 +185,7 @@ def build_all_clients(months: dict) -> pd.DataFrame:
             submission_date   = ("submission_date", "min"),  # first time they signed with us
             _term_date_last   = ("term_date",      "last"),  # most recent term_date
             _has_active       = ("_srank",         "max"),   # 1 if any active plan exists
+            _has_hs           = ("_is_hs",         "max"),   # seen in any HS export?
             **last_fields,
         )
         .reset_index()
@@ -184,7 +194,9 @@ def build_all_clients(months: dict) -> pd.DataFrame:
 
     # term_date: NaT when the person still has an active plan
     agg["term_date"] = agg["_term_date_last"].where(agg["_has_active"] == 0, other=pd.NaT)
-    agg = agg.drop(columns=["_term_date_last", "_has_active"])
+    # source: "healthsherpa" if seen in any FFM export, else "access" (exchange-only)
+    agg["source"] = agg["_has_hs"].map(lambda x: "healthsherpa" if x else "access")
+    agg = agg.drop(columns=["_term_date_last", "_has_active", "_has_hs"])
 
     # months_on_book: calendar months from effective_date to the latest snapshot month
     latest       = max(months.keys())
@@ -208,7 +220,7 @@ def build_all_clients(months: dict) -> pd.DataFrame:
         "effective_date", "current_effective", "term_date", "status", "state", "ffm_app_id", "ffm_subscriber_id",
         "email", "phone", "cancel_notes", "net_premium", "applicant_count", "first_seen", "last_seen", "months_on_book",
         "dmi_outstanding", "dmi_expired", "svi_outstanding", "svi_expired", "followup_docs",
-        "policy_aor", "last_ede_sync", "policy_number", "submission_date",
+        "policy_aor", "last_ede_sync", "policy_number", "submission_date", "source",
     ]
     return agg[[c for c in cols if c in agg.columns]]
 

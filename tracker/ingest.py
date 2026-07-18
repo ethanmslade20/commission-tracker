@@ -60,6 +60,10 @@ EXTRA_COLS = [
     "policy_aor",
     # Last Marketplace sync — approximates WHEN the AOR change registered
     "last_ede_sync",
+    # Which export this row came from ("healthsherpa" / "access"). Lets the
+    # carrier-truth overlay skip state-based-marketplace (access) clients, who
+    # are legitimately absent from the FFM carrier-portal files.
+    "source",
 ]
 
 
@@ -312,6 +316,10 @@ def normalize_dataframe(
     # Normalized name key
     if "client_name" in df.columns:
         df["name_key"] = df["client_name"].apply(normalize_name)
+
+    # Stamp the originating export so the carrier-truth overlay can tell FFM
+    # (healthsherpa) clients apart from state-based-marketplace (access) clients.
+    df["source"] = source
 
     # Keep only canonical + extra + name_key
     keep = [c for c in CANONICAL_COLS + EXTRA_COLS + ["name_key"] if c in df.columns]

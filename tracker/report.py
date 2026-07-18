@@ -627,17 +627,23 @@ def run_report(settings: dict) -> None:
     # (gitignored). 'Marketplace disconnected' clients are NOT on the list, so they
     # keep policy_aor=Ethan and are left alone.
     try:
-        from tracker.commissions import aor_changed_keys
+        from tracker.commissions import aor_changed_keys, aor_changed_agents
         _chg = aor_changed_keys()
+        _chg_agents = aor_changed_agents()
         if _chg and "policy_aor" in all_clients.columns:
             import re as _re_aor
             def _ck(r):
                 l = _re_aor.sub(r"[^a-z]", "", str(r.get("last_name", "")).lower())
                 f = _re_aor.sub(r"[^a-z]", "", str(r.get("first_name", "")).lower())
                 return l + f
-            _m = all_clients.apply(lambda r: _ck(r) in _chg, axis=1)
+            _keys = all_clients.apply(_ck, axis=1)
+            _m = _keys.isin(_chg)
             if _m.any():
-                all_clients.loc[_m, "policy_aor"] = "AOR changed (another agent)"
+                # Stamp the actual taking agent when we know it ("Yitzchak Nassy
+                # (NPN: 16663886)") so the reason reads "AOR taken — Yitzchak
+                # Nassy", not a generic label; fall back to generic otherwise.
+                all_clients.loc[_m, "policy_aor"] = _keys[_m].map(_chg_agents).fillna(
+                    "AOR changed (another agent)")
                 print(f"  AOR-changed override: marked {int(_m.sum())} client(s) as another agent's")
     except Exception as _e:
         print(f"  (AOR-changed override skipped: {_e})")
@@ -708,6 +714,41 @@ def run_report(settings: dict) -> None:
     if not all_clients.empty and "carrier" in all_clients.columns:
         from tracker.carriers import normalize_carrier_series
         all_clients["carrier"] = normalize_carrier_series(all_clients["carrier"])
+
+    # One client, one active policy: collapse plan switches (a person showing more
+    # than one active policy — e.g. Ambetter → UnitedHealthcare, or a duplicate
+    # add). Keep the newest by effective date; term the older ones as "Plan
+    # switch", flagged estimated so a switch isn't miscounted as a real loss and is
+    # excluded from Re-Engage.
+    if not all_clients.empty and "status" in all_clients.columns:
+        _ACT = {"Effectuated", "PendingEffectuation", "PendingFollowups"}
+        if "cancel_reason" not in all_clients.columns:
+            all_clients["cancel_reason"] = ""
+        if "term_estimated" not in all_clients.columns:
+            all_clients["term_estimated"] = False
+        _pk = (all_clients["first_name"].fillna("").astype(str).str.lower().str.replace(r"[^a-z]", "", regex=True)
+               + "|" + all_clients["last_name"].fillna("").astype(str).str.lower().str.replace(r"[^a-z]", "", regex=True))
+        _eff_ps = pd.to_datetime(all_clients.get("effective_date"), errors="coerce")
+        _actmask = all_clients["status"].isin(_ACT)
+        _n_switch = 0
+        for _k, _cnt in _pk[_actmask].value_counts().items():
+            if _cnt < 2 or not _k.strip("|"):
+                continue
+            _idxs = list(all_clients.index[_actmask & (_pk == _k)])
+            _grp_eff = _eff_ps.loc[_idxs]
+            _newest = _grp_eff.idxmax() if _grp_eff.notna().any() else _idxs[0]
+            for _i in _idxs:
+                if _i == _newest:
+                    continue
+                all_clients.at[_i, "status"] = "Terminated"
+                all_clients.at[_i, "cancel_reason"] = "Plan switch"
+                all_clients.at[_i, "term_estimated"] = True
+                if "term_date" in all_clients.columns and pd.isna(
+                        pd.to_datetime(all_clients.at[_i, "term_date"], errors="coerce")):
+                    all_clients.at[_i, "term_date"] = _grp_eff.loc[_newest]
+                _n_switch += 1
+        if _n_switch:
+            print(f"  Plan-switch cleanup: collapsed {_n_switch} older duplicate active policy(ies)")
 
     # Tenure = how long the client has been on YOUR book, NOT the policy's
     # coverage age. The policy's effective_date can predate the relationship by
@@ -1052,14 +1093,44 @@ def run_report(settings: dict) -> None:
     # (usually still ours; just needs a Reconnect). Texts on NEWLY-taken only.
     aor_defense = None
     try:
-        from tracker.aor_defense import build_aor_defense, alert_new_aor_changes
+        from tracker.aor_defense import (build_aor_defense, alert_new_aor_changes,
+                                         build_silent_dropoffs)
+        import re as _re_sd
+        def _fl_key(name):
+            p = str(name).split()
+            return _re_sd.sub(r"[^a-z]", "", (p[0] + p[-1]).lower()) if p else ""
         aor_defense = build_aor_defense()
+
+        # Silent drop-offs: clients who were ACTIVE in the last HS export, then
+        # vanished from it and got carrier-truth-lapsed — the hidden-AOR pattern
+        # (Roderick Bell). The scrape can't see them (no HS row left), so flag
+        # them as "Suspected" on AOR Defense for a quick verify instead of
+        # letting them become silent "Lapsed" write-offs.
+        try:
+            _susp = build_silent_dropoffs(all_clients, months)
+            if _susp is not None and not _susp.empty:
+                if aor_defense is not None and not aor_defense.empty:
+                    _have = set(aor_defense["Client"].apply(_fl_key))
+                    _susp = _susp[~_susp["Client"].apply(_fl_key).isin(_have)]
+                if not _susp.empty:
+                    aor_defense = (pd.concat([aor_defense, _susp], ignore_index=True)
+                                   if aor_defense is not None and not aor_defense.empty
+                                   else _susp.reset_index(drop=True))
+                    print(f"  Silent drop-off watch: {len(_susp)} active client(s) vanished "
+                          f"from HS — flagged Suspected AOR ({', '.join(_susp['Client'].head(6))}"
+                          f"{'…' if len(_susp) > 6 else ''})")
+        except Exception as _e:
+            print(f"  (silent drop-off watch skipped: {_e})")
+
         if aor_defense is not None and not aor_defense.empty:
             _t = int((aor_defense["Type"] == "Taken").sum())
             _d = int((aor_defense["Type"] == "Disconnected").sum())
+            _s = int((aor_defense["Type"] == "Suspected").sum())
             _open = int(((aor_defense["Type"] == "Taken") & (aor_defense["Handled"] == "")).sum())
-            print(f"  AOR Defense: {len(aor_defense)} at-risk ({_t} taken / {_d} disconnected · {_open} taken still open)")
-            alert_new_aor_changes(aor_defense)
+            print(f"  AOR Defense: {len(aor_defense)} at-risk ({_t} taken / {_d} disconnected / "
+                  f"{_s} suspected · {_open} taken still open)")
+            # Texts fire on confirmed steals only — never on unverified "Suspected".
+            alert_new_aor_changes(aor_defense[aor_defense["Type"] == "Taken"])
     except Exception as e:
         print(f"  (AOR defense skipped: {e})")
 

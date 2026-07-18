@@ -198,6 +198,83 @@ def build_aor_defense(risk_path=_RISK_PATH, hs_path=_HS_PATH, handled_path=_HAND
     return df
 
 
+_GENUINE_CANCEL = re.compile(
+    r"cancel|member|request|non[- ]?payment|nonpayment|termin|delinqu|failed|unpaid|expired",
+    re.I)
+
+
+def _nk(first, last) -> str:
+    return re.sub(r"[^a-z]", "", f"{first}{last}".lower())
+
+
+def build_silent_dropoffs(all_clients, months) -> pd.DataFrame:
+    """Catch the hidden-AOR pattern the scrape misses (e.g. Roderick Bell):
+    a client who was ACTIVE in the last HealthSherpa export, then vanished from
+    it entirely and got carrier-truth-lapsed. When an AOR is fully taken, the
+    client drops off the agent's HS account, so there's no foreign policy_aor
+    left to read and no scrape row — they'd quietly become a "Lapsed" write-off.
+
+    Returns AOR-Defense-shaped rows (Type "Suspected") for those clients so they
+    surface for a quick HealthSherpa verify instead of disappearing. Genuine
+    cancellations (last HS status already Cancelled/Terminated, or a real cancel
+    note) are excluded. Returns an empty frame when there's nothing to flag."""
+    _EMPTY = pd.DataFrame(columns=[
+        "Client", "Type", "Taken By", "Detected", "Days Ago", "Carrier", "State",
+        "Members", "Est $/yr", "Phone", "Policy Status", "Handled", "Exchange ID"])
+    if all_clients is None or all_clients.empty or not months:
+        return _EMPTY
+
+    _ACTIVE = {"Effectuated", "PendingEffectuation", "PendingFollowups"}
+    latest_m = max(months)
+    latest_keys, last_hs = set(), {}
+    for m in sorted(months):
+        df = months[m]
+        if "source" in df.columns:
+            df = df[df["source"].astype(str).str.lower() != "access"]
+        for _, r in df.iterrows():
+            k = _nk(r.get("first_name", ""), r.get("last_name", ""))
+            if not k:
+                continue
+            last_hs[k] = {"status": str(r.get("status", "") or ""),
+                          "note": str(r.get("cancel_notes", "") or "").strip()}
+            if m == latest_m:
+                latest_keys.add(k)
+
+    reason = (all_clients.get("cancel_reason", pd.Series("", index=all_clients.index))
+              .fillna("").astype(str))
+    today = pd.Timestamp.today().normalize()
+    rows = []
+    for idx in all_clients.index[reason.str.startswith("Lapsed")]:
+        r = all_clients.loc[idx]
+        k = _nk(r.get("first_name", ""), r.get("last_name", ""))
+        if not k or k in latest_keys:
+            continue                       # still in the export → not a silent drop-off
+        h = last_hs.get(k, {})
+        if h.get("status") not in _ACTIVE:
+            continue                       # last-known already cancelled → genuine
+        if _GENUINE_CANCEL.search(h.get("note", "")):
+            continue                       # real cancel note → genuine
+        term = pd.to_datetime(r.get("term_date"), errors="coerce")
+        _mn = pd.to_numeric(r.get("applicant_count"), errors="coerce")
+        members = 1 if pd.isna(_mn) else max(int(_mn), 1)
+        rows.append({
+            "Client": f"{r.get('first_name','')} {r.get('last_name','')}".strip(),
+            "Type": "Suspected",
+            "Taken By": "(verify on HealthSherpa)",
+            "Detected": term.strftime("%b %d, %Y") if pd.notna(term) else "",
+            "Days Ago": int((today - term).days) if pd.notna(term) else None,
+            "Carrier": str(r.get("carrier", ""))[:34],
+            "State": str(r.get("state", "") or ""),
+            "Members": members,
+            "Est $/yr": round(members * _PMPM * 12),
+            "Phone": str(r.get("phone", "") or ""),
+            "Policy Status": "Was active — vanished from HS export",
+            "Handled": "",
+            "Exchange ID": str(r.get("ffm_subscriber_id", "") or r.get("ffm_app_id", "") or ""),
+        })
+    return pd.DataFrame(rows) if rows else _EMPTY
+
+
 def alert_new_aor_changes(df, send=None) -> list:
     """Text Ethan when someone NEW shows up as Taken (vs the saved baseline).
     Baseline only updates after a successful diff, so each client alerts once.

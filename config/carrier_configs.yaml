@@ -19,6 +19,8 @@ carrier_aliases:
   "Golden Rule":       ["golden rule"]
   "Select Health":     ["select health"]
   "U of U":            ["university of utah", "u of u"]
+  Alliant:             ["alliant"]
+  CareSource:          ["caresource"]
 
 # ---------------------------------------------------------------------------
 # State + carrier licensing matrix.
@@ -39,7 +41,7 @@ state_carrier_matrix:
   KS: ["United Healthcare", "Oscar", "Ambetter"]
   LA: ["Allstate", "United Healthcare", "Ambetter"]
   MI: ["Oscar", "United Healthcare", "Ambetter"]
-  GA: ["United Healthcare", "Ambetter", "Cigna", "Oscar", "Anthem/Wellpoint"]
+  GA: ["United Healthcare", "Ambetter", "Cigna", "Oscar", "Anthem/Wellpoint", "Alliant", "CareSource"]
   IN: ["Ambetter", "Allstate", "Cigna", "Anthem/Wellpoint"]
   IA: ["Ambetter", "Allstate", "Oscar", "United Healthcare"]
   MS: ["Allstate", "Cigna", "Oscar", "United Healthcare", "Ambetter"]
@@ -129,6 +131,9 @@ sources:
       - "il_access*"
       - "ga_access*"
       - "*_access*"
+      - "book_of_business*"   # Get Covered IL export (state-based marketplace)
+      - "getcovered*"
+      - "get_covered*"
 
     # The CSV header is offset by one column; ingest reads with header=None + true_columns.
     true_columns:

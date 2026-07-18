@@ -3408,7 +3408,8 @@ elif page == "AOR Defense":
     st.title("AOR Defense")
     st.caption("Clients HealthSherpa flags as at risk of walking out the door. **Taken** = another "
                "agent filed an Agent-of-Record change — call them, most don't know they were switched. "
-               "**Disconnected** = usually still yours — just click Reconnect in HealthSherpa to confirm.")
+               "**Disconnected** = usually still yours — just click Reconnect in HealthSherpa to confirm. "
+               "**Suspected** = was active, then silently vanished from your export (likely a taken AOR) — verify on HealthSherpa.")
     st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 
     _adf = _load_aor_defense()
@@ -3418,6 +3419,7 @@ elif page == "AOR Defense":
     else:
         _taken = _adf[_adf["Type"] == "Taken"]
         _disc  = _adf[_adf["Type"] == "Disconnected"]
+        _susp  = _adf[_adf["Type"] == "Suspected"]
         _open_taken = _taken[_taken["Handled"].fillna("") == ""]
         _stake = int(pd.to_numeric(_open_taken["Est $/yr"], errors="coerce").fillna(0).sum())
 
@@ -3461,6 +3463,26 @@ elif page == "AOR Defense":
             _d = _d.rename(columns={"Detected": "Disconnected On"})
             st.dataframe(_d, use_container_width=True, hide_index=True,
                          height=min(46 + 35 * max(len(_d), 1), 560))
+
+        if not _susp.empty:
+            st.markdown("<br>", unsafe_allow_html=True)
+            with st.container(border=True):
+                st.markdown(chart_head("Suspected — verify these on HealthSherpa",
+                                       "These clients were ACTIVE in your last export, then vanished from it "
+                                       "entirely and got carrier-lapsed — the tell-tale sign an AOR was taken "
+                                       "(the client drops off your account, so there's no signal left to read). "
+                                       "Look each up by Subscriber ID on HealthSherpa; if the AOR shows another "
+                                       "agent, tell Claude and it'll flip to a confirmed steal.",
+                                       "bell"), unsafe_allow_html=True)
+                _cols_susp = [c for c in ["Client", "Detected", "Days Ago", "Carrier", "State",
+                                          "Members", "Est $/yr", "Phone", "Exchange ID"]
+                              if c in _adf.columns]
+                _s = _susp[_cols_susp].copy()
+                if "Days Ago" in _s.columns:
+                    _s = _s.sort_values("Days Ago", ascending=True, na_position="last")
+                _s = _s.rename(columns={"Detected": "Vanished On", "Exchange ID": "Subscriber ID"})
+                st.dataframe(_s, use_container_width=True, hide_index=True,
+                             height=min(46 + 35 * max(len(_s), 1), 400))
 
         st.caption("✅ Handled someone? Tell Claude (e.g. “won back Kayla Martinez” or “Sue Meyer is "
                    "really gone”) and they'll drop off the open list. The list itself refreshes when "
@@ -3912,6 +3934,9 @@ elif page == "Re-Engage":
 
     if "status" in all_clients.columns:
         lost_df = all_clients[all_clients["status"].isin(_CHURN_STS)].copy()
+        # Plan switches are retained clients (moved to a newer plan), not losses.
+        if "cancel_reason" in lost_df.columns:
+            lost_df = lost_df[lost_df["cancel_reason"].astype(str) != "Plan switch"]
     else:
         lost_df = pd.DataFrame()
 
