@@ -699,7 +699,14 @@ def run_report(settings: dict) -> None:
             if name in all_clients.columns:
                 return pd.to_numeric(all_clients[name], errors="coerce").fillna(0)
             return pd.Series(0.0, index=all_clients.index)
-        _exp = (_numcol("dmi_expired") > 0) | (_numcol("svi_expired") > 0)
+        # ...but NOT brand-new business whose coverage hasn't started yet (future
+        # effective date). A pre-effective new enrollment with an expired DMI/SVI just
+        # owes a document — it belongs on the Follow-ups list, not marked lost.
+        _eff = (pd.to_datetime(all_clients["effective_date"], errors="coerce")
+                if "effective_date" in all_clients.columns
+                else pd.Series(pd.NaT, index=all_clients.index))
+        _today = pd.Timestamp.today().normalize()
+        _exp = ((_numcol("dmi_expired") > 0) | (_numcol("svi_expired") > 0)) & ~(_eff > _today)
         if _exp.any():
             if "cancel_reason" not in all_clients.columns:
                 all_clients["cancel_reason"] = ""
