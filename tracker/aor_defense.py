@@ -276,21 +276,33 @@ def build_silent_dropoffs(all_clients, months) -> pd.DataFrame:
 
 
 def alert_new_aor_changes(df, send=None) -> list:
-    """Text Ethan when someone NEW shows up as Taken (vs the saved baseline).
-    Baseline only updates after a successful diff, so each client alerts once.
-    Returns the list of newly-taken names."""
+    """Text Ethan ONCE per client, the first time they show up as Taken. Dedups by
+    a PERMANENT, append-only set keyed by client NAME (data/aor_alerted.json) — so a
+    client who drops off the export and reappears (silent drop-off, or confirmed via
+    aor_changed.json) is never alerted twice. Exchange ID was unreliable here: it can
+    be blank for dropped-off clients, and the baseline was rewritten to the current
+    taken set each run, so churn re-fired the same people. Returns newly-alerted names."""
     if df is None or df.empty:
         return []
     taken = df[df["Type"] == "Taken"]
-    cur = dict(zip(taken["Exchange ID"], taken["Client"]))
+    if taken.empty:
+        return []
+    cur = {}  # name-key -> display name (first occurrence wins)
+    for _nm in taken["Client"]:
+        _nk = re.sub(r"[^a-z]", "", str(_nm).lower())
+        if _nk:
+            cur.setdefault(_nk, _nm)
 
-    first_run = not _BASELINE_PATH.exists()
-    prev = set(_load_json(_BASELINE_PATH, []))
-    new = [(x, n) for x, n in cur.items() if x not in prev]
+    alerted_path = _ROOT / "data" / "aor_alerted.json"
+    first_run = not alerted_path.exists()
+    alerted = set(_load_json(alerted_path, []))
+    new = [(k, n) for k, n in cur.items() if k not in alerted]
 
-    _BASELINE_PATH.write_text(json.dumps(sorted(cur), indent=1))
+    alerted |= set(cur.keys())  # append-only: once seen Taken, never alert again
+    alerted_path.parent.mkdir(parents=True, exist_ok=True)
+    alerted_path.write_text(json.dumps(sorted(alerted), indent=1))
     if first_run:
-        print(f"  AOR Defense: baseline initialized ({len(cur)} already taken — no text).")
+        print(f"  AOR Defense: alerted-set initialized ({len(cur)} already taken — no text).")
         return []
     if not new:
         return []
