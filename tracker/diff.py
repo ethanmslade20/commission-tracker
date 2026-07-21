@@ -141,6 +141,10 @@ def build_all_clients(months: dict) -> pd.DataFrame:
 
     # Status rank: active rows sort last so "last" aggregation picks them
     all_df["_srank"] = all_df["status"].map(_STATUS_RANK).fillna(0)
+    # Month this row was ACTIVE (blank otherwise) → the max per person is the last
+    # month a snapshot showed them active. That's the anchor for dating a loss when
+    # a client is gone but carries no cancel date (see assign_loss_months).
+    all_df["_active_month"] = all_df["month"].where(all_df["_srank"] == 1, "")
     # Was this person ever seen in a HealthSherpa (FFM) export? If so they're an
     # FFM client and carrier-truth should reconcile them; if they only ever came
     # from a state-based-marketplace (access) export, carrier-truth must leave
@@ -180,6 +184,7 @@ def build_all_clients(months: dict) -> pd.DataFrame:
         .agg(
             first_seen        = ("month",          "min"),
             last_seen         = ("month",          "max"),
+            last_active       = ("_active_month",  "max"),  # last month seen ACTIVE
             effective_date    = ("effective_date", "min"),   # earliest plan start (tenure)
             current_effective = ("effective_date", "last"),  # most-recent active plan start (dispute/commission timing)
             submission_date   = ("submission_date", "min"),  # first time they signed with us
@@ -218,11 +223,75 @@ def build_all_clients(months: dict) -> pd.DataFrame:
     cols = [
         "name_key", "client_key", "first_name", "last_name", "carrier",
         "effective_date", "current_effective", "term_date", "status", "state", "ffm_app_id", "ffm_subscriber_id",
-        "email", "phone", "cancel_notes", "net_premium", "applicant_count", "first_seen", "last_seen", "months_on_book",
+        "email", "phone", "cancel_notes", "net_premium", "applicant_count", "first_seen", "last_seen", "last_active", "months_on_book",
         "dmi_outstanding", "dmi_expired", "svi_outstanding", "svi_expired", "followup_docs",
         "policy_aor", "last_ede_sync", "policy_number", "submission_date", "source",
     ]
     return agg[[c for c in cols if c in agg.columns]]
+
+
+def assign_loss_months(all_clients: pd.DataFrame) -> pd.DataFrame:
+    """Give every gone client a real loss date so churn/loss math counts them.
+
+    The problem this fixes: a client marked Cancelled/Terminated (AOR-taken,
+    verification-expired, or a HealthSherpa cancellation with no date) often has
+    NO term_date. The month-over-month engine dates losses by term_date, so a
+    dateless gone client was counted ACTIVE forever and never registered as a
+    loss — understating churn and overstating lifetime value.
+
+    Ethan's rule: a client is lost the moment a later snapshot shows them gone.
+    So we anchor the loss to `last_active` (the last month a snapshot showed them
+    active) — "they were mine+active in an earlier photo, gone in a later one."
+    A carrier portal that already gave a real cancel date keeps it. Plan switches
+    (retention, flagged estimated) are left alone so they aren't miscounted as
+    churn. Dated losses are marked term_estimated=False so the MoM counts them.
+
+    Must run AFTER all status rules (carrier-truth, AOR-taken, verification,
+    plan-switch) so the final "who's gone" is known.
+    """
+    if all_clients is None or all_clients.empty or "status" not in all_clients.columns:
+        return all_clients
+    df = all_clients
+    churned = {"Cancelled", "Terminated"}
+    if "term_estimated" not in df.columns:
+        df["term_estimated"] = False
+    if "term_date" not in df.columns:
+        df["term_date"] = pd.NaT
+
+    def _as_bool(v) -> bool:
+        return v if isinstance(v, bool) else str(v).strip().lower() in ("true", "1", "yes", "t")
+
+    term   = pd.to_datetime(df.get("term_date"), errors="coerce")
+    est    = df["term_estimated"].apply(_as_bool)
+    reason = df.get("cancel_reason", pd.Series("", index=df.index)).fillna("").astype(str).str.lower()
+
+    gone      = df["status"].isin(churned)
+    is_switch = reason.str.contains("switch")          # plan switch = retention, skip
+    has_real  = gone & term.notna() & ~est             # real carrier cancel date — keep
+    need      = gone & ~has_real & ~is_switch          # these need a loss date
+
+    la = df.get("last_active", pd.Series(pd.NA, index=df.index)).astype(str)
+    fs = df.get("first_seen",  pd.Series(pd.NA, index=df.index)).astype(str)
+
+    def _valid_month(m) -> bool:
+        return isinstance(m, str) and len(m) >= 7 and m[:4].isdigit() and m[4] == "-"
+
+    def _eom(m: str):
+        return pd.Timestamp(m[:7] + "-01") + pd.offsets.MonthEnd(0)
+
+    dated = 0
+    for idx in df.index[need]:
+        anchor = la.at[idx]
+        if not _valid_month(anchor):
+            anchor = fs.at[idx]                        # never seen active → first-seen fallback
+        if _valid_month(anchor):
+            df.at[idx, "term_date"] = _eom(anchor)
+            df.at[idx, "term_estimated"] = False       # count it as a real loss
+            dated += 1
+    if dated:
+        print(f"  Loss dating: dated {dated} gone client(s) with no cancel date "
+              f"(from the last month a snapshot showed them active)")
+    return df
 
 
 def build_history_pivot(months: dict) -> pd.DataFrame:

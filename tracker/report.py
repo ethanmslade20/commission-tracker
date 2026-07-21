@@ -16,7 +16,7 @@ _NPN = _AGENT["npn"]
 _FN = _AGENT["first_name"].lower()
 _LN = _AGENT["last_name"].lower()
 
-from tracker.diff import build_all_clients, compute_diff
+from tracker.diff import build_all_clients, compute_diff, assign_loss_months
 from tracker.ingest import load_all_snapshots
 from tracker.sheets import update_sheet
 
@@ -806,6 +806,14 @@ def run_report(settings: dict) -> None:
                 _n_switch += 1
         if _n_switch:
             print(f"  Plan-switch cleanup: collapsed {_n_switch} older duplicate active policy(ies)")
+
+    # Loss dating: every gone client (AOR-taken, verification-expired, undated
+    # HealthSherpa cancellation) that carries no cancel date gets one, anchored to
+    # the last month a snapshot showed them active. Without this they'd be counted
+    # active-forever in the month-over-month engine and never register as a loss,
+    # understating churn and overstating lifetime value. Runs last, after every
+    # status rule, so "who's gone" is final.
+    all_clients = assign_loss_months(all_clients)
 
     # Tenure = how long the client has been on YOUR book, NOT the policy's
     # coverage age. The policy's effective_date can predate the relationship by
