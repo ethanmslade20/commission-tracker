@@ -215,6 +215,10 @@ CYAN  = "#22d3ee"
 GREEN = "#22c55e"
 RED   = "#ef4444"
 GOLD  = "#f59e0b"
+
+# Monthly-loss averages start here (when the book really began). The mid-2025
+# ramp months carry ~zero losses and would otherwise drag the average down.
+_AVG_LOST_START = "2025-07"
 T = dict(
     page_bg      = "#070f22",
     sidebar_bg   = "#081426",
@@ -1245,10 +1249,15 @@ def _load_from_sheets():
         _ytd_start = f"{dt.date.today().year}-02"
         _ytd = mom_df[mom_df["Month"] >= _ytd_start] if "Month" in mom_df.columns else mom_df
         _base = _ytd if not _ytd.empty else mom_df
+        # Losses are averaged from Jul 2025 forward (when the book really began);
+        # the mid-2025 ramp months carry ~zero losses and drag the average down.
+        _lost_base = mom_df[mom_df["Month"] >= _AVG_LOST_START] if "Month" in mom_df.columns else mom_df
+        if _lost_base.empty:
+            _lost_base = mom_df
         avg_added          = round(_base["New Policies"].mean(), 1)
-        avg_lost           = round(mom_df["Policies Lost"].mean(), 1)
+        avg_lost           = round(_lost_base["Policies Lost"].mean(), 1)
         avg_members_added  = round(_base["New Members"].mean(), 1)
-        avg_members_lost   = round(mom_df["Members Lost"].mean(), 1)
+        avg_members_lost   = round(_lost_base["Members Lost"].mean(), 1)
     else:
         avg_added = avg_lost = avg_members_added = avg_members_lost = "N/A"
 

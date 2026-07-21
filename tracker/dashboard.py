@@ -68,10 +68,15 @@ def build_dashboard_data(
         _ytd_start = f"{_dt.date.today().year}-02"
         _ytd = mom_df[mom_df["Month"] >= _ytd_start] if "Month" in mom_df.columns else mom_df
         _base = _ytd if not _ytd.empty else mom_df
+        # Losses averaged from Jul 2025 forward (when the book really began) — the
+        # mid-2025 ramp months carry ~zero losses and drag the average down.
+        _lost_base = mom_df[mom_df["Month"] >= "2025-07"] if "Month" in mom_df.columns else mom_df
+        if _lost_base.empty:
+            _lost_base = mom_df
         avg_added          = round(_base["New Policies"].mean(), 1)
-        avg_lost           = round(mom_df["Policies Lost"].mean(), 1)
+        avg_lost           = round(_lost_base["Policies Lost"].mean(), 1)
         avg_members_added  = round(_base["New Members"].mean(), 1)
-        avg_members_lost   = round(mom_df["Members Lost"].mean(), 1)
+        avg_members_lost   = round(_lost_base["Members Lost"].mean(), 1)
     else:
         avg_added = avg_lost = avg_members_added = avg_members_lost = "N/A"
 
