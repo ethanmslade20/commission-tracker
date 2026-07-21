@@ -661,6 +661,43 @@ def run_report(settings: dict) -> None:
     except Exception as _e:
         print(f"  (AOR-changed override skipped: {_e})")
 
+    # AOR'd = gone (matches the agent site). A client on HealthSherpa's own AOR at-risk
+    # export (input/aor_at_risk.csv — a list of Federal Exchange IDs = ffm_app_id) whose
+    # agent-of-record now shows ANOTHER agent is marked Cancelled ("AOR taken") so they
+    # drop out of the active count / book. Blank-AOR (disconnected) ones on the list stay
+    # active — still yours, just needs a reconnect. Refresh by re-exporting the AOR at-risk
+    # list from HealthSherpa (Exports → Quick Exports) into input/aor_at_risk.csv.
+    _risk_p = Path(__file__).resolve().parent.parent / "input" / "aor_at_risk.csv"
+    if _risk_p.exists() and "ffm_app_id" in all_clients.columns and "policy_aor" in all_clients.columns:
+        try:
+            _rd = pd.read_csv(_risk_p, dtype=str).fillna("")
+            _idc = next((c for c in _rd.columns
+                         if "exchange id" in c.lower() or c.strip().lower() == "ffm_app_id"), None)
+            if _idc:
+                _rids = {re.sub(r"[^0-9]", "", str(x)) for x in _rd[_idc]} - {""}
+                _cid = all_clients["ffm_app_id"].apply(lambda x: re.sub(r"[^0-9]", "", str(x)))
+
+                def _foreign_aor(a):
+                    al = str(a or "").lower()
+                    if not al.strip() or "none" in al:
+                        return False
+                    if _NPN and str(_NPN) in str(a):
+                        return False
+                    if _LN in al and _FN in al:
+                        return False
+                    return True
+
+                _taken = _cid.isin(_rids) & all_clients["policy_aor"].apply(_foreign_aor)
+                if "cancel_reason" not in all_clients.columns:
+                    all_clients["cancel_reason"] = ""
+                all_clients.loc[_taken, "status"] = "Cancelled"
+                all_clients.loc[_taken, "cancel_reason"] = "AOR taken"
+                if int(_taken.sum()):
+                    print(f"  AOR-taken (at-risk list + foreign AOR): marked {int(_taken.sum())} "
+                          f"client(s) Cancelled, out of the active count")
+        except Exception as _e:
+            print(f"  (AOR at-risk rule skipped: {_e})")
+
     before_ct    = len(all_clients)
     all_clients  = _filter_by_appointments(all_clients, appointments)
     filtered_ct  = before_ct - len(all_clients)
