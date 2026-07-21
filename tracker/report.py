@@ -620,6 +620,19 @@ def run_report(settings: dict) -> None:
     appointments = _load_appointments()
     all_clients  = build_all_clients(months)
 
+    # Carriers Ethan never counts as his book (e.g. Florida Blue / BCBS-FL). Matched on
+    # the raw carrier name as a case-insensitive substring so "florida blue" drops only
+    # the FL Blue entities, not other Blue Cross plans. Same rule runs on the agent site.
+    _excl_carriers = [str(x).strip().lower() for x in (settings.get("excluded_carriers") or [])
+                      if str(x).strip()]
+    if _excl_carriers and "carrier" in all_clients.columns:
+        _cl = all_clients["carrier"].astype(str).str.lower()
+        _drop = _cl.apply(lambda c: any(x in c for x in _excl_carriers))
+        if int(_drop.sum()):
+            print(f"  Excluded {int(_drop.sum())} clients on non-counted carriers "
+                  f"({', '.join(_excl_carriers)})")
+        all_clients = all_clients[~_drop].copy()
+
     # Mark confirmed-AOR-changed clients whose HealthSherpa policy_aor field still
     # lags the exchange (e.g. Tammy Bennett -> Albert Rincon). Stamping policy_aor
     # here means EVERY AOR filter treats them as another agent's — including the

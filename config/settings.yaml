@@ -16,6 +16,11 @@ snapshot_dir: "snapshots"
 input_dir: "input"
 carrier_config_path: "config/carrier_configs.yaml"
 
+# Carriers Ethan never counts as his book (case-insensitive substring match on the
+# raw carrier name). Same list the agent site applies per-tenant.
+excluded_carriers:
+  - "Florida Blue"
+
 # Sheet tab names
 tabs:
   dashboard:         "Dashboard"
