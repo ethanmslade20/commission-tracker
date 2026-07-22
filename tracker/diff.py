@@ -230,28 +230,30 @@ def build_all_clients(months: dict) -> pd.DataFrame:
     return agg[[c for c in cols if c in agg.columns]]
 
 
-def assign_loss_months(all_clients: pd.DataFrame) -> pd.DataFrame:
+def assign_loss_months(all_clients: pd.DataFrame, last_paid=None) -> pd.DataFrame:
     """Give every gone client a real loss date so churn/loss math counts them.
 
-    The problem this fixes: a client marked Cancelled/Terminated (AOR-taken,
-    verification-expired, or a HealthSherpa cancellation with no date) often has
-    NO term_date. The month-over-month engine dates losses by term_date, so a
-    dateless gone client was counted ACTIVE forever and never registered as a
-    loss — understating churn and overstating lifetime value.
+    A client marked Cancelled/Terminated (AOR-taken, verification-expired, or a
+    HealthSherpa cancellation with no date) often has NO term_date. The MoM engine
+    dates losses by term_date, so a dateless gone client was counted ACTIVE forever
+    and never registered as a loss — understating churn and overstating LTV.
 
-    Ethan's rule: a client is lost the moment a later snapshot shows them gone.
-    So we anchor the loss to `last_active` (the last month a snapshot showed them
-    active) — "they were mine+active in an earlier photo, gone in a later one."
-    A carrier portal that already gave a real cancel date keeps it. Plan switches
-    (retention, flagged estimated) are left alone so they aren't miscounted as
-    churn. Dated losses are marked term_estimated=False so the MoM counts them.
+    For each gone client with no real carrier cancel date, assign one from the best
+    available source, in priority order:
+      1. commission-stop month — the month his commission on them stopped (money
+         doesn't lie; `last_paid` = {name_key: 'YYYY-MM'}, name_key = first+last letters);
+      2. exchange sync (last_ede_sync) — the exchange's last touch on their record;
+      3. last month a snapshot showed them active (last_active), else first_seen.
+    Never dated later than the current month. Plan switches (retention) are skipped.
+    Dated losses are flagged term_estimated=False so the MoM counts them.
 
-    Must run AFTER all status rules (carrier-truth, AOR-taken, verification,
-    plan-switch) so the final "who's gone" is known.
+    Must run AFTER all status rules (carrier-truth, AOR, verification, plan-switch).
     """
     if all_clients is None or all_clients.empty or "status" not in all_clients.columns:
         return all_clients
+    import re
     df = all_clients
+    last_paid = last_paid or {}
     churned = {"Cancelled", "Terminated"}
     if "term_estimated" not in df.columns:
         df["term_estimated"] = False
@@ -261,36 +263,46 @@ def assign_loss_months(all_clients: pd.DataFrame) -> pd.DataFrame:
     def _as_bool(v) -> bool:
         return v if isinstance(v, bool) else str(v).strip().lower() in ("true", "1", "yes", "t")
 
+    def _pk(f, l) -> str:
+        return re.sub(r"[^a-z]", "", f"{f}{l}".lower())
+
+    def _valid(m) -> bool:
+        return isinstance(m, str) and len(m) >= 7 and m[:4].isdigit() and m[4] == "-"
+
     term   = pd.to_datetime(df.get("term_date"), errors="coerce")
     est    = df["term_estimated"].apply(_as_bool)
     reason = df.get("cancel_reason", pd.Series("", index=df.index)).fillna("").astype(str).str.lower()
+    sync   = pd.to_datetime(df.get("last_ede_sync"), format="%m/%d/%Y %H:%M:%S", errors="coerce")
+    sync   = sync.fillna(pd.to_datetime(df.get("last_ede_sync"), errors="coerce"))
+    fn = df.get("first_name", pd.Series("", index=df.index)).fillna("").astype(str)
+    ln = df.get("last_name",  pd.Series("", index=df.index)).fillna("").astype(str)
+    la = df.get("last_active", pd.Series(pd.NA, index=df.index)).astype(str)
+    fs = df.get("first_seen",  pd.Series(pd.NA, index=df.index)).astype(str)
+    cur = pd.Timestamp.today().to_period("M")
 
     gone      = df["status"].isin(churned)
     is_switch = reason.str.contains("switch")          # plan switch = retention, skip
     has_real  = gone & term.notna() & ~est             # real carrier cancel date — keep
     need      = gone & ~has_real & ~is_switch          # these need a loss date
 
-    la = df.get("last_active", pd.Series(pd.NA, index=df.index)).astype(str)
-    fs = df.get("first_seen",  pd.Series(pd.NA, index=df.index)).astype(str)
+    def _clamp(mstr):
+        p = pd.Period(mstr[:7], freq="M")
+        return p if p <= cur else cur
 
-    def _valid_month(m) -> bool:
-        return isinstance(m, str) and len(m) >= 7 and m[:4].isdigit() and m[4] == "-"
-
-    def _eom(m: str):
-        return pd.Timestamp(m[:7] + "-01") + pd.offsets.MonthEnd(0)
-
-    dated = 0
+    src = {"money": 0, "sync": 0, "active": 0, "none": 0}
     for idx in df.index[need]:
-        anchor = la.at[idx]
-        if not _valid_month(anchor):
-            anchor = fs.at[idx]                        # never seen active → first-seen fallback
-        if _valid_month(anchor):
-            df.at[idx, "term_date"] = _eom(anchor)
-            df.at[idx, "term_estimated"] = False       # count it as a real loss
-            dated += 1
-    if dated:
-        print(f"  Loss dating: dated {dated} gone client(s) with no cancel date "
-              f"(from the last month a snapshot showed them active)")
+        mm = last_paid.get(_pk(fn.at[idx], ln.at[idx]))
+        if _valid(mm):
+            df.at[idx, "term_date"] = _clamp(mm).to_timestamp("M"); df.at[idx, "term_estimated"] = False; src["money"] += 1; continue
+        if pd.notna(sync.at[idx]):
+            df.at[idx, "term_date"] = min(sync.at[idx].to_period("M"), cur).to_timestamp("M"); df.at[idx, "term_estimated"] = False; src["sync"] += 1; continue
+        anchor = la.at[idx] if _valid(la.at[idx]) else fs.at[idx]
+        if _valid(anchor):
+            df.at[idx, "term_date"] = _clamp(anchor).to_timestamp("M"); df.at[idx, "term_estimated"] = False; src["active"] += 1; continue
+        src["none"] += 1
+    if sum(src.values()):
+        print(f"  Loss dating: dated {sum(src.values())} dateless gone client(s) — "
+              f"money-stop {src['money']}, exchange-sync {src['sync']}, last-active {src['active']}, no-date {src['none']}")
     return df
 
 

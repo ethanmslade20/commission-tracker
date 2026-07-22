@@ -134,6 +134,46 @@ def _filter_by_appointments(df: pd.DataFrame, appointments: dict) -> pd.DataFram
     return df[df.apply(_is_appointed, axis=1)].copy()
 
 
+def _build_last_paid(settings: dict) -> dict:
+    """Money-backed 'last month paid per client' map, keyed by name_key (first+last
+    letters). Merges persisted 2025 statement data (data/commission_2025.json, parsed
+    once from the FMO statements) with the live 2026 Insurance PAYMENTS sheet. Used by
+    loss-dating to date a gone client to the month his commission stopped. Best-effort:
+    any piece that fails just contributes nothing (loss-dating falls back gracefully)."""
+    import json as _json
+    def _key(m):
+        x = re.sub(r"\b(family|household)\b", "", str(m), flags=re.I).strip()
+        if "," in x:
+            last, rest = x.split(",", 1); p = rest.split()
+            return re.sub(r"[^a-z]", "", ((p[0] if p else "") + last).lower())
+        p = x.split()
+        return re.sub(r"[^a-z]", "", ((p[0] + p[-1]) if len(p) >= 2 else x).lower())
+    out = {}
+    # 2025 statements (persisted snapshot; keys already normalized to first+last letters)
+    try:
+        p25 = Path(__file__).resolve().parent.parent / "data" / "commission_2025.json"
+        if p25.exists():
+            out.update({str(k): str(v) for k, v in _json.load(open(p25)).items()})
+    except Exception as e:
+        print(f"  (2025 commission history skipped: {type(e).__name__})")
+    # 2026 live payments sheet
+    try:
+        url = settings.get("payments_sheet_url"); imp = settings.get("impersonation_target", "")
+        if url:
+            from tracker.commissions import parse_payments_sheet
+            from tracker.sheets import _open_sheet
+            pdf = parse_payments_sheet(_open_sheet(url, imp))
+            if pdf is not None and not pdf.empty:
+                pdf = pdf.copy()
+                pdf["_k"] = pdf["member"].apply(_key)
+                pdf["_m"] = pd.to_datetime(pdf["payment_month"], errors="coerce").dt.strftime("%Y-%m")
+                for k, mx in pdf.dropna(subset=["_m"]).groupby("_k")["_m"].max().items():
+                    out[k] = max(out.get(k, ""), mx)
+    except Exception as e:
+        print(f"  (2026 payments money-dating skipped: {type(e).__name__}: {e})")
+    return out
+
+
 def _build_supplemental_display(supp: pd.DataFrame) -> pd.DataFrame:
     """Format the normalized supplemental roster for the Supplemental sheet tab:
     friendly headers, active policies first, premium rounded. Commission is
@@ -808,12 +848,14 @@ def run_report(settings: dict) -> None:
             print(f"  Plan-switch cleanup: collapsed {_n_switch} older duplicate active policy(ies)")
 
     # Loss dating: every gone client (AOR-taken, verification-expired, undated
-    # HealthSherpa cancellation) that carries no cancel date gets one, anchored to
-    # the last month a snapshot showed them active. Without this they'd be counted
-    # active-forever in the month-over-month engine and never register as a loss,
-    # understating churn and overstating lifetime value. Runs last, after every
-    # status rule, so "who's gone" is final.
-    all_clients = assign_loss_months(all_clients)
+    # HealthSherpa cancellation) that carries no cancel date gets one. We date it to
+    # the month his COMMISSION on them stopped (money doesn't lie) — falling back to
+    # the exchange sync date, then the last month a snapshot showed them active.
+    # Without this they'd be counted active-forever in the month-over-month engine
+    # and never register as a loss, understating churn and overstating LTV. Runs last,
+    # after every status rule, so "who's gone" is final.
+    _last_paid = _build_last_paid(settings)
+    all_clients = assign_loss_months(all_clients, last_paid=_last_paid)
 
     # Tenure = how long the client has been on YOUR book, NOT the policy's
     # coverage age. The policy's effective_date can predate the relationship by
