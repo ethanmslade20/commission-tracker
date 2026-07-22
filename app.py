@@ -2733,7 +2733,14 @@ elif page == "Book":
     # Filters
     f1, f2, f3, f4 = st.columns([2, 2, 2, 3])
     with f1:
-        status_opts = ["All"] + sorted(all_clients["status_display"].dropna().unique().tolist())
+        # Group Cancelled + Terminated into one "Cancelled / Terminated" option — both
+        # mean the client is gone (matches how the rest of the app counts them as lost).
+        _LOST_OPT = "Cancelled / Terminated"
+        _sts = set(all_clients["status_display"].dropna().unique())
+        status_opts = ["All"] + (["Effectuated"] if "Effectuated" in _sts else [])
+        if {"Cancelled", "Terminated"} & _sts:
+            status_opts.append(_LOST_OPT)
+        status_opts += sorted(s for s in _sts if s not in {"Effectuated", "Cancelled", "Terminated"})
         sel_status  = st.selectbox("Status", status_opts)
     with f2:
         carrier_opts = ["All"] + sorted(all_clients["carrier"].dropna().unique().tolist())
@@ -2746,7 +2753,9 @@ elif page == "Book":
 
     # Apply filters
     df = all_clients.copy()
-    if sel_status  != "All": df = df[df["status_display"] == sel_status]
+    if sel_status == _LOST_OPT:
+        df = df[df["status_display"].isin(["Cancelled", "Terminated"])]
+    elif sel_status != "All": df = df[df["status_display"] == sel_status]
     if sel_carrier != "All": df = df[df["carrier"] == sel_carrier]
     if sel_state   != "All": df = df[df["state"]   == sel_state]
     if search.strip():
