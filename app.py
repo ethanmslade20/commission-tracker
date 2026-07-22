@@ -2731,7 +2731,7 @@ elif page == "Book":
     )
 
     # Filters
-    f1, f2, f3, f4 = st.columns([2, 2, 2, 3])
+    f1, f2, f3, f4, f5 = st.columns([2, 2, 2, 2, 3])
     with f1:
         # Group Cancelled + Terminated into one "Cancelled / Terminated" option — both
         # mean the client is gone (matches how the rest of the app counts them as lost).
@@ -2749,6 +2749,8 @@ elif page == "Book":
         state_opts = ["All"] + sorted(all_clients["state"].dropna().unique().tolist())
         sel_state  = st.selectbox("State", state_opts)
     with f4:
+        sel_prem = st.selectbox("Premium", ["All", "$0 (no premium)", "Above $0"])
+    with f5:
         search = st.text_input("Search by name", placeholder="First or last name…")
 
     # Apply filters
@@ -2758,6 +2760,9 @@ elif page == "Book":
     elif sel_status != "All": df = df[df["status_display"] == sel_status]
     if sel_carrier != "All": df = df[df["carrier"] == sel_carrier]
     if sel_state   != "All": df = df[df["state"]   == sel_state]
+    if sel_prem != "All":
+        _np = pd.to_numeric(df.get("net_premium"), errors="coerce").fillna(0)
+        df = df[(_np <= 0) if sel_prem.startswith("$0") else (_np > 0)]
     if search.strip():
         q = search.strip()
         mask = (
@@ -2821,6 +2826,11 @@ elif page == "Book":
                 column_config={"Effective Date": st.column_config.DateColumn("Effective Date", format="MMM D, YYYY")})
 
     st.markdown("<br>", unsafe_allow_html=True)
+
+    # When viewing gone clients, show the most-recently-cancelled at the top.
+    if sel_status == _LOST_OPT and "term_date" in df.columns:
+        df = df.assign(_td=pd.to_datetime(df["term_date"], errors="coerce")).sort_values(
+            "_td", ascending=False, na_position="last").drop(columns=["_td"])
 
     # Table (glass card)
     display_cols = [
