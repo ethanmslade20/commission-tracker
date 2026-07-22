@@ -238,22 +238,35 @@ def assign_loss_months(all_clients: pd.DataFrame, last_paid=None) -> pd.DataFram
     dates losses by term_date, so a dateless gone client was counted ACTIVE forever
     and never registered as a loss — understating churn and overstating LTV.
 
-    For each gone client with no real carrier cancel date, assign one from the best
-    available source, in priority order:
-      1. commission-stop month — the month his commission on them stopped (money
-         doesn't lie; `last_paid` = {name_key: 'YYYY-MM'}, name_key = first+last letters);
-      2. exchange sync (last_ede_sync) — the exchange's last touch on their record;
-      3. last month a snapshot showed them active (last_active), else first_seen.
-    Never dated later than the current month. Plan switches (retention) are skipped.
-    Dated losses are flagged term_estimated=False so the MoM counts them.
+    For each gone client with no real carrier cancel date, find the month his
+    commission stopped (money doesn't lie), matched to the commission records in
+    this priority:
+      1. by POLICY ID (exact) — name-independent, so misspelled / nickname / maiden
+         names still match;
+      2. by name_key (first+last letters, exact);
+      3. by FUZZY name within the SAME carrier brand — a close name that also shares
+         the carrier (corroborated so we don't link two different people).
+    If no commission match: exchange sync (last_ede_sync), then the last month a
+    snapshot showed them active. Never dated later than the current month. Plan
+    switches (retention) are skipped. Dated losses are flagged term_estimated=False.
+
+    `last_paid` = {"by_policy": {policy: 'YYYY-MM'}, "by_name": {name_key: 'YYYY-MM'},
+    "by_carrier_names": {brand: {name_key: 'YYYY-MM'}}}. A flat {name_key: month} dict
+    is also accepted (used as by_name only).
 
     Must run AFTER all status rules (carrier-truth, AOR, verification, plan-switch).
     """
     if all_clients is None or all_clients.empty or "status" not in all_clients.columns:
         return all_clients
-    import re
+    import re, difflib
     df = all_clients
-    last_paid = last_paid or {}
+    lp = last_paid if isinstance(last_paid, dict) else {}
+    if "by_policy" in lp or "by_name" in lp or "by_carrier_names" in lp:
+        by_policy = lp.get("by_policy", {}) or {}
+        by_name   = lp.get("by_name", {}) or {}
+        by_carrier = lp.get("by_carrier_names", {}) or {}
+    else:
+        by_policy, by_name, by_carrier = {}, dict(lp), {}
     churned = {"Cancelled", "Terminated"}
     if "term_estimated" not in df.columns:
         df["term_estimated"] = False
@@ -266,6 +279,20 @@ def assign_loss_months(all_clients: pd.DataFrame, last_paid=None) -> pd.DataFram
     def _pk(f, l) -> str:
         return re.sub(r"[^a-z]", "", f"{f}{l}".lower())
 
+    def _polnorm(x) -> str:
+        return re.sub(r"[^0-9a-z]", "", str(x).lower())
+
+    def _brand(c) -> str:
+        c = str(c).lower()
+        for kw, b in (("ambetter", "ambetter"), ("oscar", "oscar"), ("wellpoint", "anthem"),
+                      ("anthem", "anthem"), ("unitedhealth", "uhc"), ("united health", "uhc"),
+                      ("uhc", "uhc"), ("cigna", "cigna"), ("molina", "molina"),
+                      ("selecthealth", "selecthealth"), ("select health", "selecthealth"),
+                      ("blue", "bcbs"), ("bcbs", "bcbs")):
+            if kw in c:
+                return b
+        return re.sub(r"[^a-z]", "", c)[:10] or "other"
+
     def _valid(m) -> bool:
         return isinstance(m, str) and len(m) >= 7 and m[:4].isdigit() and m[4] == "-"
 
@@ -276,6 +303,8 @@ def assign_loss_months(all_clients: pd.DataFrame, last_paid=None) -> pd.DataFram
     sync   = sync.fillna(pd.to_datetime(df.get("last_ede_sync"), errors="coerce"))
     fn = df.get("first_name", pd.Series("", index=df.index)).fillna("").astype(str)
     ln = df.get("last_name",  pd.Series("", index=df.index)).fillna("").astype(str)
+    pol = df.get("policy_number", pd.Series("", index=df.index)).fillna("").astype(str)
+    carr = df.get("carrier", pd.Series("", index=df.index)).fillna("").astype(str)
     la = df.get("last_active", pd.Series(pd.NA, index=df.index)).astype(str)
     fs = df.get("first_seen",  pd.Series(pd.NA, index=df.index)).astype(str)
     cur = pd.Timestamp.today().to_period("M")
@@ -289,20 +318,35 @@ def assign_loss_months(all_clients: pd.DataFrame, last_paid=None) -> pd.DataFram
         p = pd.Period(mstr[:7], freq="M")
         return p if p <= cur else cur
 
-    src = {"money": 0, "sync": 0, "active": 0, "none": 0}
+    def _set(idx, mstr):
+        df.at[idx, "term_date"] = _clamp(mstr).to_timestamp("M")
+        df.at[idx, "term_estimated"] = False
+
+    src = {"policy": 0, "name": 0, "fuzzy": 0, "sync": 0, "active": 0, "none": 0}
     for idx in df.index[need]:
-        mm = last_paid.get(_pk(fn.at[idx], ln.at[idx]))
-        if _valid(mm):
-            df.at[idx, "term_date"] = _clamp(mm).to_timestamp("M"); df.at[idx, "term_estimated"] = False; src["money"] += 1; continue
+        nk = _pk(fn.at[idx], ln.at[idx])
+        pn = _polnorm(pol.at[idx])
+        mm = by_policy.get(pn) if len(pn) >= 5 else None
+        if _valid(mm): _set(idx, mm); src["policy"] += 1; continue
+        mm = by_name.get(nk)
+        if _valid(mm): _set(idx, mm); src["name"] += 1; continue
+        pool = by_carrier.get(_brand(carr.at[idx]), {})
+        if pool and len(nk) >= 4:
+            best_m, best_r = None, 0.0
+            for cand_nk, cand_m in pool.items():
+                r = difflib.SequenceMatcher(None, nk, cand_nk).ratio()
+                if r > best_r:
+                    best_r, best_m = r, cand_m
+            if best_r >= 0.88 and _valid(best_m): _set(idx, best_m); src["fuzzy"] += 1; continue
         if pd.notna(sync.at[idx]):
             df.at[idx, "term_date"] = min(sync.at[idx].to_period("M"), cur).to_timestamp("M"); df.at[idx, "term_estimated"] = False; src["sync"] += 1; continue
         anchor = la.at[idx] if _valid(la.at[idx]) else fs.at[idx]
-        if _valid(anchor):
-            df.at[idx, "term_date"] = _clamp(anchor).to_timestamp("M"); df.at[idx, "term_estimated"] = False; src["active"] += 1; continue
+        if _valid(anchor): _set(idx, anchor); src["active"] += 1; continue
         src["none"] += 1
     if sum(src.values()):
         print(f"  Loss dating: dated {sum(src.values())} dateless gone client(s) — "
-              f"money-stop {src['money']}, exchange-sync {src['sync']}, last-active {src['active']}, no-date {src['none']}")
+              f"policy-id {src['policy']}, name {src['name']}, fuzzy {src['fuzzy']}, "
+              f"exchange-sync {src['sync']}, last-active {src['active']}, no-date {src['none']}")
     return df
 
 

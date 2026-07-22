@@ -135,12 +135,14 @@ def _filter_by_appointments(df: pd.DataFrame, appointments: dict) -> pd.DataFram
 
 
 def _build_last_paid(settings: dict) -> dict:
-    """Money-backed 'last month paid per client' map, keyed by name_key (first+last
-    letters). Merges persisted 2025 statement data (data/commission_2025.json, parsed
-    once from the FMO statements) with the live 2026 Insurance PAYMENTS sheet. Used by
-    loss-dating to date a gone client to the month his commission stopped. Best-effort:
-    any piece that fails just contributes nothing (loss-dating falls back gracefully)."""
+    """Money-backed 'last month paid per client' lookups for loss-dating. Returns
+    {"by_policy": {policy: 'YYYY-MM'}, "by_name": {name_key: 'YYYY-MM'},
+     "by_carrier_names": {brand: {name_key: 'YYYY-MM'}}} — so a gone client can be matched
+    to the month his commission stopped by policy ID (name-independent), then exact name,
+    then fuzzy name within the same carrier. Merges persisted 2025 statement records
+    (data/commission_2025.json) with the live 2026 Insurance PAYMENTS sheet. Best-effort."""
     import json as _json
+
     def _key(m):
         x = re.sub(r"\b(family|household)\b", "", str(m), flags=re.I).strip()
         if "," in x:
@@ -148,14 +150,46 @@ def _build_last_paid(settings: dict) -> dict:
             return re.sub(r"[^a-z]", "", ((p[0] if p else "") + last).lower())
         p = x.split()
         return re.sub(r"[^a-z]", "", ((p[0] + p[-1]) if len(p) >= 2 else x).lower())
-    out = {}
-    # 2025 statements (persisted snapshot; keys already normalized to first+last letters)
+
+    def _polnorm(x):
+        v = re.sub(r"[^0-9a-z]", "", str(x).lower())
+        return v if len(v) >= 5 else ""
+
+    def _brand(c):
+        c = str(c).lower()
+        for kw, b in (("ambetter", "ambetter"), ("oscar", "oscar"), ("wellpoint", "anthem"),
+                      ("anthem", "anthem"), ("unitedhealth", "uhc"), ("united health", "uhc"),
+                      ("uhc", "uhc"), ("cigna", "cigna"), ("molina", "molina"),
+                      ("selecthealth", "selecthealth"), ("select health", "selecthealth"),
+                      ("blue", "bcbs"), ("bcbs", "bcbs")):
+            if kw in c:
+                return b
+        return re.sub(r"[^a-z]", "", c)[:10] or "other"
+
+    by_policy, by_name, by_carrier = {}, {}, {}
+
+    def _add(nk, pol, carrier, month):
+        if not month:
+            return
+        if nk:
+            by_name[nk] = max(by_name.get(nk, ""), month)
+            d = by_carrier.setdefault(_brand(carrier), {})
+            d[nk] = max(d.get(nk, ""), month)
+        pn = _polnorm(pol)
+        if pn:
+            by_policy[pn] = max(by_policy.get(pn, ""), month)
+
+    # 2025 statements (persisted: {"records": [[name_key, policy_norm, carrier, 'YYYY-MM'], ...]})
     try:
         p25 = Path(__file__).resolve().parent.parent / "data" / "commission_2025.json"
         if p25.exists():
-            out.update({str(k): str(v) for k, v in _json.load(open(p25)).items()})
+            data = _json.load(open(p25))
+            for r in (data.get("records") if isinstance(data, dict) else []):
+                if len(r) >= 4:
+                    _add(str(r[0]), str(r[1]), str(r[2]), str(r[3]))
     except Exception as e:
         print(f"  (2025 commission history skipped: {type(e).__name__})")
+
     # 2026 live payments sheet
     try:
         url = settings.get("payments_sheet_url"); imp = settings.get("impersonation_target", "")
@@ -164,14 +198,14 @@ def _build_last_paid(settings: dict) -> dict:
             from tracker.sheets import _open_sheet
             pdf = parse_payments_sheet(_open_sheet(url, imp))
             if pdf is not None and not pdf.empty:
-                pdf = pdf.copy()
-                pdf["_k"] = pdf["member"].apply(_key)
-                pdf["_m"] = pd.to_datetime(pdf["payment_month"], errors="coerce").dt.strftime("%Y-%m")
-                for k, mx in pdf.dropna(subset=["_m"]).groupby("_k")["_m"].max().items():
-                    out[k] = max(out.get(k, ""), mx)
+                for _, row in pdf.iterrows():
+                    m = pd.to_datetime(row.get("payment_month"), errors="coerce")
+                    _add(_key(row.get("member")), row.get("policy_id"),
+                         row.get("carrier"), m.strftime("%Y-%m") if pd.notna(m) else "")
     except Exception as e:
         print(f"  (2026 payments money-dating skipped: {type(e).__name__}: {e})")
-    return out
+
+    return {"by_policy": by_policy, "by_name": by_name, "by_carrier_names": by_carrier}
 
 
 def _build_supplemental_display(supp: pd.DataFrame) -> pd.DataFrame:

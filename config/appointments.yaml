@@ -1,17 +1,20 @@
-# Carrier appointments by state.
-# Only clients whose carrier matches one of these keywords (case-insensitive)
-# for their state will be included in the dashboard.
-# Allstate and Golden Rule are excluded everywhere per agent preference.
+# Carrier appointments by state — the authoritative list Ethan provided (screenshot 2026-07-22),
+# plus two confirmed corrections: UHC in Alabama, and Molina (contracted; his 2025 plans that
+# renewed into 2026 still pay — he's just not writing NEW Molina in 2026 since it went
+# uncommissionable). Only clients whose carrier matches one of these keywords (case-insensitive
+# substring) for their state are counted. Golden Rule and Allstate are SUPPLEMENT products (not
+# ACA), excluded everywhere. Anthem and Wellpoint are the same brand; BCBS matches via
+# "Blue Cross"/"BlueCross"; Molina matches "Molina" anywhere in the carrier name.
 
 appointments:
-  UT:
+  UT:   # Utah
     - Cigna
     - SelectHealth
     - Select Health
     - University of Utah
     - U of U
 
-  TX:
+  TX:   # Texas
     - Ambetter
     - United Healthcare
     - UnitedHealthcare
@@ -21,140 +24,134 @@ appointments:
     - BCBS
     - BlueCross
     - Blue Cross
-
-  OH:
-    - Oscar
-    - Anthem
-    - Wellpoint
-    - United Healthcare
-    - UnitedHealthcare
-    - Cigna
-    - Ambetter
     - Molina
 
-  FL:
-    - Ambetter
+  OH:   # Ohio
+    - Oscar
     - Anthem
     - Wellpoint
-    - United Healthcare
-    - UnitedHealthcare
-    - Oscar
-    - Cigna
-
-  SC:
     - United Healthcare
     - UnitedHealthcare
     - Ambetter
     - Molina
 
-  NC:
-    - Ambetter
-    - United Healthcare
-    - UnitedHealthcare
-    - Oscar
-    - Cigna
-
-  TN:
-    - United Healthcare
-    - UnitedHealthcare
-    - Ambetter
-    - Oscar
-    - Cigna
-    - BCBS
-    - BlueCross
-    - Blue Cross
-
-  AL:
-    - United Healthcare
-    - UnitedHealthcare
-    - Ambetter
-    - Oscar
-
-  IL:
-    - Ambetter
-    - United Healthcare
-    - UnitedHealthcare
-    - Oscar
-    - BCBS
-    - BlueCross
-    - Blue Cross
-
-  KS:
-    - United Healthcare
-    - UnitedHealthcare
-    - Oscar
-    - Ambetter
-
-  LA:
-    - Oscar
-    - Ambetter
-    - United Healthcare
-    - UnitedHealthcare
-
-  MI:
-    - Oscar
-    - United Healthcare
-    - UnitedHealthcare
-    - Ambetter
-
-  GA:
-    - Oscar
-    - United Healthcare
-    - UnitedHealthcare
+  FL:   # Florida
     - Ambetter
     - Anthem
     - Wellpoint
-    - BlueCross
-    - Blue Cross
+    - United Healthcare
+    - UnitedHealthcare
+    - Oscar
+    - Cigna
+    - Molina
+
+  SC:   # South Carolina
+    - United Healthcare
+    - UnitedHealthcare
+    - Ambetter
+    - Molina
+
+  NC:   # North Carolina
+    - Ambetter
+    - United Healthcare
+    - UnitedHealthcare
+    - Oscar
     - Cigna
 
+  TN:   # Tennessee
+    - United Healthcare
+    - UnitedHealthcare
+    - Oscar
+    - Cigna
+    - Ambetter
+    - BCBS
+    - BlueCross
+    - Blue Cross
 
-  IN:
+  AL:   # Alabama
+    - Ambetter
+    - Oscar
+    - United Healthcare
+    - UnitedHealthcare
+
+  IL:   # Illinois
+    - Ambetter
+    - United Healthcare
+    - UnitedHealthcare
+    - BCBS
+    - BlueCross
+    - Blue Cross
+    - Molina
+    - Oscar
+
+  KS:   # Kansas
+    - United Healthcare
+    - UnitedHealthcare
+    - Oscar
+    - Ambetter
+
+  LA:   # Louisiana
+    - United Healthcare
+    - UnitedHealthcare
+    - Ambetter
+
+  MI:   # Michigan
+    - Oscar
+    - United Healthcare
+    - UnitedHealthcare
+    - Ambetter
+
+  GA:   # Georgia
+    - United Healthcare
+    - UnitedHealthcare
     - Ambetter
     - Cigna
     - Oscar
     - Anthem
     - Wellpoint
 
-  IA:
+  IN:   # Indiana
     - Ambetter
     - Cigna
-    - Oscar
-    - United Healthcare
-    - UnitedHealthcare
-
-  MS:
-    - Ambetter
-    - Cigna
-    - Oscar
-    - United Healthcare
-    - UnitedHealthcare
     - Anthem
+    - Wellpoint
 
-  MO:
+  IA:   # Iowa
+    - Cigna
+    - United Healthcare
+    - UnitedHealthcare
+    - Oscar
+
+  MS:   # Mississippi
     - Ambetter
     - Cigna
+    - United Healthcare
+    - UnitedHealthcare
+    - Oscar
+
+  MO:   # Missouri
+    - Ambetter
+    - Cigna
+    - Anthem
+    - Wellpoint
     - Oscar
     - United Healthcare
     - UnitedHealthcare
-    - Anthem
 
-  OK:
+  OK:   # Oklahoma
     - Oscar
     - BCBS
     - BlueCross
     - Blue Cross
-    - Cigna
-    - United Healthcare
-    - UnitedHealthcare
-    - Ambetter
-
-  AR:
     - Ambetter
     - United Healthcare
     - UnitedHealthcare
 
-  WI:
+  AR:   # Arkansas
+    - Ambetter
+
+  WI:   # Wisconsin
     - Anthem
+    - Wellpoint
     - United Healthcare
     - UnitedHealthcare
