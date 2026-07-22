@@ -20,6 +20,7 @@ carrier_config_path: "config/carrier_configs.yaml"
 # raw carrier name). Same list the agent site applies per-tenant.
 excluded_carriers:
   - "Florida Blue"
+  - "Alliant"
 
 # Sheet tab names
 tabs:
