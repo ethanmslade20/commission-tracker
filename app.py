@@ -2164,16 +2164,23 @@ if page == "Dashboard":
 
     # ── GROWTH METRICS ────────────────────────────────────────────────────────
     st.markdown(section_header("Growth Metrics", "trend"), unsafe_allow_html=True)
-    # Proper churn rate = total members lost / total active member-months (same
-    # basis as the LTV calc), so the dashboard and Goals page always agree.
+    # Churn = trailing-12-completed-month, exposure-weighted: Σ members lost ÷ Σ
+    # start-of-month members. 12 months so it always spans exactly one OEP renewal
+    # cliff (a shorter window seesaws seasonally); weighted so a big month and a
+    # small month count in proportion. This is the validated real rate (~8.5%).
+    _churn_pct = None
     try:
-        if not mom_df.empty and "Members Lost" in mom_df.columns and mom_df["Total Members"].sum() > 0:
-            _churn_pct = round(mom_df["Members Lost"].sum() / mom_df["Total Members"].sum() * 100, 2)
+        _cur_m = f"{dt.date.today().year}-{dt.date.today().month:02d}"
+        _cmp = mom_df[mom_df["Month"] < _cur_m].copy() if "Month" in mom_df.columns else mom_df.copy()
+        _cmp["_start"] = _cmp["Total Members"].shift(1)
+        _w12 = _cmp.tail(12)
+        if not _w12.empty and "Members Lost" in _w12.columns and _w12["_start"].sum() > 0:
+            _churn_pct = round(_w12["Members Lost"].sum() / _w12["_start"].sum() * 100, 2)
         else:
             _churn_pct = round(float(kpis["Avg Policies Lost/Month"]) / max(kpis["Total Active Policies"], 1) * 100, 2)
-        _churn_sub = f"All history • {_churn_pct}% monthly churn"
+        _churn_sub = f"Trailing 12 mo • {_churn_pct}% monthly churn"
     except Exception:
-        _churn_sub = "All history"
+        _churn_sub = "Trailing 12 mo"
     try:
         net = round(float(kpis["Avg Policies Added/Month"]) - float(kpis["Avg Policies Lost/Month"]), 1)
         net_str = f"+{net}" if net >= 0 else str(net)
@@ -2243,6 +2250,34 @@ if page == "Dashboard":
         st.markdown(metric_card("Expected Annual Commission", f"${_arr:,.0f}", icon_key="calendar"), unsafe_allow_html=True)
     with r3:
         st.markdown(metric_card("Commission per Policy / Mo", _per_policy, icon_key="file"), unsafe_allow_html=True)
+
+    # ── LIFETIME VALUE ────────────────────────────────────────────────────────
+    # LTV = avg client tenure (1 ÷ monthly churn) × REAL commission per client from
+    # the latest COMPLETE month of actual payments (not the $23 estimate). This is
+    # the honest max-CAC ceiling for ad spend. Reuses _ms (monthly_summary) loaded
+    # in the Your Money section above.
+    _real_pp = None
+    try:
+        _cm = _ms.copy(); _cm["_m"] = pd.to_datetime(_cm["Month"], errors="coerce")
+        _curp = pd.Timestamp(dt.date.today()).to_period("M")
+        _cc = _cm[_cm["_m"].dt.to_period("M") < _curp].sort_values("_m")
+        if not _cc.empty and _active_policies:
+            _real_pp = float(_cc.iloc[-1]["Net"]) / _active_policies
+    except Exception:
+        _real_pp = None
+    _tenure_mo = (1 / (_churn_pct / 100)) if _churn_pct else None
+    if _real_pp and _tenure_mo:
+        st.markdown(section_header("Lifetime Value", "trend"), unsafe_allow_html=True)
+        v1, v2, v3 = st.columns(3)
+        with v1:
+            st.markdown(metric_card("Avg Client Tenure", f"{_tenure_mo:.0f} mo",
+                                    sub=f"1 ÷ {_churn_pct}% monthly churn", icon_key="calendar"), unsafe_allow_html=True)
+        with v2:
+            st.markdown(metric_card("Real Commission / Client / Mo", f"${_real_pp:.2f}",
+                                    sub="latest full month, actual pay", icon_key="dollar"), unsafe_allow_html=True)
+        with v3:
+            st.markdown(metric_card("Lifetime Value / Client", f"${_real_pp * _tenure_mo:,.0f}",
+                                    sub="your max ad-spend per signup", icon_key="trend", highlight="green"), unsafe_allow_html=True)
 
     # ── SUPPLEMENTAL PREMIUM ──────────────────────────────────────────────────
     # Dental / vision / STM / accident etc., split by carrier so each carrier's
