@@ -443,6 +443,87 @@ def audit_gaps(gaps, payments, books_dir, today=None):
     return g
 
 
+def _carrier_brand(c) -> str:
+    c = str(c).lower()
+    for kw, b in (("ambetter", "Ambetter"), ("oscar", "Oscar"), ("wellpoint", "Anthem"),
+                  ("anthem", "Anthem"), ("unitedhealth", "UnitedHealthcare"),
+                  ("united health", "UnitedHealthcare"), ("uhc", "UnitedHealthcare"),
+                  ("cigna", "Cigna"), ("molina", "Molina"), ("selecthealth", "SelectHealth"),
+                  ("select health", "SelectHealth"), ("blue", "BCBS"), ("bcbs", "BCBS"),
+                  ("u of u", "University of Utah"), ("university of utah", "University of Utah")):
+        if kw in c:
+            return b
+    return str(c).title()[:16] or "Other"
+
+
+def carrier_lags(payments: pd.DataFrame) -> dict:
+    """Per-CARRIER-BRAND pay lag in months = (paid month) − (coverage month), from PMPM
+    rows only, mode, capped 0–3 to ignore retro catch-ups. Brand-keyed so it matches the
+    roster's brand-collapsed carrier. This is the correct method (coverage month, not
+    effective date, so it isn't skewed by clients whose coverage predates the data)."""
+    if payments is None or payments.empty:
+        return {"_default": 1}
+    pm = payments[payments.get("description", "").astype(str).str.upper() == "PMPM"].copy()
+    pm["pp"] = pd.to_datetime(pm.get("pay_period"), errors="coerce")
+    pm = pm.dropna(subset=["pp"])
+    if pm.empty:
+        return {"_default": 1}
+    pm["lag"] = (pm["payment_month"].dt.year * 12 + pm["payment_month"].dt.month) \
+        - (pm["pp"].dt.year * 12 + pm["pp"].dt.month)
+    pm = pm[(pm["lag"] >= 0) & (pm["lag"] <= 3)]
+    pm["brand"] = pm["carrier"].apply(_carrier_brand)
+    out = {b: int(g["lag"].mode().iloc[0]) for b, g in pm.groupby("brand") if len(g)}
+    out["_default"] = int(pm["lag"].mode().iloc[0]) if len(pm) else 1
+    return out
+
+
+def month_reconciliation(active: pd.DataFrame, payments: pd.DataFrame, today=None) -> dict:
+    """Reconcile the active book against paid commission BY ARRIVAL MONTH, using each
+    carrier's learned pay lag. For each month M: how many active clients should have had a
+    payment land that month (effective + carrier lag ≤ M), how many did, who's missing, and
+    how many active clients simply aren't due yet. A month is 'closed' once statements dated
+    after it exist (so we know all of M's payments are in). Returns:
+      {"lags": {brand: lag}, "months": DataFrame[Month, Expected, Paid, Missing, NotDue,
+       Closed, AtRisk], "detail": {month_str: DataFrame of missing clients}}."""
+    empty = {"lags": {}, "months": pd.DataFrame(), "detail": {}}
+    if active is None or active.empty or payments is None or payments.empty:
+        return empty
+    lags = carrier_lags(payments)
+    dflt = lags.get("_default", 1)
+    pmt = payments.copy()
+    pmt["am"] = pd.to_datetime(pmt["payment_month"], errors="coerce").dt.to_period("M")
+    pmt = pmt.dropna(subset=["am"])
+    if pmt.empty:
+        return empty
+    paid_set = set(zip(pmt["name_key"].astype(str), pmt["am"]))
+    max_paid = pmt["am"].max()
+    cur = pd.Period(pd.Timestamp(today), "M") if today else pd.Timestamp.today().to_period("M")
+
+    a = active.copy()
+    a["_k"] = [_person_key(f, l) for f, l in zip(a.get("first_name", ""), a.get("last_name", ""))]
+    a["_em"] = pd.to_datetime(a.get("effective_date"), errors="coerce").dt.to_period("M")
+    a["_brand"] = a.get("carrier", "").apply(_carrier_brand)
+    a["_lag"] = a["_brand"].map(lambda b: lags.get(b, dflt))
+    a["_mem"] = pd.to_numeric(a.get("applicant_count"), errors="coerce").fillna(1).clip(lower=1).astype(int)
+    a = a.dropna(subset=["_em"])
+
+    months = pd.period_range(pmt["am"].min(), cur, freq="M")
+    rows, detail = [], {}
+    for M in months:
+        due = a[(a["_em"] + a["_lag"]) <= M]                      # first payment due by M
+        exp = len(due)
+        paid_mask = [(k, M) in paid_set for k in due["_k"]]
+        miss = due[[not p for p in paid_mask]]
+        notdue = int(((a["_em"] + a["_lag"]) > M).sum()) if M == cur else 0
+        closed = bool(M < max_paid)
+        rows.append({"Month": str(M), "Expected": exp, "Paid": exp - len(miss),
+                     "Missing": len(miss), "NotDue": notdue, "Closed": closed,
+                     "AtRisk": float((miss["_mem"] * 23).sum()) if len(miss) else 0.0})
+        detail[str(M)] = miss
+    return {"lags": {k: v for k, v in lags.items() if k != "_default"},
+            "months": pd.DataFrame(rows), "detail": detail}
+
+
 def build_gaps(active: pd.DataFrame, payments: pd.DataFrame, today=None) -> pd.DataFrame:
     """Commission-gap report: active clients never paid or stopped, each with
     their full payment history (which months, last month, total, # payments) so
