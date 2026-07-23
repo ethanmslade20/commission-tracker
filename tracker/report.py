@@ -470,6 +470,7 @@ def _upload_summary(all_clients, pastdue, snapshot_dir, today=None) -> None:
         return f"{f} {l}".strip().title()
 
     lost, vexp, aor, pol, polmem = {}, {}, {}, set(), {}
+    lost_term = {}     # name_key -> real loss date (term_date), for freshness trim
     active_mine = {}   # currently active AND credited to the agent — win-back proof
     for _, r in all_clients.iterrows():
         f, l = r.get("first_name", ""), r.get("last_name", "")
@@ -490,6 +491,7 @@ def _upload_summary(all_clients, pastdue, snapshot_dir, today=None) -> None:
                 aor[k] = _disp(f, l)
             else:
                 lost[k] = _disp(f, l)
+                lost_term[k] = pd.to_datetime(r.get("term_date"), errors="coerce")
         if st in ("Effectuated", "PendingEffectuation", "PendingFollowups"):
             _a = r.get("policy_aor")
             a = "" if pd.isna(_a) else str(_a)
@@ -555,7 +557,20 @@ def _upload_summary(all_clients, pastdue, snapshot_dir, today=None) -> None:
 
     def _new(cur, base):
         return [] if base is None else [v for k, v in cur.items() if k not in base]
-    new_lost = _new(lost, base_lost)
+    # Only surface cancellations whose REAL loss date is recent (≤45 days) as
+    # fresh Re-Engage leads. A client only now dropping off the book but whose
+    # money/exchange-sync dates the loss months ago (e.g. Carol Walker, lapsed
+    # Jan) is still baselined (so she never re-alerts) and still counts in churn
+    # by her real month — she's just not a "call today" lead. (Ethan 2026-07-23)
+    _FRESH_LOST_DAYS = 45
+    def _fresh_lost(k):
+        td = lost_term.get(k)
+        if td is None or pd.isna(td):
+            return True   # undated → can't prove stale, treat as a fresh lead
+        return (today - td).days <= _FRESH_LOST_DAYS
+    _new_lost_keys = [] if base_lost is None else [k for k in lost if k not in base_lost]
+    new_lost   = [lost[k] for k in _new_lost_keys if _fresh_lost(k)]
+    stale_lost = [lost[k] for k in _new_lost_keys if not _fresh_lost(k)]
     # Expired verifications share the known_lapsed baseline so a client already
     # texted under either label never re-alerts when they move between buckets.
     new_vexp = _new(vexp, base_lost)
@@ -596,7 +611,7 @@ def _upload_summary(all_clients, pastdue, snapshot_dir, today=None) -> None:
              f"✅ Signed: {new_pol_n} new policies / {new_mem} members"]
     total = len(new_lost) + len(new_pd) + len(new_aor)
     if total == 0:
-        if not new_vexp:
+        if not new_vexp and not stale_lost:
             lines.append("⬇️ Lost 0 clients — all clear.")
     else:
         lines.append(f"⬇️ Lost {total} clients:")
@@ -606,6 +621,9 @@ def _upload_summary(all_clients, pastdue, snapshot_dir, today=None) -> None:
             lines.append(f" • Behind on payment: {_fmt(new_pd)}")
         if new_aor:
             lines.append(f" • Taken by another agent: {_fmt(new_aor)}")
+    if stale_lost:
+        lines.append(f"🗂️ +{len(stale_lost)} older lapse(s) fell off the book, dated to "
+                     f"their real month (counted in churn, not fresh Re-Engage leads).")
     if new_vexp:
         lines.append(f"⚠️ Verification expired — still active but will be termed "
                      f"unless docs go in: {_fmt(new_vexp)}")
