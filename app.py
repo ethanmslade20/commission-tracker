@@ -3509,6 +3509,9 @@ elif page == "AOR Defense":
                                    "Another agent holds the AOR. Newest steals first — freshest are the most winnable. "
                                    "Script: “I saw your plan got moved to a different agent — did you mean to do that?”",
                                    "minus"), unsafe_allow_html=True)
+            st.caption("“Taken On” is the first date we detected the switch in HealthSherpa and is frozen there, so "
+                       "steals age correctly instead of resetting to “fresh” on every sync. The real switch can be a "
+                       "few days earlier — HealthSherpa syncs on a lag.")
             _t = (_taken if _show_handled else _open_taken)[_cols_taken]
             if "Days Ago" in _t.columns:
                 _t = _t.sort_values("Days Ago", ascending=True, na_position="last")

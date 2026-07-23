@@ -24,6 +24,7 @@ _ROOT = Path(__file__).resolve().parent.parent
 _RISK_PATH = _ROOT / "data" / "aor_at_risk.json"
 _HANDLED_PATH = _ROOT / "data" / "aor_handled.json"
 _BASELINE_PATH = _ROOT / "data" / "known_aor_risk.json"
+_FIRST_SEEN_PATH = _ROOT / "data" / "aor_first_seen.json"
 _HS_PATH = _ROOT / "input" / "healthsherpa.csv"
 
 # Blended per-member commission (net ÷ member-months across carriers ≈ $22-23).
@@ -142,6 +143,10 @@ def build_aor_defense(risk_path=_RISK_PATH, hs_path=_HS_PATH, handled_path=_HAND
                 "members": 1 if pd.isna(_mn) else max(int(_mn), 1),
             })
 
+    # First-detection freeze: remember the earliest date we ever saw each steal
+    # so an old steal can't keep re-dating itself to "fresh" on every re-sync.
+    first_seen = _load_json(_FIRST_SEEN_PATH, {})
+    _today = pd.Timestamp.today().normalize()
     rows = []
     for r in risk:
         xid = str(r.get("exchange_id", "")).strip()
@@ -168,15 +173,30 @@ def build_aor_defense(risk_path=_RISK_PATH, hs_path=_HS_PATH, handled_path=_HAND
             members = 1 if pd.isna(_mn) else max(int(_mn), 1)
 
         h = handled.get(xid, {})
-        # When it happened: the HealthSherpa sync date that detected the change —
-        # the closest thing to "day they were taken" (clusters on the real dates).
-        ts = pd.to_datetime(r.get("last_synced", ""), errors="coerce")
+        # "Taken On" = the FIRST date we ever detected this steal, FROZEN in
+        # data/aor_first_seen.json. HealthSherpa's last_ede_sync advances every
+        # time it re-syncs a client, so reading it raw made an old steal look
+        # freshly taken on every refresh and re-sort to the top. Seed from the
+        # earliest last_ede_sync we've seen (the tightest upper bound on the real
+        # switch — HealthSherpa syncs on a lag, so the true date can be a few days
+        # earlier) and never let it drift later. Clients with no sync date at all
+        # stay "unknown" (sunk to the bottom), never faked to today. (Ethan 7/23/26)
+        _fs_key = xid or _fl_key(r.get("name", ""))
+        _synced = pd.to_datetime(r.get("last_synced", ""), errors="coerce")
+        _prev = pd.to_datetime(first_seen.get(_fs_key), errors="coerce") if _fs_key else pd.NaT
+        _cands = [d for d in (_synced, _prev) if pd.notna(d)]
+        if _cands:
+            ts = min(min(_cands), _today)   # earliest-ever, capped at today; frozen
+            if _fs_key:
+                first_seen[_fs_key] = ts.strftime("%Y-%m-%d")
+        else:
+            ts = pd.NaT
         rows.append({
             "Client": r.get("name", ""),
             "Type": kind,
             "Taken By": taken_by,
             "Detected": ts.strftime("%b %d, %Y") if pd.notna(ts) else "",
-            "Days Ago": int((pd.Timestamp.today().normalize() - ts).days) if pd.notna(ts) else None,
+            "Days Ago": int((_today - ts).days) if pd.notna(ts) else None,
             "Carrier": carrier,
             "State": state,
             "Members": members,
@@ -186,6 +206,13 @@ def build_aor_defense(risk_path=_RISK_PATH, hs_path=_HS_PATH, handled_path=_HAND
             "Handled": h.get("outcome", ""),
             "Exchange ID": xid,
         })
+
+    # Persist the frozen first-detection dates for the next run.
+    try:
+        _FIRST_SEEN_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _FIRST_SEEN_PATH.write_text(json.dumps(first_seen, indent=1))
+    except Exception:
+        pass
 
     df = pd.DataFrame(rows)
     # Fires first: taken, unhandled, NEWEST steal first (freshest = most
