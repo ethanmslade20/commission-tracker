@@ -669,6 +669,28 @@ def _upload_summary(all_clients, pastdue, snapshot_dir, today=None) -> None:
         print("  !! TEXT NOT SENT — baselines/marker left unchanged, next report run will retry.")
 
 
+def _person_key_series(df):
+    """Person key aligned to df.index that GROUPS one person's multiple rows but
+    SEPARATES same-name DIFFERENT people by subscriber id. A name gets its sid
+    appended only when >=2 distinct non-blank subscriber ids appear among that
+    name's active rows (a genuine collision — e.g. two real 'Rhonda Walker'
+    Ambetter policies). Prevents the plan-switch + AOR rules from merging same-
+    name strangers and wrongly terminating one. (Ethan 2026-07-24)"""
+    _ACT_PK = {"Effectuated", "PendingEffectuation", "PendingFollowups"}
+    fn = df.get("first_name", pd.Series("", index=df.index)).fillna("").astype(str).str.lower().str.replace(r"[^a-z]", "", regex=True)
+    ln = df.get("last_name", pd.Series("", index=df.index)).fillna("").astype(str).str.lower().str.replace(r"[^a-z]", "", regex=True)
+    nm = fn + "|" + ln
+    if "ffm_subscriber_id" in df.columns:
+        sid = df["ffm_subscriber_id"].fillna("").astype(str).str.replace(r"\.0$", "", regex=True).str.strip()
+    else:
+        sid = pd.Series("", index=df.index)
+    act = df["status"].isin(_ACT_PK) if "status" in df.columns else pd.Series(True, index=df.index)
+    _c = pd.DataFrame({"nm": nm, "sid": sid, "act": act})
+    _n = _c[_c["act"] & (_c["sid"] != "")].groupby("nm")["sid"].nunique()
+    colliding = set(_n[_n > 1].index)
+    return nm.where(~(nm.isin(colliding) & (sid != "")), nm + "|" + sid)
+
+
 def run_report(settings: dict) -> None:
     # ONE report at a time, process-wide. Concurrent runs (launchd watcher vs a
     # manual run) once raced on the upload-summary marker and silently ate the
@@ -805,33 +827,57 @@ def run_report(settings: dict) -> None:
 
     # A malformed carrier file (changed export format, wrong download) must
     # never kill the whole report — skip that carrier loudly and keep going.
-    def _apply_truth(fn, label, fmt):
+    # PARTIAL-BOOK GUARD (Ethan 2026-07-24): a well-formed but SHORT export (a
+    # filtered download, a paging cutoff, a missing plan year) must not lapse
+    # real active clients just for being absent from it. If a book would cancel
+    # an abnormal share of the carrier's active clients purely for absence
+    # (cancelled_dropped), reject the whole book this run. Measured normal
+    # absent-drop rates are ~8-14% per carrier, so 30% is a safe "this file is
+    # broken, not real churn" line.
+    _ACT_ST = {"Effectuated", "PendingEffectuation", "PendingFollowups"}
+    _DROP_REJECT_RATE, _DROP_REJECT_FLOOR = 0.30, 15
+
+    def _apply_truth(fn, label, fmt, carrier_kw):
         nonlocal all_clients
+        before = all_clients
         try:
-            all_clients, _s = fn(all_clients)
-            if _s.get("applied"):
-                print(f"  {label} portal truth: " + fmt(_s))
+            after, _s = fn(before)
         except Exception as e:
             print(f"  !! {label} book SKIPPED — {type(e).__name__}: {e}")
             print(f"     Check carrier_books/ for a bad/changed {label} export; "
                   f"book statuses for {label} were left as-is this run.")
+            return
+        if not _s.get("applied"):
+            return
+        _act_before = int((before.get("carrier", pd.Series("", index=before.index))
+                             .astype(str).str.contains(carrier_kw, case=False, na=False, regex=True)
+                           & before.get("status", pd.Series("", index=before.index)).isin(_ACT_ST)).sum())
+        _dropped = int(_s.get("cancelled_dropped", 0))
+        if _act_before >= _DROP_REJECT_FLOOR and _dropped > _DROP_REJECT_RATE * _act_before:
+            print(f"  !! {label} portal truth REJECTED — would cancel {_dropped}/{_act_before} active "
+                  f"clients as 'absent from portal' ({_dropped / _act_before:.0%} > "
+                  f"{_DROP_REJECT_RATE:.0%}). That signals a partial/short {label} export, not real "
+                  f"churn — re-download the full {label} book. Statuses left as-is this run.")
+            return  # discard `after`, keep the pre-call book
+        all_clients = after
+        print(f"  {label} portal truth: " + fmt(_s))
 
     _apply_truth(apply_ambetter_truth, "Ambetter",
                  lambda s: f"+{s['added_from_portal']} added, "
                            f"{s['cancelled_termed'] + s['cancelled_dropped']} marked cancelled "
-                           f"({s['protected_new_sales']} new sales protected)")
+                           f"({s['protected_new_sales']} new sales protected)", "ambetter")
     _apply_truth(apply_oscar_truth, "Oscar",
                  lambda s: f"+{s['added_from_portal']} added, "
                            f"{s['cancelled_inactive'] + s['cancelled_dropped']} marked cancelled "
-                           f"({s['protected_new_sales']} new sales protected)")
+                           f"({s['protected_new_sales']} new sales protected)", "oscar")
     _apply_truth(apply_uhc_truth, "UHC",
                  lambda s: f"+{s['added_policies']} added, "
                            f"{s['cancelled_lapsed'] + s['cancelled_dropped']} marked cancelled "
-                           f"({s['protected_new_sales']} new sales protected)")
+                           f"({s['protected_new_sales']} new sales protected)", "united|uhc")
     _apply_truth(apply_anthem_truth, "Anthem",
                  lambda s: f"+{s['added_policies']} added, "
                            f"{s['cancelled_lapsed'] + s['cancelled_dropped']} marked cancelled "
-                           f"({s['protected_new_sales']} new sales protected)")
+                           f"({s['protected_new_sales']} new sales protected)", "anthem")
 
     # HealthSherpa verification truth: an EXPIRED DMI/SVI follow-up means the
     # subsidy / eligibility is lost, so the client is effectively gone. Mark them
@@ -875,8 +921,7 @@ def run_report(settings: dict) -> None:
             all_clients["cancel_reason"] = ""
         if "term_estimated" not in all_clients.columns:
             all_clients["term_estimated"] = False
-        _pk = (all_clients["first_name"].fillna("").astype(str).str.lower().str.replace(r"[^a-z]", "", regex=True)
-               + "|" + all_clients["last_name"].fillna("").astype(str).str.lower().str.replace(r"[^a-z]", "", regex=True))
+        _pk = _person_key_series(all_clients)   # groups a person's rows, splits same-name strangers by sid
         _eff_ps = pd.to_datetime(all_clients.get("effective_date"), errors="coerce")
         _actmask = all_clients["status"].isin(_ACT)
         _n_switch = 0
@@ -999,8 +1044,7 @@ def run_report(settings: dict) -> None:
         # (which lags the marketplace), and that must not mask the steal (Ethan
         # 2026-07-13: Kristen Southern — marketplace shows David Raigoza, BCBS
         # book still shows me; she IS taken. "Marketplace wins, period.")
-        _pk = (all_clients["first_name"].fillna("").astype(str).str.lower().str.strip()
-               + "|" + all_clients["last_name"].fillna("").astype(str).str.lower().str.strip())
+        _pk = _person_key_series(all_clients)   # groups a person's rows, splits same-name strangers by sid
         _taken_people = set(_pk[_aor_taken])
         _who_by_person = {}
         for _pkv, _nm in zip(_pk[_aor_taken], _aor_name[_aor_taken]):
