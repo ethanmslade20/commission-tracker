@@ -374,6 +374,20 @@ def ingest_file(
     cfg = source_configs[source]
     df = _read_csv(csv_path, cfg)
 
+    # ACCESS-BOOK EMPTY GUARD (Ethan 2026-07-24): an empty state-exchange book
+    # (book_of_business_*) is a failed/blank export (like the GA export on 7/24)
+    # and would otherwise crash normalize; keep the prior snapshot instead of
+    # wiping those clients. (The >50%-drop partial case is caught below the write.)
+    _stem0 = re.sub(r"\s+", "", csv_path.stem.strip().lower())
+    if "book_of_business" in _stem0 and df.empty:
+        _m0 = month or date.today().replace(day=1)
+        _sp0 = snapshot_dir / f"{_m0.strftime('%Y-%m')}_{_stem0}.parquet"
+        if _sp0.exists():
+            _prev0 = pd.read_parquet(_sp0)
+            print(f"  !! {csv_path.name} is EMPTY — failed state-exchange export; kept the previous "
+                  f"{_stem0} snapshot ({len(_prev0)} rows). Re-export the full book.")
+            return _sp0, _prev0
+
     # Fail with a human message, not a KeyError, when the file isn't the export
     # we expect (wrong download, changed format, partial file).
     if source == "healthsherpa":
@@ -408,6 +422,23 @@ def ingest_file(
     # snapshot alongside the real one, which would double-count clients.
     stem = re.sub(r"\s+", "", csv_path.stem.strip().lower())
     snapshot_path = snapshot_dir / f"{month_str}_{stem}.parquet"
+
+    # ACCESS-BOOK PARTIAL GUARD (Ethan 2026-07-24): a state-exchange book
+    # (book_of_business_*) that lands empty or collapses to under half of the last
+    # good snapshot is almost always a failed/partial export (like the blank GA
+    # export on 7/24). Writing it would wipe real active clients. Keep the prior
+    # snapshot and warn instead of overwriting.
+    if "book_of_business" in stem and snapshot_path.exists():
+        try:
+            _prev = pd.read_parquet(snapshot_path)
+        except Exception:
+            _prev = None
+        if _prev is not None and len(_prev) >= 5 and len(df) < 0.5 * len(_prev):
+            print(f"  !! {csv_path.name} REJECTED — {len(df)} rows vs {len(_prev)} in the last "
+                  f"good snapshot (>50% drop). Looks like a partial/empty state-exchange export; "
+                  f"kept the previous {stem} snapshot. Re-export the full book.")
+            return snapshot_path, _prev   # keep prior snapshot, hand its data back to the caller
+
     df.to_parquet(snapshot_path, index=False)
 
     return snapshot_path, df

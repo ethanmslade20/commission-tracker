@@ -1291,6 +1291,58 @@ def run_report(settings: dict) -> None:
               f"({(follow_ups['Status'] == 'Open').sum()} open, "
               f"{(follow_ups['Status'] == 'Expired').sum()} expired)")
 
+    # BOOK-LEVEL RACE GUARD (#1, Ethan 2026-07-24): the fresh HealthSherpa snapshot
+    # is ground truth for who is active-and-ours RIGHT NOW. A client that snapshot
+    # shows Effectuated/Pending with policy_aor = us CANNOT be an "AOR taken" loss —
+    # that flag came from a stale/lagging signal (a won-back client whose export row
+    # still names the old agent, an aor_changed.json entry not yet cleared, a
+    # transient build race). Revert those to active in the BOOK itself, before it is
+    # pushed — the old race guard only scrubbed the text alert, after the push.
+    # SCOPED to "AOR taken" only: carrier-truth lapses and verification-expired are
+    # authoritative real losses and are left alone; hand-confirmed steals
+    # (data/aor_changed.json) are also left alone (the agent verified those).
+    try:
+        import glob as _glob_rg
+        import re as _re_rg
+        _hs_snaps = sorted(_glob_rg.glob(str(Path(settings["snapshot_dir"]) / "*healthsherpa*.parquet")))
+        if _hs_snaps and "cancel_reason" in all_clients.columns and not all_clients.empty:
+            def _lf_rg(f, l):
+                return _re_rg.sub(r"[^a-z]", "", str(l).lower()) + _re_rg.sub(r"[^a-z]", "", str(f).lower())
+            _snap_rg = pd.read_parquet(_hs_snaps[-1])
+            _mine_now, _status_now = set(), {}
+            for _, _r in _snap_rg.iterrows():
+                if str(_r.get("status") or "") not in ("Effectuated", "PendingEffectuation", "PendingFollowups"):
+                    continue
+                _aor = str(_r.get("policy_aor") or "")
+                if _NPN in _aor or (_LN in _aor.lower() and _FN in _aor.lower()):
+                    _k = _lf_rg(_r.get("first_name", ""), _r.get("last_name", ""))
+                    _mine_now.add(_k)
+                    _status_now.setdefault(_k, str(_r.get("status")))
+            try:
+                from tracker.commissions import aor_changed_keys
+                _confirmed = set(aor_changed_keys())
+            except Exception:
+                _confirmed = set()
+            if _mine_now:
+                _rk = all_clients.apply(lambda r: _lf_rg(r.get("first_name", ""), r.get("last_name", "")), axis=1)
+                _reason = all_clients["cancel_reason"].fillna("").astype(str)
+                _protect = (all_clients["status"].isin(["Cancelled", "Terminated"])
+                            & _reason.str.startswith("AOR taken")
+                            & _rk.isin(_mine_now) & ~_rk.isin(_confirmed))
+                if _protect.any():
+                    for _i in all_clients.index[_protect]:
+                        all_clients.at[_i, "status"] = _status_now.get(_rk.at[_i], "Effectuated")
+                        all_clients.at[_i, "cancel_reason"] = ""
+                        if "term_date" in all_clients.columns:
+                            all_clients.at[_i, "term_date"] = pd.NaT
+                    _rn = sorted({f"{all_clients.at[_i, 'first_name']} {all_clients.at[_i, 'last_name']}".strip()
+                                  for _i in all_clients.index[_protect]})
+                    print(f"  Book race guard: restored {int(_protect.sum())} 'AOR taken' client(s) the "
+                          f"fresh HealthSherpa snapshot shows active-and-ours "
+                          f"({', '.join(_rn[:8])}{'…' if len(_rn) > 8 else ''})")
+    except Exception as _e:
+        print(f"  (book race guard skipped: {_e})")
+
     # AOR Defense: the scraped at-risk list merged with the book — split into
     # Taken (another agent filed an AOR change — fight these) vs Disconnected
     # (usually still ours; just needs a Reconnect). Texts on NEWLY-taken only.
