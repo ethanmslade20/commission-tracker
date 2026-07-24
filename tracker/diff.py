@@ -230,7 +230,7 @@ def build_all_clients(months: dict) -> pd.DataFrame:
     return agg[[c for c in cols if c in agg.columns]]
 
 
-def assign_loss_months(all_clients: pd.DataFrame, last_paid=None) -> pd.DataFrame:
+def assign_loss_months(all_clients: pd.DataFrame, last_paid=None, ledger_path=None) -> pd.DataFrame:
     """Give every gone client a real loss date so churn/loss math counts them.
 
     A client marked Cancelled/Terminated (AOR-taken, verification-expired, or a
@@ -272,6 +272,18 @@ def assign_loss_months(all_clients: pd.DataFrame, last_paid=None) -> pd.DataFram
         df["term_estimated"] = False
     if "term_date" not in df.columns:
         df["term_date"] = pd.NaT
+
+    # Loss-date freeze ledger (data/loss_dates.json): remembers each gone client's
+    # stamped loss month so drifting inputs can't keep re-dating the same loss.
+    # See _freeze() and the UNFREEZE prune below. (Ethan 2026-07-24)
+    from pathlib import Path as _Path
+    import json as _json
+    _lp = (_Path(ledger_path) if ledger_path is not None
+           else _Path(__file__).resolve().parent.parent / "data" / "loss_dates.json")
+    try:
+        ledger = _json.loads(_lp.read_text()) if _lp.exists() else {}
+    except Exception:
+        ledger = {}
 
     def _as_bool(v) -> bool:
         return v if isinstance(v, bool) else str(v).strip().lower() in ("true", "1", "yes", "t")
@@ -318,8 +330,28 @@ def assign_loss_months(all_clients: pd.DataFrame, last_paid=None) -> pd.DataFram
         p = pd.Period(mstr[:7], freq="M")
         return p if p <= cur else cur
 
-    def _set(idx, mstr):
-        df.at[idx, "term_date"] = _clamp(mstr).to_timestamp("M")
+    # FREEZE: stamp a gone client's loss month ONCE and keep it, so drifting inputs
+    # (last_ede_sync advances on every re-sync; last-active shifts as snapshots
+    # grow) can't keep re-dating the same loss to "recently lost." A higher-
+    # authority basis may UPGRADE it (money/commission-stop beats an exchange-sync
+    # estimate); an equal-authority date may only move EARLIER, never later.
+    _AUTH = {"commission": 3, "sync": 2, "active": 1}
+
+    def _freeze(idx, mstr, basis):
+        key = _pk(fn.at[idx], ln.at[idx])
+        cand, auth = mstr[:7], _AUTH[basis]
+        prev = ledger.get(key) if key else None
+        if prev:
+            pa, pdt = int(prev.get("auth", 0)), str(prev.get("date", ""))[:7]
+            if auth > pa:
+                pass                                   # upgrade to the better source
+            elif auth == pa and pdt:
+                cand = min(cand, pdt)                  # never let it drift later
+            else:
+                cand, auth = pdt, pa                   # keep the frozen higher-authority date
+        if key:
+            ledger[key] = {"date": cand, "auth": auth, "basis": basis}
+        df.at[idx, "term_date"] = _clamp(cand).to_timestamp("M")
         df.at[idx, "term_estimated"] = False
 
     src = {"policy": 0, "name": 0, "fuzzy": 0, "sync": 0, "active": 0, "none": 0}
@@ -327,9 +359,9 @@ def assign_loss_months(all_clients: pd.DataFrame, last_paid=None) -> pd.DataFram
         nk = _pk(fn.at[idx], ln.at[idx])
         pn = _polnorm(pol.at[idx])
         mm = by_policy.get(pn) if len(pn) >= 5 else None
-        if _valid(mm): _set(idx, mm); src["policy"] += 1; continue
+        if _valid(mm): _freeze(idx, mm, "commission"); src["policy"] += 1; continue
         mm = by_name.get(nk)
-        if _valid(mm): _set(idx, mm); src["name"] += 1; continue
+        if _valid(mm): _freeze(idx, mm, "commission"); src["name"] += 1; continue
         pool = by_carrier.get(_brand(carr.at[idx]), {})
         if pool and len(nk) >= 4:
             best_m, best_r = None, 0.0
@@ -337,16 +369,31 @@ def assign_loss_months(all_clients: pd.DataFrame, last_paid=None) -> pd.DataFram
                 r = difflib.SequenceMatcher(None, nk, cand_nk).ratio()
                 if r > best_r:
                     best_r, best_m = r, cand_m
-            if best_r >= 0.88 and _valid(best_m): _set(idx, best_m); src["fuzzy"] += 1; continue
+            if best_r >= 0.88 and _valid(best_m): _freeze(idx, best_m, "commission"); src["fuzzy"] += 1; continue
         if pd.notna(sync.at[idx]):
-            df.at[idx, "term_date"] = min(sync.at[idx].to_period("M"), cur).to_timestamp("M"); df.at[idx, "term_estimated"] = False; src["sync"] += 1; continue
+            _freeze(idx, sync.at[idx].strftime("%Y-%m"), "sync"); src["sync"] += 1; continue
         anchor = la.at[idx] if _valid(la.at[idx]) else fs.at[idx]
-        if _valid(anchor): _set(idx, anchor); src["active"] += 1; continue
+        if _valid(anchor): _freeze(idx, anchor, "active"); src["active"] += 1; continue
         src["none"] += 1
+
+    # UNFREEZE (#5): a client who is no longer a dateless loss — won back / active
+    # again, or now carrying a real carrier cancel date that supersedes the
+    # estimate — is dropped from the ledger, so if they lapse again later they get
+    # a fresh date instead of the stale frozen one.
+    _still = {_pk(fn.at[idx], ln.at[idx]) for idx in df.index[need]}
+    for _k in [k for k in ledger if k not in _still]:
+        del ledger[_k]
+    try:
+        _lp.parent.mkdir(parents=True, exist_ok=True)
+        _lp.write_text(_json.dumps(ledger, indent=1, sort_keys=True))
+    except Exception:
+        pass
+
     if sum(src.values()):
         print(f"  Loss dating: dated {sum(src.values())} dateless gone client(s) — "
               f"policy-id {src['policy']}, name {src['name']}, fuzzy {src['fuzzy']}, "
-              f"exchange-sync {src['sync']}, last-active {src['active']}, no-date {src['none']}")
+              f"exchange-sync {src['sync']}, last-active {src['active']}, no-date {src['none']} "
+              f"(frozen; {len(ledger)} in ledger)")
     return df
 
 
