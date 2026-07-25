@@ -554,6 +554,11 @@ def _upload_summary(all_clients, pastdue, snapshot_dir, today=None) -> None:
     base_lost, base_aor, base_pd, base_pol = (_load("known_lapsed.json"), _load("known_aor.json"),
                                               _load("known_pastdue.json"), _load("known_policies.json"))
     first_run = base_pol is None
+    # Win-backs already announced, so a recovered client isn't re-celebrated on
+    # every future upload (Takeyta Young fired 3x). Same once-only pattern as
+    # aor_alerted.json. Cleared below if they lapse again, so a genuine re-loss →
+    # re-win can announce afresh. (Ethan 2026-07-25)
+    base_wb = set(_load("winback_alerted.json") or [])
 
     def _new(cur, base):
         return [] if base is None else [v for k, v in cur.items() if k not in base]
@@ -579,10 +584,15 @@ def _upload_summary(all_clients, pastdue, snapshot_dir, today=None) -> None:
     # Win-backs: was lost/taken at the last text, now active AND his again.
     # (Ethan 2026-07-08: "if I ever get a person back that was lost or win them
     # back from an AOR I want you to include that in the text".)
-    won_lost = [v for k, v in (base_lost or {}).items()
-                if k not in lost and k in active_mine]
-    won_aor = [v for k, v in (base_aor or {}).items()
-               if k not in aor and k in active_mine]
+    # A client lost/taken AGAIN drops out of the "already announced" set, so if
+    # they come back later they can be celebrated afresh.
+    base_wb -= set(lost) | set(aor)
+    won_lost_keys = [k for k in (base_lost or {})
+                     if k not in lost and k in active_mine and k not in base_wb]
+    won_aor_keys = [k for k in (base_aor or {})
+                    if k not in aor and k in active_mine and k not in base_wb]
+    won_lost = [base_lost[k] for k in won_lost_keys]
+    won_aor = [base_aor[k] for k in won_aor_keys]
     base_pol_set = set(base_pol or [])
     new_pol = [p for p in pol if p not in base_pol_set]
     new_pol_n = 0 if first_run else len(new_pol)
@@ -597,6 +607,8 @@ def _upload_summary(all_clients, pastdue, snapshot_dir, today=None) -> None:
         (_data / "known_aor.json").write_text(json.dumps(aor, indent=2))
         (_data / "known_pastdue.json").write_text(json.dumps(pdue, indent=2))
         (_data / "known_policies.json").write_text(json.dumps(sorted(pol), indent=2))
+        (_data / "winback_alerted.json").write_text(
+            json.dumps(sorted(base_wb | set(won_lost_keys) | set(won_aor_keys)), indent=1))
         marker.write_text(h)
 
     if first_run:
