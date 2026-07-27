@@ -186,11 +186,22 @@ def parse_payments_sheet(spreadsheet) -> pd.DataFrame:
             # pad) — pad back so positional access behaves identically
             if len(r) < 12:
                 r = list(r) + [""] * (12 - len(r))
+            amt = _money(r[11])
             if not r[2].strip():
+                # DIRECT CARRIER PAYMENT: a lump sum the agent logs at the bottom
+                # of a month tab with an amount but no agent/carrier/member — a
+                # carrier paying directly, no client to attribute. Count it as
+                # income under carrier "Direct". Skips blank rows, headers, and
+                # Total/summary rows. (Ethan 2026-07-26)
+                if (amt is not None and not r[0].strip() and not r[4].strip()
+                        and "total" not in " ".join(r).lower()):
+                    rows.append(dict(
+                        payment_month=pm, carrier="Direct", policy_id="", member="",
+                        pay_period="", effective="", subscribers="", state="",
+                        description="Direct carrier payment", amount=amt))
                 continue
             if "Total Commission" in " ".join(r):
                 continue
-            amt = _money(r[11])
             if amt is None:
                 continue
             rows.append(dict(
