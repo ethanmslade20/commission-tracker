@@ -303,17 +303,43 @@ def build_silent_dropoffs(all_clients, months) -> pd.DataFrame:
 
 
 def alert_new_aor_changes(df, send=None) -> list:
-    """Text Ethan ONCE per client, the first time they show up as Taken. Dedups by
-    a PERMANENT, append-only set keyed by client NAME (data/aor_alerted.json) — so a
-    client who drops off the export and reappears (silent drop-off, or confirmed via
-    aor_changed.json) is never alerted twice. Exchange ID was unreliable here: it can
-    be blank for dropped-off clients, and the baseline was rewritten to the current
-    taken set each run, so churn re-fired the same people. Returns newly-alerted names."""
+    """Text Ethan ONCE per client, the first time they show up as CONFIRMED taken.
+    Dedups by a PERMANENT, append-only set keyed by client NAME
+    (data/aor_alerted.json) — so a client who drops off the export and reappears
+    (silent drop-off, or confirmed via aor_changed.json) is never alerted twice.
+    Exchange ID was unreliable here: it can be blank for dropped-off clients, and
+    the baseline was rewritten to the current taken set each run, so churn re-fired
+    the same people. Returns newly-alerted names.
+
+    GROUND-TRUTH GATE (Ethan 2026-07-28): the Type=="Taken" set is built off
+    HealthSherpa's "AOR was changed" scrape flag, which is only an early WARNING and
+    frequently reconciles right back to us. Only alert when the export's policy_aor
+    actually names another agent ("Taken By" populated by build_aor_defense) OR the
+    report's carrier-truth set (known_aor.json) lists them. A bare "changed" flag
+    whose policy_aor still = us is NOT a steal — without this, a refreshed at-risk
+    scrape fired a "16 taken" alert when 15 were still his (policy_aor = Ethan) and
+    only 1 (matching the upload summary) was a real switch."""
     if df is None or df.empty:
         return []
-    taken = df[df["Type"] == "Taken"]
-    if taken.empty:
+
+    def _flk(name):                       # first+last token key, matches build_aor_defense
+        p = str(name).split()
+        return re.sub(r"[^a-z]", "", (p[0] + p[-1]).lower()) if p else ""
+    known_aor = _load_json(_ROOT / "data" / "known_aor.json", {})
+    _known = {_flk(v) for v in known_aor.values()}
+
+    def _confirmed(row) -> bool:
+        # policy_aor named another agent (build set "Taken By"), or the report's
+        # fully-processed carrier-truth set already lists them as taken.
+        if str(row.get("Taken By", "") or "").strip():
+            return True
+        return _flk(row.get("Client", "")) in _known
+
+    all_taken = df[df["Type"] == "Taken"]
+    if all_taken.empty:
         return []
+    taken = all_taken[all_taken.apply(_confirmed, axis=1)]
+
     cur = {}  # name-key -> display name (first occurrence wins)
     for _nm in taken["Client"]:
         _nk = re.sub(r"[^a-z]", "", str(_nm).lower())
@@ -323,9 +349,16 @@ def alert_new_aor_changes(df, send=None) -> list:
     alerted_path = _ROOT / "data" / "aor_alerted.json"
     first_run = not alerted_path.exists()
     alerted = set(_load_json(alerted_path, []))
+    # One-time un-pollution: the pre-gate logic recorded warning-only "changed"
+    # clients (policy_aor still us) as taken. Drop any previously-alerted name that
+    # is currently a "Taken" WARNING but NOT ground-truth-confirmed, so a genuine
+    # future steal of that same client still alerts. Confirmed names are untouched.
+    _warned = {re.sub(r"[^a-z]", "", str(n).lower()) for n in all_taken["Client"]}
+    alerted -= {k for k in (alerted - set(cur)) if k in _warned}
+
     new = [(k, n) for k, n in cur.items() if k not in alerted]
 
-    alerted |= set(cur.keys())  # append-only: once seen Taken, never alert again
+    alerted |= set(cur.keys())  # append-only: once CONFIRMED taken, never alert again
     alerted_path.parent.mkdir(parents=True, exist_ok=True)
     alerted_path.write_text(json.dumps(sorted(alerted), indent=1))
     if first_run:
