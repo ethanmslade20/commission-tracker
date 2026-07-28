@@ -161,6 +161,43 @@ def _member_key(member):
     return _person_key(first, last)
 
 
+def _dental_line_items(ytd_vals, year):
+    """The monthly tabs are ACA commissions only; dental income is summarized on
+    the 'Year to Date' tab as a 'Dental' column (month label + amount to its
+    right). Pull each month's dental total in as an income line item
+    (carrier 'Dental', no member) so every income roll-up includes it.
+    (Ethan 2026-07-28: 'pull the dental info from the year to date tab and include
+    that from here on out'.) Returns [] if the tab/column isn't found."""
+    if not ytd_vals:
+        return []
+    dcol = None
+    for r in ytd_vals[:4]:                       # find the 'Dental' header column
+        for j, cell in enumerate(r):
+            if str(cell).strip().lower() == "dental":
+                dcol = j
+                break
+        if dcol is not None:
+            break
+    if dcol is None:
+        return []
+    out = []
+    for r in ytd_vals:
+        if len(r) <= dcol + 1:
+            continue
+        label = str(r[dcol]).strip()
+        if not label or label.lower() in ("dental", "total"):
+            continue
+        mon = _MONTHS.get(label[:3].lower())
+        amt = _money(r[dcol + 1])
+        if not mon or amt is None:
+            continue
+        out.append(dict(
+            payment_month=pd.Timestamp(year, mon, 1), carrier="Dental",
+            policy_id="", member="", pay_period="", effective="", subscribers="",
+            state="", description="Dental (Year to Date tab)", amount=amt))
+    return out
+
+
 def parse_payments_sheet(spreadsheet) -> pd.DataFrame:
     # One values_batch_get for ALL monthly tabs instead of get_all_values per
     # tab — the per-tab version took ~10s on every cold page load that touches
@@ -175,8 +212,10 @@ def parse_payments_sheet(spreadsheet) -> pd.DataFrame:
             vals_by_tab[t] = vr.get("values", [])
 
     rows = []
+    _ytd_vals = None
     for title, tab_vals in vals_by_tab.items():
         if title.strip().lower() == "year to date":
+            _ytd_vals = tab_vals      # dental is pulled from here after the loop
             continue
         pm = _tab_month(title)
         if pm is None:
@@ -210,6 +249,11 @@ def parse_payments_sheet(spreadsheet) -> pd.DataFrame:
                 pay_period=r[5].strip(), effective=r[6].strip(),
                 subscribers=r[7].strip(), state=r[9].strip(),
                 description=r[10].strip(), amount=amt))
+    # Fold in dental income from the Year to Date tab (monthly tabs are ACA only).
+    if _ytd_vals:
+        _yrs = [r["payment_month"].year for r in rows if r.get("payment_month") is not None]
+        _yr = max(set(_yrs), key=_yrs.count) if _yrs else pd.Timestamp.today().year
+        rows.extend(_dental_line_items(_ytd_vals, _yr))
     df = pd.DataFrame(rows)
     if not df.empty:
         df["name_key"] = df["member"].apply(_member_key)
