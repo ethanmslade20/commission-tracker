@@ -4014,21 +4014,37 @@ elif page == "Re-Engage":
         if "loss_basis" in lost_df.columns:
             _lb = lost_df["loss_basis"].astype(str).str.strip().str.lower()
             lost_df = lost_df[~_lb.isin(["sync", "active"])]
-        # Person-level dedup: a plan switch across subscriber IDs can leave the
-        # SAME person with both an old terminated row and a new active row (the
-        # person-key splits them by sid). Don't surface the terminated row as a
-        # loss if that person is also active somewhere. (Taylor Cooper 2026-08-01:
-        # new 8/1 plan active + old plan terminated as separate rows.)
+        # Person-level dedup: a plan switch across subscriber IDs can leave the SAME
+        # person with both an old terminated row and a new active row. Drop the
+        # terminated row only when a matching ACTIVE row is confidently the SAME
+        # person — same name AND same email or phone. Matching on name alone would
+        # wrongly hide a genuinely-lost client who merely shares a common name with
+        # an unrelated active one (the book has two distinct "Rhonda Walker"s).
+        # (Taylor Cooper 2026-08-01: new 8/1 plan active + old plan terminated.)
         if {"first_name", "last_name"}.issubset(all_clients.columns):
             _act_st = {"Effectuated", "PendingEffectuation", "PendingFollowups"}
-            _ac_act = all_clients[all_clients["status"].isin(_act_st)]
-            _active_people = set(
-                _ac_act["first_name"].fillna("").astype(str).str.lower().str.strip()
-                + "|" + _ac_act["last_name"].fillna("").astype(str).str.lower().str.strip()
-            )
-            _lk = (lost_df["first_name"].fillna("").astype(str).str.lower().str.strip()
-                   + "|" + lost_df["last_name"].fillna("").astype(str).str.lower().str.strip())
-            lost_df = lost_df[~_lk.isin(_active_people)]
+            def _person_ids(_df):
+                _nm = (_df["first_name"].fillna("").astype(str).str.lower().str.strip()
+                       + "|" + _df["last_name"].fillna("").astype(str).str.lower().str.strip())
+                _ids = set()
+                if "email" in _df.columns:
+                    _em = _df["email"].fillna("").astype(str).str.lower().str.strip()
+                    _ids |= set((_nm + "|e:" + _em)[_em != ""])
+                if "phone" in _df.columns:
+                    _ph = _df["phone"].fillna("").astype(str).str.replace(r"[^0-9]", "", regex=True).str[-10:]
+                    _ids |= set((_nm + "|p:" + _ph)[_ph.str.len() == 10])
+                return _ids
+            _active_ids = _person_ids(all_clients[all_clients["status"].isin(_act_st)])
+            _lnm = (lost_df["first_name"].fillna("").astype(str).str.lower().str.strip()
+                    + "|" + lost_df["last_name"].fillna("").astype(str).str.lower().str.strip())
+            _drop = pd.Series(False, index=lost_df.index)
+            if "email" in lost_df.columns:
+                _lem = lost_df["email"].fillna("").astype(str).str.lower().str.strip()
+                _drop = _drop | ((_lnm + "|e:" + _lem).isin(_active_ids) & (_lem != ""))
+            if "phone" in lost_df.columns:
+                _lph = lost_df["phone"].fillna("").astype(str).str.replace(r"[^0-9]", "", regex=True).str[-10:]
+                _drop = _drop | ((_lnm + "|p:" + _lph).isin(_active_ids) & (_lph.str.len() == 10))
+            lost_df = lost_df[~_drop]
     else:
         lost_df = pd.DataFrame()
 
