@@ -4003,6 +4003,17 @@ elif page == "Re-Engage":
         # Plan switches are retained clients (moved to a newer plan), not losses.
         if "cancel_reason" in lost_df.columns:
             lost_df = lost_df[lost_df["cancel_reason"].astype(str) != "Plan switch"]
+        # Freeze-basis guard (mirrors report.py _fresh_lost): a loss dated ONLY by
+        # exchange-sync (last_ede_sync advances to ~now on every re-sync) or by the
+        # last-active snapshot is an INFERRED recency, not a real recent cancel —
+        # its frozen term_date sits at ~today and would masquerade as a fresh
+        # "call today" lead here. Keep those out of the outreach list (they still
+        # count in churn and appear in the full client listing). loss_basis is
+        # absent in local/parquet mode, where these are already excluded because
+        # their term_date is NaT. (Ethan 2026-08-01 — freeze-basis gap on dashboard)
+        if "loss_basis" in lost_df.columns:
+            _lb = lost_df["loss_basis"].astype(str).str.strip().str.lower()
+            lost_df = lost_df[~_lb.isin(["sync", "active"])]
     else:
         lost_df = pd.DataFrame()
 

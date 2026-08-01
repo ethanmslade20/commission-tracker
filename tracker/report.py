@@ -63,7 +63,7 @@ def _filter_excluded(df: pd.DataFrame, exclusions: list) -> pd.DataFrame:
 _ALL_CLIENTS_COLS = ["first_name", "last_name", "carrier", "effective_date", "term_date",
                      "status", "state", "ffm_app_id", "net_premium", "applicant_count", "months_on_book",
                      "client_since", "cancel_reason", "term_estimated", "phone", "email",
-                     "policy_number"]
+                     "policy_number", "loss_basis"]
 
 _ACTIVE_COLS = ["first_name", "last_name", "carrier", "effective_date",
                 "status", "state", "ffm_app_id", "net_premium", "applicant_count", "months_on_book"]
@@ -492,6 +492,8 @@ def _upload_summary(all_clients, pastdue, snapshot_dir, today=None) -> None:
     lost, vexp, aor, pol, polmem = {}, {}, {}, set(), {}
     lost_term = {}     # name_key -> real loss date (term_date), for freshness trim
     lost_estimated = {}  # name_key -> was the term date estimated/unconfirmed
+    lost_basis = {}    # name_key -> how the loss date was derived (diff.assign_loss_months):
+                       # "" / "commission" = confirmed; "sync" / "active" = inferred-recency
     active_mine = {}   # currently active AND credited to the agent — win-back proof
     for _, r in all_clients.iterrows():
         f, l = r.get("first_name", ""), r.get("last_name", "")
@@ -514,6 +516,7 @@ def _upload_summary(all_clients, pastdue, snapshot_dir, today=None) -> None:
                 lost[k] = _disp(f, l)
                 lost_term[k] = pd.to_datetime(r.get("term_date"), errors="coerce")
                 lost_estimated[k] = _as_bool(r.get("term_estimated"))
+                lost_basis[k] = str(r.get("loss_basis") or "").strip().lower()
         if st in ("Effectuated", "PendingEffectuation", "PendingFollowups"):
             _a = r.get("policy_aor")
             a = "" if pd.isna(_a) else str(_a)
@@ -600,6 +603,14 @@ def _upload_summary(all_clients, pastdue, snapshot_dir, today=None) -> None:
         # estimated-term flood. Undated now defaults to STALE, not fresh.
         # (Ethan 2026-08-01 — Jan cancels re-texted as "Lost 7")
         if lost_estimated.get(k):
+            return False
+        # An INFERRED loss date — exchange-sync (last_ede_sync, which advances to
+        # ~now on every re-sync) or last-active snapshot — marks WHEN we noticed
+        # the drop, not when it happened, so a months-old lapse can masquerade as
+        # brand new. These stay baselined and still count in churn by their frozen
+        # month; they just never surface as fresh "call today" Re-Engage leads.
+        # (Ethan 2026-08-01 — freeze-basis gap; 67 sync-dated losses were leaking.)
+        if lost_basis.get(k) in ("sync", "active"):
             return False
         td = lost_term.get(k)
         if td is None or pd.isna(td):

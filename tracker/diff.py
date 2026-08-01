@@ -272,6 +272,12 @@ def assign_loss_months(all_clients: pd.DataFrame, last_paid=None, ledger_path=No
         df["term_estimated"] = False
     if "term_date" not in df.columns:
         df["term_date"] = pd.NaT
+    # loss_basis records HOW a gone client's loss date was derived so downstream
+    # can tell a CONFIRMED loss month (real carrier date, or commission-stop =
+    # money actually stopped) from an INFERRED one (exchange-sync / last-active
+    # proxy). Left "" for real-dated losses (they never pass through _freeze).
+    if "loss_basis" not in df.columns:
+        df["loss_basis"] = ""
 
     # Loss-date freeze ledger (data/loss_dates.json): remembers each gone client's
     # stamped loss month so drifting inputs can't keep re-dating the same loss.
@@ -342,17 +348,22 @@ def assign_loss_months(all_clients: pd.DataFrame, last_paid=None, ledger_path=No
         cand, auth = mstr[:7], _AUTH[basis]
         prev = ledger.get(key) if key else None
         if prev:
-            pa, pdt = int(prev.get("auth", 0)), str(prev.get("date", ""))[:7]
+            pa, pdt, pb = int(prev.get("auth", 0)), str(prev.get("date", ""))[:7], str(prev.get("basis", ""))
             if auth > pa:
                 pass                                   # upgrade to the better source
             elif auth == pa and pdt:
                 cand = min(cand, pdt)                  # never let it drift later
             else:
-                cand, auth = pdt, pa                   # keep the frozen higher-authority date
+                cand, auth, basis = pdt, pa, (pb or basis)  # keep the frozen higher-authority record (date, auth AND basis)
         if key:
             ledger[key] = {"date": cand, "auth": auth, "basis": basis}
         df.at[idx, "term_date"] = _clamp(cand).to_timestamp("M")
         df.at[idx, "term_estimated"] = False
+        # Stamp the WINNING basis (after ledger reconciliation) on the row.
+        # A commission-stop or real carrier date is a confirmed recent loss; a
+        # sync/active date only marks when we NOTICED the drop (last_ede_sync
+        # advances to ~now on every re-sync), so it must not read as fresh.
+        df.at[idx, "loss_basis"] = basis
 
     src = {"policy": 0, "name": 0, "fuzzy": 0, "sync": 0, "active": 0, "none": 0}
     for idx in df.index[need]:
