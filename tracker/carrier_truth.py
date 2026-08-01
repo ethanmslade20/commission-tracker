@@ -517,3 +517,121 @@ def apply_anthem_truth(all_clients: pd.DataFrame,
         "cancelled_lapsed": n_lapsed, "cancelled_dropped": n_dropped,
         "protected_new_sales": n_protected, "added_policies": len(new_rows),
     }
+
+
+# ── Cigna ───────────────────────────────────────────────────────────────────
+# Cigna's "Book of Business" export has an explicit Policy Status (Active = in
+# force) plus a Termination Date, but its "Subscriber ID (Detail Case #)" is a
+# Cigna internal case number, NOT the FFM subscriber ID — so match by name /
+# email / phone like Oscar. Clients are on-exchange, so _ffm_mask applies.
+_CIGNA_ACTIVE_STATUS = {"active", "future active", "pending", "effectuated"}
+
+
+def apply_cigna_truth(all_clients: pd.DataFrame,
+                      carrier_books_dir: str = _DEFAULT_BOOKS,
+                      today=None):
+    """Return (adjusted_all_clients, summary_dict). No-op if no Cigna book."""
+    today = pd.Timestamp(today) if today else pd.Timestamp.today().normalize()
+    book = Path(carrier_books_dir) / "cigna.xlsx"
+    if all_clients.empty or not book.exists():
+        return all_clients, {"applied": False}
+
+    c = pd.read_excel(book)
+    c["nm"] = c.apply(lambda r: _name_key(r.get("Primary First Name", ""),
+                                          r.get("Primary Last Name", "")), axis=1)
+    c["em"] = c["Customer Email Address"].apply(_email) if "Customer Email Address" in c.columns else ""
+    c["ph"] = c["Customer Phone Number"].apply(_phone) if "Customer Phone Number" in c.columns else ""
+    c["start"] = pd.to_datetime(c.get("Effective Date"), errors="coerce")
+    c["end"] = pd.to_datetime(c.get("Termination Date"), errors="coerce")
+    _st = c["Policy Status"].astype(str).str.strip().str.lower()
+    # Termed = status isn't an active one, OR the policy is past its term date.
+    _termed = (~_st.isin(_CIGNA_ACTIVE_STATUS)) | (c["end"].notna() & (c["end"] < today))
+    c_active, c_inact = c[~_termed], c[_termed]
+
+    def _keys(df):
+        return set(df["nm"]) | (set(df["em"]) - {""}) | (set(df["ph"]) - {""})
+
+    aa, ii = _keys(c_active), _keys(c_inact)
+
+    ac = all_clients.copy()
+    if "term_estimated" not in ac.columns:
+        ac["term_estimated"] = False
+    ac["_nm"] = ac.apply(lambda r: _name_key(r.get("first_name", ""), r.get("last_name", "")), axis=1)
+    ac["_em"] = ac["email"].apply(_email) if "email" in ac.columns else ""
+    ac["_ph"] = ac["phone"].apply(_phone) if "phone" in ac.columns else ""
+    ac["_eff"] = pd.to_datetime(ac.get("effective_date"), errors="coerce")
+    is_cig = ac["carrier"].astype(str).str.contains("cigna", case=False, na=False)
+    is_active = ac["status"].isin(_ACTIVE)
+    is_ffm = _ffm_mask(ac)
+
+    def _match(nm, em, ph, S):
+        return bool(nm in S or (em in S if em else False) or (ph in S if ph else False))
+
+    dropped = _load_dropped((_ROOT / "data" / "cigna_dropped.json"))
+    today_iso = today.strftime("%Y-%m-%d")
+    n_cancel_inactive = n_cancel_dropped = n_protected = 0
+
+    for idx in ac.index[is_cig & is_active & is_ffm]:
+        nm, em, ph = ac.at[idx, "_nm"], ac.at[idx, "_em"], ac.at[idx, "_ph"]
+        if _match(nm, em, ph, aa):
+            continue  # active in the Cigna book
+        eff = ac.at[idx, "_eff"]
+        if _match(nm, em, ph, ii):
+            ac.at[idx, "status"] = "Cancelled"
+            m = c_inact[(c_inact["nm"] == nm) | (c_inact["em"] == em) | (c_inact["ph"] == ph)]
+            if not m.empty and "term_date" in ac.columns and pd.notna(m.iloc[0]["end"]):
+                ac.at[idx, "term_date"] = m.iloc[0]["end"]
+            n_cancel_inactive += 1
+        elif pd.notna(eff) and eff > today:
+            n_protected += 1                            # new sale not yet in book
+        else:
+            ac.at[idx, "status"] = "Cancelled"          # established but absent
+            key = em or ph or nm
+            first_seen = dropped.setdefault(key, today_iso)
+            if "term_date" in ac.columns:
+                ac.at[idx, "term_date"] = pd.Timestamp(first_seen)
+            ac.at[idx, "term_estimated"] = True
+            n_cancel_dropped += 1
+
+    _save_dropped(dropped, (_ROOT / "data" / "cigna_dropped.json"))
+
+    # Add Cigna-active clients the tracker doesn't have
+    t_keys = set(ac["_nm"]) | (set(ac["_em"]) - {""}) | (set(ac["_ph"]) - {""})
+    missing = c_active[c_active.apply(
+        lambda r: not _match(r["nm"], r["em"], r["ph"], t_keys), axis=1)]
+    new_rows = []
+    for _, r in missing.iterrows():
+        eff = r["start"]
+        new_rows.append({
+            "first_name": r.get("Primary First Name"),
+            "last_name": r.get("Primary Last Name"),
+            "carrier": "Cigna",
+            "effective_date": eff,
+            "term_date": pd.NaT,
+            "status": "Effectuated",
+            "state": r.get("State"),
+            "ffm_app_id": "",
+            "net_premium": pd.to_numeric(r.get("Premium - Customer Responsibility"), errors="coerce"),
+            "applicant_count": 1,
+            "months_on_book": _months_on_book(eff, today),
+            "email": r.get("Customer Email Address"),
+            "phone": r.get("Customer Phone Number"),
+            # Book rows are under the broker's own NPN; a blank policy_aor
+            # stringifies to "nan" and trips false "taken by another agent"
+            # alerts, so stamp the agent explicitly (same as Ambetter).
+            "policy_aor": f"{_AGENT['name']} (NPN: {_AGENT['npn']})",
+        })
+
+    ac = ac.drop(columns=["_nm", "_em", "_ph", "_eff"])
+    if new_rows:
+        ac = pd.concat([ac, pd.DataFrame(new_rows)], ignore_index=True)
+
+    return ac, {
+        "applied": True,
+        "portal_active": len(c_active),
+        "portal_inactive": len(c_inact),
+        "cancelled_inactive": n_cancel_inactive,
+        "cancelled_dropped": n_cancel_dropped,
+        "protected_new_sales": n_protected,
+        "added_from_portal": len(new_rows),
+    }

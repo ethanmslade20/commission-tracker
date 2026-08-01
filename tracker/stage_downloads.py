@@ -127,6 +127,7 @@ def main():
         ("Oscar_INDIVIDUAL_Book_*.csv", "carrier_books/oscar.csv", "Oscar book"),
         ("Producer ToolBox*Clients report.csv", "carrier_books/anthem.csv", "Anthem book"),
         ("Jarvis*BookOfBusiness*.xlsx", "carrier_books/uhc_source.xlsx", "UHC book"),
+        ("BookOfBusinessExport*.xlsx", "carrier_books/cigna.xlsx", "Cigna book"),
     ]:
         p = _newest(pattern)
         if fresh(p):

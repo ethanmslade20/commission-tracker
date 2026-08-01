@@ -451,7 +451,14 @@ def _upload_summary(all_clients, pastdue, snapshot_dir, today=None) -> None:
     hs = sorted(glob.glob(str(Path(snapshot_dir) / "*healthsherpa*.parquet")))
     if not hs:
         return
-    h = hashlib.md5(Path(hs[-1]).read_bytes()).hexdigest()
+    # Hash the STABLE input upload, NOT the rebuilt parquet. Re-ingesting the
+    # same HealthSherpa export writes a byte-different parquet (metadata/row
+    # order), so hashing the parquet re-fired the "new upload" text on every
+    # re-run — the double-text on 2026-08-01. The input CSV is the upload's
+    # identity: same export = same bytes = same hash = text correctly suppressed.
+    _input_hs = Path(__file__).resolve().parent.parent / "input" / "healthsherpa.csv"
+    _hsrc = _input_hs if _input_hs.exists() else Path(hs[-1])
+    h = hashlib.md5(_hsrc.read_bytes()).hexdigest()
     marker = _data / "last_upload_hash.txt"
     if marker.exists() and marker.read_text().strip() == h:
         # NEVER exit silently — a quiet return here is indistinguishable from a
@@ -468,9 +475,23 @@ def _upload_summary(all_clients, pastdue, snapshot_dir, today=None) -> None:
         return re.sub(r"[^a-z]", "", s)
     def _disp(f, l):
         return f"{f} {l}".strip().title()
+    def _as_bool(v):
+        # Robust truthiness for term_estimated (may arrive as a real bool, a
+        # "True"/"False" string, or NaN). See [[sheets-bool-string-gotcha]].
+        if v is None:
+            return False
+        if isinstance(v, str):
+            return v.strip().lower() in ("true", "1", "yes", "t")
+        try:
+            if pd.isna(v):
+                return False
+        except (TypeError, ValueError):
+            pass
+        return bool(v)
 
     lost, vexp, aor, pol, polmem = {}, {}, {}, set(), {}
     lost_term = {}     # name_key -> real loss date (term_date), for freshness trim
+    lost_estimated = {}  # name_key -> was the term date estimated/unconfirmed
     active_mine = {}   # currently active AND credited to the agent — win-back proof
     for _, r in all_clients.iterrows():
         f, l = r.get("first_name", ""), r.get("last_name", "")
@@ -492,6 +513,7 @@ def _upload_summary(all_clients, pastdue, snapshot_dir, today=None) -> None:
             else:
                 lost[k] = _disp(f, l)
                 lost_term[k] = pd.to_datetime(r.get("term_date"), errors="coerce")
+                lost_estimated[k] = _as_bool(r.get("term_estimated"))
         if st in ("Effectuated", "PendingEffectuation", "PendingFollowups"):
             _a = r.get("policy_aor")
             a = "" if pd.isna(_a) else str(_a)
@@ -569,9 +591,19 @@ def _upload_summary(all_clients, pastdue, snapshot_dir, today=None) -> None:
     # by her real month — she's just not a "call today" lead. (Ethan 2026-07-23)
     _FRESH_LOST_DAYS = 45
     def _fresh_lost(k):
+        # A client is a FRESH "call today" Re-Engage lead ONLY if the cancel is
+        # CONFIRMED (a real HealthSherpa/carrier term date, not an estimate) AND
+        # recent (<=45d). Estimated or undated cancels are still baselined and
+        # counted in churn by their real month — they're just not surfaced as
+        # fresh leads. This stops (a) an old cancel that briefly oscillated
+        # (false win-back → re-loss) from faking a new loss, and (b) the
+        # estimated-term flood. Undated now defaults to STALE, not fresh.
+        # (Ethan 2026-08-01 — Jan cancels re-texted as "Lost 7")
+        if lost_estimated.get(k):
+            return False
         td = lost_term.get(k)
         if td is None or pd.isna(td):
-            return True   # undated → can't prove stale, treat as a fresh lead
+            return False   # no confirmed cancel date → not a fresh lead
         return (today - td).days <= _FRESH_LOST_DAYS
     _new_lost_keys = [] if base_lost is None else [k for k in lost if k not in base_lost]
     new_lost   = [lost[k] for k in _new_lost_keys if _fresh_lost(k)]
@@ -835,7 +867,8 @@ def run_report(settings: dict) -> None:
     # started yet) and adds portal business the tracker lacks. Daily tracker is
     # built from `months` separately, so sale timing stays HealthSherpa-driven.
     from tracker.carrier_truth import (apply_ambetter_truth, apply_oscar_truth,
-                                        apply_uhc_truth, apply_anthem_truth)
+                                        apply_uhc_truth, apply_anthem_truth,
+                                        apply_cigna_truth)
 
     # A malformed carrier file (changed export format, wrong download) must
     # never kill the whole report — skip that carrier loudly and keep going.
@@ -890,6 +923,10 @@ def run_report(settings: dict) -> None:
                  lambda s: f"+{s['added_policies']} added, "
                            f"{s['cancelled_lapsed'] + s['cancelled_dropped']} marked cancelled "
                            f"({s['protected_new_sales']} new sales protected)", "anthem")
+    _apply_truth(apply_cigna_truth, "Cigna",
+                 lambda s: f"+{s['added_from_portal']} added, "
+                           f"{s['cancelled_inactive'] + s['cancelled_dropped']} marked cancelled "
+                           f"({s['protected_new_sales']} new sales protected)", "cigna")
 
     # HealthSherpa verification truth: an EXPIRED DMI/SVI follow-up means the
     # subsidy / eligibility is lost, so the client is effectively gone. Mark them

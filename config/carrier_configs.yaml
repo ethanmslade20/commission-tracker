@@ -30,7 +30,7 @@ carrier_aliases:
 # ---------------------------------------------------------------------------
 state_carrier_matrix:
   UT: ["Cigna", "Select Health", "U of U"]
-  TX: ["Ambetter", "United Healthcare", "Blue Cross Blue Shield", "Anthem/Wellpoint", "Oscar"]
+  TX: ["Ambetter", "United Healthcare", "Blue Cross Blue Shield", "Anthem/Wellpoint", "Oscar", "Cigna"]
   OH: ["Oscar", "Anthem/Wellpoint", "United Healthcare", "Ambetter"]
   FL: ["Ambetter", "Anthem/Wellpoint", "United Healthcare", "Oscar", "Cigna"]
   SC: ["United Healthcare", "Ambetter", "Golden Rule", "Allstate"]
