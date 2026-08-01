@@ -604,7 +604,10 @@ def _upload_summary(all_clients, pastdue, snapshot_dir, today=None) -> None:
         td = lost_term.get(k)
         if td is None or pd.isna(td):
             return False   # no confirmed cancel date → not a fresh lead
-        return (today - td).days <= _FRESH_LOST_DAYS
+        # Bound both ends: a FUTURE-dated term (days < 0) is a scheduled/pending
+        # cancel, not a loss that already happened, so it is not a fresh lead yet.
+        _days = (today - td).days
+        return 0 <= _days <= _FRESH_LOST_DAYS
     _new_lost_keys = [] if base_lost is None else [k for k in lost if k not in base_lost]
     new_lost   = [lost[k] for k in _new_lost_keys if _fresh_lost(k)]
     stale_lost = [lost[k] for k in _new_lost_keys if not _fresh_lost(k)]
