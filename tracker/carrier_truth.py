@@ -136,33 +136,17 @@ def apply_ambetter_truth(all_clients: pd.DataFrame,
     dropped = _load_dropped((_ROOT / "data" / "ambetter_dropped.json"))
     today_iso = today.strftime("%Y-%m-%d")
 
-    n_cancel_termed = n_cancel_dropped = n_protected = n_absent_kept = n_reenrolled = 0
+    n_cancel_termed = n_cancel_dropped = n_protected = n_absent_kept = 0
     for idx in ac.index[is_amb & is_active & is_ffm]:
         sid, nm = ac.at[idx, "_sid"], ac.at[idx, "_nm"]
         if (sid and sid in aa_sid) or nm in aa_nm:
             continue  # confirmed active in portal
         eff = ac.at[idx, "_eff"]
         if (sid and sid in at_sid) or nm in at_nm:
-            # Match this client's termed rows by ID (only when non-empty) or name,
-            # then take the LATEST (max) term — never an arbitrary first CSV row.
-            # A still-termed CURRENT plan (its term >= eff) must win so a genuine
-            # lapse still cancels; using iloc[0] on an OLDER row could wrongly keep
-            # a truly-lost client active.
-            _tmask = (amb_termed["nm"] == nm)
-            if sid:
-                _tmask = _tmask | (amb_termed["sid"] == sid)
-            _tterm = pd.to_datetime(amb_termed.loc[_tmask, "term"], errors="coerce").max()
-            # RE-ENROLLMENT GUARD: keep active only if the current plan starts ON or
-            # AFTER the latest matched term (they re-enrolled since the old plan
-            # lapsed; the new plan just isn't in this book pull yet). >= handles
-            # first-of-month / exclusive-end term conventions (Anthem).
-            # (Taylor Cooper 2026-08-01: new 8/1 Ambetter plan, old plan name-matched.)
-            if pd.notna(eff) and pd.notna(_tterm) and eff >= _tterm:
-                n_reenrolled += 1
-                continue
             ac.at[idx, "status"] = "Cancelled"          # portal says termed
-            if "term_date" in ac.columns and pd.notna(_tterm):
-                ac.at[idx, "term_date"] = _tterm
+            tmatch = amb_termed[(amb_termed["sid"] == sid) | (amb_termed["nm"] == nm)]
+            if not tmatch.empty and "term_date" in ac.columns and pd.notna(tmatch.iloc[0]["term"]):
+                ac.at[idx, "term_date"] = tmatch.iloc[0]["term"]
             n_cancel_termed += 1
         elif pd.notna(eff) and eff > today:
             n_protected += 1                            # safety net: new sale, not yet in portal
@@ -226,7 +210,6 @@ def apply_ambetter_truth(all_clients: pd.DataFrame,
         "cancelled_termed": n_cancel_termed,
         "cancelled_dropped": n_cancel_dropped,   # always 0 now (absence no longer cancels)
         "absent_kept": n_absent_kept,
-        "reenrolled_kept": n_reenrolled,
         "protected_new_sales": n_protected,
         "added_from_portal": len(new_rows),
     }
@@ -279,7 +262,7 @@ def apply_oscar_truth(all_clients: pd.DataFrame,
 
     dropped = _load_dropped((_ROOT / "data" / "oscar_dropped.json"))
     today_iso = today.strftime("%Y-%m-%d")
-    n_cancel_inactive = n_cancel_dropped = n_protected = n_absent_kept = n_reenrolled = 0
+    n_cancel_inactive = n_cancel_dropped = n_protected = n_absent_kept = 0
 
     for idx in ac.index[is_osc & is_active & is_ffm]:
         nm, em, ph = ac.at[idx, "_nm"], ac.at[idx, "_em"], ac.at[idx, "_ph"]
@@ -287,21 +270,10 @@ def apply_oscar_truth(all_clients: pd.DataFrame,
             continue  # active in Oscar portal
         eff = ac.at[idx, "_eff"]
         if _match(nm, em, ph, ii):
-            # Match by name or (non-empty) email/phone; take the LATEST term.
-            _tmask = (o_inact["nm"] == nm)
-            if em:
-                _tmask = _tmask | (o_inact["em"] == em)
-            if ph:
-                _tmask = _tmask | (o_inact["ph"] == ph)
-            _tterm = pd.to_datetime(o_inact.loc[_tmask, "end"], errors="coerce").max()
-            # RE-ENROLLMENT GUARD (see Ambetter): keep active only if the current
-            # plan starts on/after the latest matched Inactive end date.
-            if pd.notna(eff) and pd.notna(_tterm) and eff >= _tterm:
-                n_reenrolled += 1
-                continue
             ac.at[idx, "status"] = "Cancelled"
-            if "term_date" in ac.columns and pd.notna(_tterm):
-                ac.at[idx, "term_date"] = _tterm
+            m = o_inact[(o_inact["nm"] == nm) | (o_inact["em"] == em) | (o_inact["ph"] == ph)]
+            if not m.empty and "term_date" in ac.columns and pd.notna(m.iloc[0]["end"]):
+                ac.at[idx, "term_date"] = m.iloc[0]["end"]
             n_cancel_inactive += 1
         elif pd.notna(eff) and eff > today:
             n_protected += 1
@@ -349,7 +321,6 @@ def apply_oscar_truth(all_clients: pd.DataFrame,
         "cancelled_inactive": n_cancel_inactive,
         "cancelled_dropped": n_cancel_dropped,   # always 0 now (absence no longer cancels)
         "absent_kept": n_absent_kept,
-        "reenrolled_kept": n_reenrolled,
         "protected_new_sales": n_protected,
         "added_from_portal": len(new_rows),
     }
@@ -393,8 +364,7 @@ def apply_uhc_truth(all_clients: pd.DataFrame,
 
     dropped = _load_dropped((_ROOT / "data" / "uhc_dropped.json"))
     today_iso = today.strftime("%Y-%m-%d")
-    n_lapsed = n_dropped = n_protected = n_absent_kept = n_reenrolled = 0
-    _mstart = today.replace(day=1)
+    n_lapsed = n_dropped = n_protected = n_absent_kept = 0
 
     for idx in ac.index[is_uhc & is_active & is_ffm]:
         nm, ph = ac.at[idx, "_nm"], ac.at[idx, "_ph"]
@@ -402,14 +372,6 @@ def apply_uhc_truth(all_clients: pd.DataFrame,
             continue  # active in UHC
         eff = ac.at[idx, "_eff"]
         if _m(nm, ph, I):
-            # UHC's export carries no carrier term date, so we can't compare eff to
-            # a term like the other readers. Lightweight re-enrollment guard: an
-            # HS-active client whose current plan starts THIS month (or later) is a
-            # fresh/re-enrolled plan the export may not carry yet — don't cancel them
-            # off a stale 'I' member row. (parity with the other carriers' guard)
-            if pd.notna(eff) and eff >= _mstart:
-                n_reenrolled += 1
-                continue
             ac.at[idx, "status"] = "Cancelled"          # UHC marks inactive
             key = ph or nm
             first_seen = dropped.setdefault(key, today_iso)
@@ -460,7 +422,6 @@ def apply_uhc_truth(all_clients: pd.DataFrame,
         "cancelled_lapsed": n_lapsed,
         "cancelled_dropped": n_dropped,   # always 0 now (absence no longer cancels)
         "absent_kept": n_absent_kept,
-        "reenrolled_kept": n_reenrolled,
         "protected_new_sales": n_protected,
         "added_policies": len(new_rows),
     }
@@ -511,7 +472,7 @@ def apply_anthem_truth(all_clients: pd.DataFrame,
 
     dropped = _load_dropped((_ROOT / "data" / "anthem_dropped.json"))
     today_iso = today.strftime("%Y-%m-%d")
-    n_lapsed = n_dropped = n_protected = n_absent_kept = n_reenrolled = 0
+    n_lapsed = n_dropped = n_protected = n_absent_kept = 0
 
     for idx in ac.index[is_anth & is_active & is_ffm]:
         k = ac.at[idx, "_k"]
@@ -519,18 +480,10 @@ def apply_anthem_truth(all_clients: pd.DataFrame,
             continue
         eff = ac.at[idx, "_eff"]
         if k in I:
-            m = a_in[a_in["key"] == k]
-            _tterm = pd.to_datetime(m["cancel"], errors="coerce").max()   # latest, not first row
-            # RE-ENROLLMENT GUARD (see Ambetter): keep active only if the current
-            # plan starts on/after the latest matched cancel date. >= is important
-            # here — Anthem records Cancellation Date as the first-of-month
-            # (exclusive end), so a same-day re-enrollment has eff == cancel.
-            if pd.notna(eff) and pd.notna(_tterm) and eff >= _tterm:
-                n_reenrolled += 1
-                continue
             ac.at[idx, "status"] = "Cancelled"
-            if "term_date" in ac.columns and pd.notna(_tterm):
-                ac.at[idx, "term_date"] = _tterm
+            m = a_in[a_in["key"] == k]
+            if not m.empty and "term_date" in ac.columns and pd.notna(m.iloc[0]["cancel"]):
+                ac.at[idx, "term_date"] = m.iloc[0]["cancel"]
             n_lapsed += 1
         elif pd.notna(eff) and eff > today:
             n_protected += 1
@@ -565,7 +518,7 @@ def apply_anthem_truth(all_clients: pd.DataFrame,
         "applied": True,
         "portal_active": len(a_act), "portal_inactive": len(a_in),
         "cancelled_lapsed": n_lapsed, "cancelled_dropped": n_dropped,   # dropped always 0 now
-        "absent_kept": n_absent_kept, "reenrolled_kept": n_reenrolled,
+        "absent_kept": n_absent_kept,
         "protected_new_sales": n_protected, "added_policies": len(new_rows),
     }
 
@@ -620,7 +573,7 @@ def apply_cigna_truth(all_clients: pd.DataFrame,
 
     dropped = _load_dropped((_ROOT / "data" / "cigna_dropped.json"))
     today_iso = today.strftime("%Y-%m-%d")
-    n_cancel_inactive = n_cancel_dropped = n_protected = n_absent_kept = n_reenrolled = 0
+    n_cancel_inactive = n_cancel_dropped = n_protected = n_absent_kept = 0
 
     for idx in ac.index[is_cig & is_active & is_ffm]:
         nm, em, ph = ac.at[idx, "_nm"], ac.at[idx, "_em"], ac.at[idx, "_ph"]
@@ -628,21 +581,10 @@ def apply_cigna_truth(all_clients: pd.DataFrame,
             continue  # active in the Cigna book
         eff = ac.at[idx, "_eff"]
         if _match(nm, em, ph, ii):
-            # Match by name or (non-empty) email/phone; take the LATEST term.
-            _tmask = (c_inact["nm"] == nm)
-            if em:
-                _tmask = _tmask | (c_inact["em"] == em)
-            if ph:
-                _tmask = _tmask | (c_inact["ph"] == ph)
-            _tterm = pd.to_datetime(c_inact.loc[_tmask, "end"], errors="coerce").max()
-            # RE-ENROLLMENT GUARD (see Ambetter): keep active only if the current
-            # plan starts on/after the latest matched term date.
-            if pd.notna(eff) and pd.notna(_tterm) and eff >= _tterm:
-                n_reenrolled += 1
-                continue
             ac.at[idx, "status"] = "Cancelled"
-            if "term_date" in ac.columns and pd.notna(_tterm):
-                ac.at[idx, "term_date"] = _tterm
+            m = c_inact[(c_inact["nm"] == nm) | (c_inact["em"] == em) | (c_inact["ph"] == ph)]
+            if not m.empty and "term_date" in ac.columns and pd.notna(m.iloc[0]["end"]):
+                ac.at[idx, "term_date"] = m.iloc[0]["end"]
             n_cancel_inactive += 1
         elif pd.notna(eff) and eff > today:
             n_protected += 1                            # new sale not yet in book
@@ -693,7 +635,6 @@ def apply_cigna_truth(all_clients: pd.DataFrame,
         "cancelled_inactive": n_cancel_inactive,
         "cancelled_dropped": n_cancel_dropped,   # always 0 now (absence no longer cancels)
         "absent_kept": n_absent_kept,
-        "reenrolled_kept": n_reenrolled,
         "protected_new_sales": n_protected,
         "added_from_portal": len(new_rows),
     }
