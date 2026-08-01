@@ -4014,6 +4014,21 @@ elif page == "Re-Engage":
         if "loss_basis" in lost_df.columns:
             _lb = lost_df["loss_basis"].astype(str).str.strip().str.lower()
             lost_df = lost_df[~_lb.isin(["sync", "active"])]
+        # Person-level dedup: a plan switch across subscriber IDs can leave the
+        # SAME person with both an old terminated row and a new active row (the
+        # person-key splits them by sid). Don't surface the terminated row as a
+        # loss if that person is also active somewhere. (Taylor Cooper 2026-08-01:
+        # new 8/1 plan active + old plan terminated as separate rows.)
+        if {"first_name", "last_name"}.issubset(all_clients.columns):
+            _act_st = {"Effectuated", "PendingEffectuation", "PendingFollowups"}
+            _ac_act = all_clients[all_clients["status"].isin(_act_st)]
+            _active_people = set(
+                _ac_act["first_name"].fillna("").astype(str).str.lower().str.strip()
+                + "|" + _ac_act["last_name"].fillna("").astype(str).str.lower().str.strip()
+            )
+            _lk = (lost_df["first_name"].fillna("").astype(str).str.lower().str.strip()
+                   + "|" + lost_df["last_name"].fillna("").astype(str).str.lower().str.strip())
+            lost_df = lost_df[~_lk.isin(_active_people)]
     else:
         lost_df = pd.DataFrame()
 

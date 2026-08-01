@@ -136,17 +136,26 @@ def apply_ambetter_truth(all_clients: pd.DataFrame,
     dropped = _load_dropped((_ROOT / "data" / "ambetter_dropped.json"))
     today_iso = today.strftime("%Y-%m-%d")
 
-    n_cancel_termed = n_cancel_dropped = n_protected = n_absent_kept = 0
+    n_cancel_termed = n_cancel_dropped = n_protected = n_absent_kept = n_reenrolled = 0
     for idx in ac.index[is_amb & is_active & is_ffm]:
         sid, nm = ac.at[idx, "_sid"], ac.at[idx, "_nm"]
         if (sid and sid in aa_sid) or nm in aa_nm:
             continue  # confirmed active in portal
         eff = ac.at[idx, "_eff"]
         if (sid and sid in at_sid) or nm in at_nm:
-            ac.at[idx, "status"] = "Cancelled"          # portal says termed
             tmatch = amb_termed[(amb_termed["sid"] == sid) | (amb_termed["nm"] == nm)]
-            if not tmatch.empty and "term_date" in ac.columns and pd.notna(tmatch.iloc[0]["term"]):
-                ac.at[idx, "term_date"] = tmatch.iloc[0]["term"]
+            _tterm = pd.to_datetime(tmatch.iloc[0]["term"], errors="coerce") if not tmatch.empty else pd.NaT
+            # RE-ENROLLMENT GUARD: the client is ACTIVE in HealthSherpa but name/ID-
+            # matches a TERMED book row. If their current plan starts AFTER that term
+            # date, they re-enrolled since the old plan lapsed (the new plan just isn't
+            # in this book pull yet) — keep them active, don't resurrect the old lapse.
+            # (Taylor Cooper 2026-08-01: new 8/1 Ambetter plan, old plan name-matched.)
+            if pd.notna(eff) and pd.notna(_tterm) and eff > _tterm:
+                n_reenrolled += 1
+                continue
+            ac.at[idx, "status"] = "Cancelled"          # portal says termed
+            if not tmatch.empty and "term_date" in ac.columns and pd.notna(_tterm):
+                ac.at[idx, "term_date"] = _tterm
             n_cancel_termed += 1
         elif pd.notna(eff) and eff > today:
             n_protected += 1                            # safety net: new sale, not yet in portal
@@ -210,6 +219,7 @@ def apply_ambetter_truth(all_clients: pd.DataFrame,
         "cancelled_termed": n_cancel_termed,
         "cancelled_dropped": n_cancel_dropped,   # always 0 now (absence no longer cancels)
         "absent_kept": n_absent_kept,
+        "reenrolled_kept": n_reenrolled,
         "protected_new_sales": n_protected,
         "added_from_portal": len(new_rows),
     }
@@ -262,7 +272,7 @@ def apply_oscar_truth(all_clients: pd.DataFrame,
 
     dropped = _load_dropped((_ROOT / "data" / "oscar_dropped.json"))
     today_iso = today.strftime("%Y-%m-%d")
-    n_cancel_inactive = n_cancel_dropped = n_protected = n_absent_kept = 0
+    n_cancel_inactive = n_cancel_dropped = n_protected = n_absent_kept = n_reenrolled = 0
 
     for idx in ac.index[is_osc & is_active & is_ffm]:
         nm, em, ph = ac.at[idx, "_nm"], ac.at[idx, "_em"], ac.at[idx, "_ph"]
@@ -270,10 +280,17 @@ def apply_oscar_truth(all_clients: pd.DataFrame,
             continue  # active in Oscar portal
         eff = ac.at[idx, "_eff"]
         if _match(nm, em, ph, ii):
-            ac.at[idx, "status"] = "Cancelled"
             m = o_inact[(o_inact["nm"] == nm) | (o_inact["em"] == em) | (o_inact["ph"] == ph)]
-            if not m.empty and "term_date" in ac.columns and pd.notna(m.iloc[0]["end"]):
-                ac.at[idx, "term_date"] = m.iloc[0]["end"]
+            _tterm = pd.to_datetime(m.iloc[0]["end"], errors="coerce") if not m.empty else pd.NaT
+            # RE-ENROLLMENT GUARD (see Ambetter): HS-active but matches an Oscar
+            # Inactive row — if the current plan starts after that end date, they
+            # re-enrolled; keep them active.
+            if pd.notna(eff) and pd.notna(_tterm) and eff > _tterm:
+                n_reenrolled += 1
+                continue
+            ac.at[idx, "status"] = "Cancelled"
+            if not m.empty and "term_date" in ac.columns and pd.notna(_tterm):
+                ac.at[idx, "term_date"] = _tterm
             n_cancel_inactive += 1
         elif pd.notna(eff) and eff > today:
             n_protected += 1
@@ -321,6 +338,7 @@ def apply_oscar_truth(all_clients: pd.DataFrame,
         "cancelled_inactive": n_cancel_inactive,
         "cancelled_dropped": n_cancel_dropped,   # always 0 now (absence no longer cancels)
         "absent_kept": n_absent_kept,
+        "reenrolled_kept": n_reenrolled,
         "protected_new_sales": n_protected,
         "added_from_portal": len(new_rows),
     }
@@ -472,7 +490,7 @@ def apply_anthem_truth(all_clients: pd.DataFrame,
 
     dropped = _load_dropped((_ROOT / "data" / "anthem_dropped.json"))
     today_iso = today.strftime("%Y-%m-%d")
-    n_lapsed = n_dropped = n_protected = n_absent_kept = 0
+    n_lapsed = n_dropped = n_protected = n_absent_kept = n_reenrolled = 0
 
     for idx in ac.index[is_anth & is_active & is_ffm]:
         k = ac.at[idx, "_k"]
@@ -480,10 +498,17 @@ def apply_anthem_truth(all_clients: pd.DataFrame,
             continue
         eff = ac.at[idx, "_eff"]
         if k in I:
-            ac.at[idx, "status"] = "Cancelled"
             m = a_in[a_in["key"] == k]
-            if not m.empty and "term_date" in ac.columns and pd.notna(m.iloc[0]["cancel"]):
-                ac.at[idx, "term_date"] = m.iloc[0]["cancel"]
+            _tterm = pd.to_datetime(m.iloc[0]["cancel"], errors="coerce") if not m.empty else pd.NaT
+            # RE-ENROLLMENT GUARD (see Ambetter): HS-active but matches an Anthem
+            # Inactive row — if the current plan starts after that cancel date, they
+            # re-enrolled; keep them active.
+            if pd.notna(eff) and pd.notna(_tterm) and eff > _tterm:
+                n_reenrolled += 1
+                continue
+            ac.at[idx, "status"] = "Cancelled"
+            if not m.empty and "term_date" in ac.columns and pd.notna(_tterm):
+                ac.at[idx, "term_date"] = _tterm
             n_lapsed += 1
         elif pd.notna(eff) and eff > today:
             n_protected += 1
@@ -518,7 +543,7 @@ def apply_anthem_truth(all_clients: pd.DataFrame,
         "applied": True,
         "portal_active": len(a_act), "portal_inactive": len(a_in),
         "cancelled_lapsed": n_lapsed, "cancelled_dropped": n_dropped,   # dropped always 0 now
-        "absent_kept": n_absent_kept,
+        "absent_kept": n_absent_kept, "reenrolled_kept": n_reenrolled,
         "protected_new_sales": n_protected, "added_policies": len(new_rows),
     }
 
@@ -573,7 +598,7 @@ def apply_cigna_truth(all_clients: pd.DataFrame,
 
     dropped = _load_dropped((_ROOT / "data" / "cigna_dropped.json"))
     today_iso = today.strftime("%Y-%m-%d")
-    n_cancel_inactive = n_cancel_dropped = n_protected = n_absent_kept = 0
+    n_cancel_inactive = n_cancel_dropped = n_protected = n_absent_kept = n_reenrolled = 0
 
     for idx in ac.index[is_cig & is_active & is_ffm]:
         nm, em, ph = ac.at[idx, "_nm"], ac.at[idx, "_em"], ac.at[idx, "_ph"]
@@ -581,10 +606,17 @@ def apply_cigna_truth(all_clients: pd.DataFrame,
             continue  # active in the Cigna book
         eff = ac.at[idx, "_eff"]
         if _match(nm, em, ph, ii):
-            ac.at[idx, "status"] = "Cancelled"
             m = c_inact[(c_inact["nm"] == nm) | (c_inact["em"] == em) | (c_inact["ph"] == ph)]
-            if not m.empty and "term_date" in ac.columns and pd.notna(m.iloc[0]["end"]):
-                ac.at[idx, "term_date"] = m.iloc[0]["end"]
+            _tterm = pd.to_datetime(m.iloc[0]["end"], errors="coerce") if not m.empty else pd.NaT
+            # RE-ENROLLMENT GUARD (see Ambetter): HS-active but matches a termed
+            # Cigna row — if the current plan starts after that term date, they
+            # re-enrolled; keep them active.
+            if pd.notna(eff) and pd.notna(_tterm) and eff > _tterm:
+                n_reenrolled += 1
+                continue
+            ac.at[idx, "status"] = "Cancelled"
+            if not m.empty and "term_date" in ac.columns and pd.notna(_tterm):
+                ac.at[idx, "term_date"] = _tterm
             n_cancel_inactive += 1
         elif pd.notna(eff) and eff > today:
             n_protected += 1                            # new sale not yet in book
@@ -635,6 +667,7 @@ def apply_cigna_truth(all_clients: pd.DataFrame,
         "cancelled_inactive": n_cancel_inactive,
         "cancelled_dropped": n_cancel_dropped,   # always 0 now (absence no longer cancels)
         "absent_kept": n_absent_kept,
+        "reenrolled_kept": n_reenrolled,
         "protected_new_sales": n_protected,
         "added_from_portal": len(new_rows),
     }
