@@ -924,23 +924,23 @@ def run_report(settings: dict) -> None:
     _apply_truth(apply_ambetter_truth, "Ambetter",
                  lambda s: f"+{s['added_from_portal']} added, "
                            f"{s['cancelled_termed'] + s['cancelled_dropped']} marked cancelled "
-                           f"({s['protected_new_sales']} new sales protected)", "ambetter")
+                           f"({s['protected_new_sales']} new sales protected, {s.get('absent_kept', 0)} kept: absent from book, not cancelled)", "ambetter")
     _apply_truth(apply_oscar_truth, "Oscar",
                  lambda s: f"+{s['added_from_portal']} added, "
                            f"{s['cancelled_inactive'] + s['cancelled_dropped']} marked cancelled "
-                           f"({s['protected_new_sales']} new sales protected)", "oscar")
+                           f"({s['protected_new_sales']} new sales protected, {s.get('absent_kept', 0)} kept: absent from book, not cancelled)", "oscar")
     _apply_truth(apply_uhc_truth, "UHC",
                  lambda s: f"+{s['added_policies']} added, "
                            f"{s['cancelled_lapsed'] + s['cancelled_dropped']} marked cancelled "
-                           f"({s['protected_new_sales']} new sales protected)", "united|uhc")
+                           f"({s['protected_new_sales']} new sales protected, {s.get('absent_kept', 0)} kept: absent from book, not cancelled)", "united|uhc")
     _apply_truth(apply_anthem_truth, "Anthem",
                  lambda s: f"+{s['added_policies']} added, "
                            f"{s['cancelled_lapsed'] + s['cancelled_dropped']} marked cancelled "
-                           f"({s['protected_new_sales']} new sales protected)", "anthem")
+                           f"({s['protected_new_sales']} new sales protected, {s.get('absent_kept', 0)} kept: absent from book, not cancelled)", "anthem")
     _apply_truth(apply_cigna_truth, "Cigna",
                  lambda s: f"+{s['added_from_portal']} added, "
                            f"{s['cancelled_inactive'] + s['cancelled_dropped']} marked cancelled "
-                           f"({s['protected_new_sales']} new sales protected)", "cigna")
+                           f"({s['protected_new_sales']} new sales protected, {s.get('absent_kept', 0)} kept: absent from book, not cancelled)", "cigna")
 
     # HealthSherpa verification truth: an EXPIRED DMI/SVI follow-up means the
     # subsidy / eligibility is lost, so the client is effectively gone. Mark them

@@ -6,13 +6,18 @@ HealthSherpa-built client list, for that carrier only:
 
   * In the carrier portal (active)         -> stays active
   * In the carrier portal (termed)         -> marked Cancelled (carrier term date)
-  * NOT in the portal, coverage started    -> marked Cancelled (dropped off portal)
-  * NOT in the portal, coverage not started-> kept active (safety net for new sales
-                                              that lag a few days in the portal)
+  * NOT in the portal                       -> kept as-is (absence is NOT a term:
+                                              it happens on subscriber-name
+                                              mismatches, incomplete/lagging book
+                                              exports, and same-day-effective plans
+                                              not yet posted; cancelling on absence
+                                              manufactured mass false losses —
+                                              Ethan 2026-08-01)
   * In the portal but missing from tracker -> added to the active book
 
-HealthSherpa stays the source for new-business / daily-tracker timing; this only
-adjusts the book/status side. Currently implemented for Ambetter.
+Real terms are always present in the book as termed/inactive rows (every carrier
+export carries them), so they are still caught. HealthSherpa stays the source for
+new-business / daily-tracker timing; this only adjusts the book/status side.
 """
 
 import re
@@ -131,7 +136,7 @@ def apply_ambetter_truth(all_clients: pd.DataFrame,
     dropped = _load_dropped((_ROOT / "data" / "ambetter_dropped.json"))
     today_iso = today.strftime("%Y-%m-%d")
 
-    n_cancel_termed = n_cancel_dropped = n_protected = 0
+    n_cancel_termed = n_cancel_dropped = n_protected = n_absent_kept = 0
     for idx in ac.index[is_amb & is_active & is_ffm]:
         sid, nm = ac.at[idx, "_sid"], ac.at[idx, "_nm"]
         if (sid and sid in aa_sid) or nm in aa_nm:
@@ -146,14 +151,15 @@ def apply_ambetter_truth(all_clients: pd.DataFrame,
         elif pd.notna(eff) and eff > today:
             n_protected += 1                            # safety net: new sale, not yet in portal
         else:
-            ac.at[idx, "status"] = "Cancelled"          # established but absent from portal
-            # No carrier term date exists; use the date we FIRST saw them gone.
-            key = sid if sid else nm
-            first_seen = dropped.setdefault(key, today_iso)
-            if "term_date" in ac.columns:
-                ac.at[idx, "term_date"] = pd.Timestamp(first_seen)
-            ac.at[idx, "term_estimated"] = True
-            n_cancel_dropped += 1
+            # ABSENT from the book — do NOT cancel. Absence is unreliable: the
+            # plan may be under a different household member (subscriber-name
+            # mismatch), the book export may be incomplete/lagging, or a same-day
+            # effective plan may not be posted yet (eff > today is strict, so an
+            # 8/1 plan checked on 8/1 lands here). A REAL term always appears in
+            # the book as termed (handled above), so cancelling on mere absence
+            # only manufactures false losses. Keep the HealthSherpa status.
+            # (Ethan 2026-08-01 — mass false-lapse from book absence/name mismatch)
+            n_absent_kept += 1
 
     _save_dropped(dropped, (_ROOT / "data" / "ambetter_dropped.json"))
 
@@ -202,7 +208,8 @@ def apply_ambetter_truth(all_clients: pd.DataFrame,
         "portal_active": len(amb_active),
         "portal_termed": len(amb_termed),
         "cancelled_termed": n_cancel_termed,
-        "cancelled_dropped": n_cancel_dropped,
+        "cancelled_dropped": n_cancel_dropped,   # always 0 now (absence no longer cancels)
+        "absent_kept": n_absent_kept,
         "protected_new_sales": n_protected,
         "added_from_portal": len(new_rows),
     }
@@ -255,7 +262,7 @@ def apply_oscar_truth(all_clients: pd.DataFrame,
 
     dropped = _load_dropped((_ROOT / "data" / "oscar_dropped.json"))
     today_iso = today.strftime("%Y-%m-%d")
-    n_cancel_inactive = n_cancel_dropped = n_protected = 0
+    n_cancel_inactive = n_cancel_dropped = n_protected = n_absent_kept = 0
 
     for idx in ac.index[is_osc & is_active & is_ffm]:
         nm, em, ph = ac.at[idx, "_nm"], ac.at[idx, "_em"], ac.at[idx, "_ph"]
@@ -271,13 +278,10 @@ def apply_oscar_truth(all_clients: pd.DataFrame,
         elif pd.notna(eff) and eff > today:
             n_protected += 1
         else:
-            ac.at[idx, "status"] = "Cancelled"
-            key = em or ph or nm
-            first_seen = dropped.setdefault(key, today_iso)
-            if "term_date" in ac.columns:
-                ac.at[idx, "term_date"] = pd.Timestamp(first_seen)
-            ac.at[idx, "term_estimated"] = True
-            n_cancel_dropped += 1
+            # ABSENT from the book — do NOT cancel (see Ambetter note). A real
+            # Oscar term shows as "Inactive" above; mere absence is a name/email/
+            # phone match-miss or a lagging export, not a loss. Keep HS status.
+            n_absent_kept += 1
 
     _save_dropped(dropped, (_ROOT / "data" / "oscar_dropped.json"))
 
@@ -315,7 +319,8 @@ def apply_oscar_truth(all_clients: pd.DataFrame,
         "portal_active": len(o_active),
         "portal_inactive": len(o_inact),
         "cancelled_inactive": n_cancel_inactive,
-        "cancelled_dropped": n_cancel_dropped,
+        "cancelled_dropped": n_cancel_dropped,   # always 0 now (absence no longer cancels)
+        "absent_kept": n_absent_kept,
         "protected_new_sales": n_protected,
         "added_from_portal": len(new_rows),
     }
@@ -359,7 +364,7 @@ def apply_uhc_truth(all_clients: pd.DataFrame,
 
     dropped = _load_dropped((_ROOT / "data" / "uhc_dropped.json"))
     today_iso = today.strftime("%Y-%m-%d")
-    n_lapsed = n_dropped = n_protected = 0
+    n_lapsed = n_dropped = n_protected = n_absent_kept = 0
 
     for idx in ac.index[is_uhc & is_active & is_ffm]:
         nm, ph = ac.at[idx, "_nm"], ac.at[idx, "_ph"]
@@ -377,13 +382,11 @@ def apply_uhc_truth(all_clients: pd.DataFrame,
         elif pd.notna(eff) and eff > today:
             n_protected += 1                            # new sale not yet in UHC export
         else:
-            ac.at[idx, "status"] = "Cancelled"          # gone from UHC entirely
-            key = ph or nm
-            first_seen = dropped.setdefault(key, today_iso)
-            if "term_date" in ac.columns:
-                ac.at[idx, "term_date"] = pd.Timestamp(first_seen)
-            ac.at[idx, "term_estimated"] = True
-            n_dropped += 1
+            # ABSENT from the book — do NOT cancel (see Ambetter note). UHC lists
+            # inactive members explicitly ("I", handled above); the UHC export is
+            # one row PER MEMBER, so a dependent-only name miss or a lagging
+            # export drops a still-active policyholder here. Keep HS status.
+            n_absent_kept += 1
 
     _save_dropped(dropped, (_ROOT / "data" / "uhc_dropped.json"))
 
@@ -417,7 +420,8 @@ def apply_uhc_truth(all_clients: pd.DataFrame,
         "portal_active_members": len(ua),
         "portal_inactive_members": len(ui),
         "cancelled_lapsed": n_lapsed,
-        "cancelled_dropped": n_dropped,
+        "cancelled_dropped": n_dropped,   # always 0 now (absence no longer cancels)
+        "absent_kept": n_absent_kept,
         "protected_new_sales": n_protected,
         "added_policies": len(new_rows),
     }
@@ -468,7 +472,7 @@ def apply_anthem_truth(all_clients: pd.DataFrame,
 
     dropped = _load_dropped((_ROOT / "data" / "anthem_dropped.json"))
     today_iso = today.strftime("%Y-%m-%d")
-    n_lapsed = n_dropped = n_protected = 0
+    n_lapsed = n_dropped = n_protected = n_absent_kept = 0
 
     for idx in ac.index[is_anth & is_active & is_ffm]:
         k = ac.at[idx, "_k"]
@@ -484,13 +488,12 @@ def apply_anthem_truth(all_clients: pd.DataFrame,
         elif pd.notna(eff) and eff > today:
             n_protected += 1
         else:
-            ac.at[idx, "status"] = "Cancelled"
-            kk = f"{k[0]}|{k[1]}"
-            first_seen = dropped.setdefault(kk, today_iso)
-            if "term_date" in ac.columns:
-                ac.at[idx, "term_date"] = pd.Timestamp(first_seen)
-            ac.at[idx, "term_estimated"] = True
-            n_dropped += 1
+            # ABSENT from the book — do NOT cancel (see Ambetter note). Anthem is
+            # matched by name+state only (no ID/phone/email), so a plan under a
+            # different household member, a "Last, First" parsing quirk, or a
+            # lagging export lands a still-active client here. Inactive clients
+            # are listed explicitly (handled above). Keep HS status.
+            n_absent_kept += 1
 
     _save_dropped(dropped, (_ROOT / "data" / "anthem_dropped.json"))
 
@@ -514,7 +517,8 @@ def apply_anthem_truth(all_clients: pd.DataFrame,
     return ac, {
         "applied": True,
         "portal_active": len(a_act), "portal_inactive": len(a_in),
-        "cancelled_lapsed": n_lapsed, "cancelled_dropped": n_dropped,
+        "cancelled_lapsed": n_lapsed, "cancelled_dropped": n_dropped,   # dropped always 0 now
+        "absent_kept": n_absent_kept,
         "protected_new_sales": n_protected, "added_policies": len(new_rows),
     }
 
@@ -569,7 +573,7 @@ def apply_cigna_truth(all_clients: pd.DataFrame,
 
     dropped = _load_dropped((_ROOT / "data" / "cigna_dropped.json"))
     today_iso = today.strftime("%Y-%m-%d")
-    n_cancel_inactive = n_cancel_dropped = n_protected = 0
+    n_cancel_inactive = n_cancel_dropped = n_protected = n_absent_kept = 0
 
     for idx in ac.index[is_cig & is_active & is_ffm]:
         nm, em, ph = ac.at[idx, "_nm"], ac.at[idx, "_em"], ac.at[idx, "_ph"]
@@ -585,13 +589,11 @@ def apply_cigna_truth(all_clients: pd.DataFrame,
         elif pd.notna(eff) and eff > today:
             n_protected += 1                            # new sale not yet in book
         else:
-            ac.at[idx, "status"] = "Cancelled"          # established but absent
-            key = em or ph or nm
-            first_seen = dropped.setdefault(key, today_iso)
-            if "term_date" in ac.columns:
-                ac.at[idx, "term_date"] = pd.Timestamp(first_seen)
-            ac.at[idx, "term_estimated"] = True
-            n_cancel_dropped += 1
+            # ABSENT from the book — do NOT cancel (see Ambetter note). A real
+            # Cigna term shows as a non-active Policy Status / past Termination
+            # Date above; mere absence is a name/email/phone match-miss or a
+            # lagging export, not a loss. Keep HS status.
+            n_absent_kept += 1
 
     _save_dropped(dropped, (_ROOT / "data" / "cigna_dropped.json"))
 
@@ -631,7 +633,8 @@ def apply_cigna_truth(all_clients: pd.DataFrame,
         "portal_active": len(c_active),
         "portal_inactive": len(c_inact),
         "cancelled_inactive": n_cancel_inactive,
-        "cancelled_dropped": n_cancel_dropped,
+        "cancelled_dropped": n_cancel_dropped,   # always 0 now (absence no longer cancels)
+        "absent_kept": n_absent_kept,
         "protected_new_sales": n_protected,
         "added_from_portal": len(new_rows),
     }
