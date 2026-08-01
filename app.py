@@ -4034,17 +4034,29 @@ elif page == "Re-Engage":
                     _ph = _df["phone"].fillna("").astype(str).str.replace(r"[^0-9]", "", regex=True).str[-10:]
                     _ids |= set((_nm + "|p:" + _ph)[_ph.str.len() == 10])
                 return _ids
-            _active_ids = _person_ids(all_clients[all_clients["status"].isin(_act_st)])
+            _ac_active = all_clients[all_clients["status"].isin(_act_st)]
+            _active_ids = _person_ids(_ac_active)
+            _active_names = set(
+                _ac_active["first_name"].fillna("").astype(str).str.lower().str.strip()
+                + "|" + _ac_active["last_name"].fillna("").astype(str).str.lower().str.strip()
+            )
             _lnm = (lost_df["first_name"].fillna("").astype(str).str.lower().str.strip()
                     + "|" + lost_df["last_name"].fillna("").astype(str).str.lower().str.strip())
-            _drop = pd.Series(False, index=lost_df.index)
-            if "email" in lost_df.columns:
-                _lem = lost_df["email"].fillna("").astype(str).str.lower().str.strip()
-                _drop = _drop | ((_lnm + "|e:" + _lem).isin(_active_ids) & (_lem != ""))
-            if "phone" in lost_df.columns:
-                _lph = lost_df["phone"].fillna("").astype(str).str.replace(r"[^0-9]", "", regex=True).str[-10:]
-                _drop = _drop | ((_lnm + "|p:" + _lph).isin(_active_ids) & (_lph.str.len() == 10))
-            lost_df = lost_df[~_drop]
+            _lem = (lost_df["email"].fillna("").astype(str).str.lower().str.strip()
+                    if "email" in lost_df.columns else pd.Series("", index=lost_df.index))
+            _lph = (lost_df["phone"].fillna("").astype(str).str.replace(r"[^0-9]", "", regex=True).str[-10:]
+                    if "phone" in lost_df.columns else pd.Series("", index=lost_df.index))
+            _has_contact = (_lem != "") | (_lph.str.len() == 10)
+            # STRONG match: same name AND same email or phone (confident same person).
+            _strong = (((_lnm + "|e:" + _lem).isin(_active_ids) & (_lem != ""))
+                       | ((_lnm + "|p:" + _lph).isin(_active_ids) & (_lph.str.len() == 10)))
+            # FALLBACK: an old terminated row often carries NO email/phone (e.g.
+            # Taylor Cooper's prior plan). With no contact to match on, fall back to
+            # a same-name active match. This can't hit the two-distinct-people case
+            # that motivated the strong match — those (e.g. the two Rhonda Walkers)
+            # DO carry email/phone, so they take the strong path and are kept.
+            _weak = (~_has_contact) & _lnm.isin(_active_names)
+            lost_df = lost_df[~(_strong | _weak)]
     else:
         lost_df = pd.DataFrame()
 
