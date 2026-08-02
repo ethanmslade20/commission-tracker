@@ -833,6 +833,43 @@ def run_report(settings: dict) -> None:
     except Exception as _e:
         print(f"  (AOR-changed override skipped: {_e})")
 
+    # Manually-verified TERMINATIONS (data/manual_lost.json): clients confirmed
+    # terminated via live HealthSherpa that the exports miss — they dropped off the
+    # carrier book entirely AND still read Effectuated in the (stale) HS export, so
+    # neither carrier-truth nor the export catches them. Force them Cancelled so they
+    # leave the active book, with a real term date. Curated + additive, like
+    # aor_changed above; distinct from it because these are genuine LAPSES (still
+    # your AOR), not agent-switches. (Ethan 2026-08-01 absent-set audit.)
+    try:
+        _mlp = Path(__file__).resolve().parent.parent / "data" / "manual_lost.json"
+        if _mlp.exists() and {"first_name", "last_name"}.issubset(all_clients.columns):
+            _ml = json.loads(_mlp.read_text())
+            _mlk = {re.sub(r"[^a-z]", "", (str(i.get("last", "")) + str(i.get("first", ""))).lower()): i
+                    for i in _ml}
+            def _mk(r):
+                return re.sub(r"[^a-z]", "", (str(r.get("last_name", "")) + str(r.get("first_name", ""))).lower())
+            _mmask = all_clients.apply(lambda r: _mk(r) in _mlk, axis=1)
+            if _mmask.any():
+                for _i in all_clients.index[_mmask]:
+                    _it = _mlk[_mk(all_clients.loc[_i])]
+                    all_clients.at[_i, "status"] = "Cancelled"
+                    all_clients.at[_i, "cancel_reason"] = "Lapsed — verified terminated (live HS)"
+                    _td = pd.to_datetime(_it.get("term_date"), errors="coerce")
+                    if pd.notna(_td) and "term_date" in all_clients.columns:
+                        all_clients.at[_i, "term_date"] = _td
+                    if "term_estimated" in all_clients.columns:
+                        all_clients.at[_i, "term_estimated"] = False
+                    # Keep loss_basis EMPTY (NOT "sync"/"active") so these DO surface on
+                    # Re-Engage as call-backs: both the upload-text gate (~L613) and the
+                    # dashboard Re-Engage page EXCLUDE loss_basis in ("sync","active").
+                    # assign_loss_months later also sets "" for these real-term rows;
+                    # setting "" here keeps the intent right if this block ever moves.
+                    if "loss_basis" in all_clients.columns:
+                        all_clients.at[_i, "loss_basis"] = ""
+                print(f"  Manual-lost override: marked {int(_mmask.sum())} verified-terminated client(s) Cancelled")
+    except Exception as _e:
+        print(f"  (manual-lost override skipped: {_e})")
+
     # AOR'd = gone (matches the agent site). A client on HealthSherpa's own AOR at-risk
     # export (input/aor_at_risk.csv — a list of Federal Exchange IDs = ffm_app_id) whose
     # agent-of-record now shows ANOTHER agent is marked Cancelled ("AOR taken") so they
