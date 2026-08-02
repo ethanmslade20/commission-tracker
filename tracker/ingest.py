@@ -412,8 +412,14 @@ def ingest_file(
 
     snapshot_dir.mkdir(parents=True, exist_ok=True)
 
-    # Non-HealthSherpa sources: dedup against HS before saving
-    if source != "healthsherpa":
+    # Non-HealthSherpa sources: dedup against HS before saving — EXCEPT state-
+    # exchange (access) books. build_all_clients already collapses a person's HS +
+    # access rows by name_key (verified: no double-count), so the dedup is redundant
+    # here and actively strips the ACTIVE access signal from GA/IL clients who also
+    # carry an old (often termed) HS row — shrinking the fresh book (198->16) so the
+    # partial-book guard below then rejects it (16 vs 208). Keep every access row so
+    # the fresh state-exchange export ingests and those clients stay counted.
+    if source not in ("healthsherpa", "access"):
         df = _dedup_against_healthsherpa(df, month_str, snapshot_dir)
 
     # Use the CSV stem so multiple files of the same source type don't overwrite
