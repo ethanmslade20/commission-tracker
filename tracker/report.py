@@ -1089,14 +1089,25 @@ def run_report(settings: dict) -> None:
         if _acc_keys and not all_clients.empty and "name_key" in all_clients.columns:
             _acc_blank = (all_clients.get("cancel_reason", pd.Series("", index=all_clients.index))
                           .fillna("").astype(str).str.strip() == "")
-            _acc_restore = (all_clients["status"].isin(["Cancelled", "Terminated"])
-                            & _acc_blank & all_clients["name_key"].isin(_acc_keys))
-            if _acc_restore.any():
-                all_clients.loc[_acc_restore, "status"] = "Effectuated"
-                all_clients.loc[_acc_restore, "term_date"] = pd.NaT
+            # The book is PER-POLICY, so a plan-switcher can hold an active plan AND
+            # an old lapsed one. Restoring the lapsed row for someone who is ALREADY
+            # active would create a duplicate active policy (double-count). So only
+            # restore people who are currently FULLY lost (no active row), and flip at
+            # most ONE row each.
+            _acc_active_now = set(all_clients.loc[
+                all_clients["status"].isin(list(_ACC_ACTIVE)), "name_key"].dropna())
+            _acc_cand = (all_clients["status"].isin(["Cancelled", "Terminated"])
+                         & _acc_blank
+                         & all_clients["name_key"].isin(_acc_keys)
+                         & ~all_clients["name_key"].isin(_acc_active_now))
+            _acc_idx = all_clients.index[_acc_cand]
+            if len(_acc_idx):
+                _acc_first = all_clients.loc[_acc_idx].drop_duplicates("name_key").index
+                all_clients.loc[_acc_first, "status"] = "Effectuated"
+                all_clients.loc[_acc_first, "term_date"] = pd.NaT
                 if "term_estimated" in all_clients.columns:
-                    all_clients.loc[_acc_restore, "term_estimated"] = False
-                print(f"  State-exchange re-activation: restored {int(_acc_restore.sum())} "
+                    all_clients.loc[_acc_first, "term_estimated"] = False
+                print(f"  State-exchange re-activation: restored {len(_acc_first)} "
                       f"GA/IL-enrolled client(s) wrongly lapsed by carrier-truth")
     except Exception as _e:
         print(f"  (state-exchange re-activation skipped: {_e})")
