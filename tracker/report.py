@@ -1057,6 +1057,71 @@ def run_report(settings: dict) -> None:
         if _n_switch:
             print(f"  Plan-switch cleanup: collapsed {_n_switch} older duplicate active policy(ies)")
 
+    # DUPLICATE-PERSON COLLAPSE (double-count fix, Ethan 2026-08-02). The sid-aware
+    # _person_key_series above SPLITS one person into separate keys whenever they hold
+    # >=2 active rows with distinct subscriber ids — right for same-name STRANGERS,
+    # wrong for ONE person who switched carriers (old brand lingers, or carrier-truth
+    # re-added a stale portal policy whose plan-year term date hasn't caught up) or has
+    # a duplicate same-carrier enrollment (two app_ids/sids, same plan). A person holds
+    # only ONE active major-medical marketplace plan, so within a single name+state keep
+    # the current row (latest current_effective) and term the rest "Plan switch".
+    # SAFETY: two SAME-carrier rows with DIFFERENT eff dates and NO shared id
+    # (app_id/sid/email/phone) are left alone — preserves the same-name-collision guard.
+    if not all_clients.empty and "status" in all_clients.columns:
+        _ACT_DC = {"Effectuated", "PendingEffectuation", "PendingFollowups"}
+        _nm_dc = all_clients.apply(
+            lambda r: re.sub(r"[^a-z]", "", f"{r.get('first_name','')}{r.get('last_name','')}".lower()), axis=1)
+        _st_dc = all_clients.get("state", pd.Series("", index=all_clients.index)).fillna("").astype(str).str.lower().str.strip()
+        _key_dc = _nm_dc + "@" + _st_dc
+        _am_dc = all_clients["status"].isin(_ACT_DC)
+        _eff_dc = pd.to_datetime(all_clients.get("effective_date"), errors="coerce")
+        _cur_dc = pd.to_datetime(all_clients.get("current_effective"), errors="coerce")
+        _cur_dc = _cur_dc.where(_cur_dc.notna(), _eff_dc)
+        _car_dc = all_clients.get("carrier", pd.Series("", index=all_clients.index)).astype(str).str.lower()
+        _sid_dc = all_clients.get("ffm_subscriber_id", pd.Series("", index=all_clients.index)).astype(str).str.replace(r"[^0-9]", "", regex=True)
+        _app_dc = all_clients.get("ffm_app_id", pd.Series("", index=all_clients.index)).astype(str).str.replace(r"[^0-9]", "", regex=True)
+        _em_dc = all_clients.get("email", pd.Series("", index=all_clients.index)).fillna("").astype(str).str.lower().str.strip()
+        _ph_dc = all_clients.get("phone", pd.Series("", index=all_clients.index)).astype(str).str.replace(r"[^0-9]", "", regex=True).str[-10:]
+
+        def _same_person_dc(i, j):
+            if _app_dc[i] and _app_dc[i] == _app_dc[j]: return True    # same FFM application
+            if _sid_dc[i] and _sid_dc[i] == _sid_dc[j]: return True    # same subscriber id
+            if _em_dc[i] and _em_dc[i] == _em_dc[j]:    return True
+            if _ph_dc[i] and _ph_dc[i] == _ph_dc[j]:    return True
+            if _car_dc[i] != _car_dc[j]:                return True    # cross-carrier switch
+            return bool(_eff_dc[i] == _eff_dc[j])                      # same carrier: dup only if identical eff
+
+        _n_dc = 0
+        for _kv, _cnt in _key_dc[_am_dc].value_counts().items():
+            if _cnt < 2 or _kv.startswith("@"):
+                continue
+            _idxs = list(all_clients.index[_am_dc & (_key_dc == _kv)])
+            _clusters = []
+            for _i in _idxs:
+                for _cl in _clusters:
+                    if any(_same_person_dc(_i, _j) for _j in _cl):
+                        _cl.append(_i); break
+                else:
+                    _clusters.append([_i])
+            for _cl in _clusters:
+                if len(_cl) < 2:
+                    continue
+                _newest = max(_cl, key=lambda k: (pd.notna(_cur_dc[k]),
+                                                  _cur_dc[k] if pd.notna(_cur_dc[k]) else pd.Timestamp.min))
+                for _i in _cl:
+                    if _i == _newest:
+                        continue
+                    all_clients.at[_i, "status"] = "Terminated"
+                    all_clients.at[_i, "cancel_reason"] = "Plan switch"
+                    all_clients.at[_i, "term_estimated"] = True
+                    if "term_date" in all_clients.columns and pd.isna(
+                            pd.to_datetime(all_clients.at[_i, "term_date"], errors="coerce")):
+                        all_clients.at[_i, "term_date"] = _cur_dc[_newest]
+                    _n_dc += 1
+        if _n_dc:
+            print(f"  Duplicate-person collapse: termed {_n_dc} redundant active policy(ies) "
+                  f"(cross-carrier switch / same-carrier duplicate the sid-split pass missed)")
+
     # STATE-EXCHANGE RE-ACTIVATION (Ethan 2026-08-01). A client currently enrolled
     # in a state-based-marketplace book (Georgia Access / Get Covered IL — source=
     # access, "Report a Change" = active) has active OFF-FFM coverage that never
