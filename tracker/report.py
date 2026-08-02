@@ -829,7 +829,20 @@ def run_report(settings: dict) -> None:
                 # Nassy", not a generic label; fall back to generic otherwise.
                 all_clients.loc[_m, "policy_aor"] = _keys[_m].map(_chg_agents).fillna(
                     "AOR changed (another agent)")
-                print(f"  AOR-changed override: marked {int(_m.sum())} client(s) as another agent's")
+                # ALSO force them Cancelled so they leave the active count. "All Active"
+                # is filtered by STATUS only (line ~1231), NOT by policy_aor, and the
+                # AOR-at-risk block below only Cancels clients on HealthSherpa's at-risk
+                # export. So a live-verified AOR-take that the export misses (e.g. Samuel
+                # Riley, Katie Johnson) would otherwise linger in the active count with
+                # just a stamped policy_aor. Carrier-truth skips already-Cancelled rows
+                # (it only reconciles status.isin(_ACTIVE)), so this sticks; and the book
+                # race guard already excludes aor_changed_keys() from re-activation.
+                if "cancel_reason" not in all_clients.columns:
+                    all_clients["cancel_reason"] = ""
+                all_clients.loc[_m, "status"] = "Cancelled"
+                all_clients.loc[_m, "cancel_reason"] = "AOR taken"
+                print(f"  AOR-changed override: marked {int(_m.sum())} client(s) as "
+                      f"another agent's (Cancelled, out of active count)")
     except Exception as _e:
         print(f"  (AOR-changed override skipped: {_e})")
 
