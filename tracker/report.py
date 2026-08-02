@@ -1057,6 +1057,50 @@ def run_report(settings: dict) -> None:
         if _n_switch:
             print(f"  Plan-switch cleanup: collapsed {_n_switch} older duplicate active policy(ies)")
 
+    # STATE-EXCHANGE RE-ACTIVATION (Ethan 2026-08-01). A client currently enrolled
+    # in a state-based-marketplace book (Georgia Access / Get Covered IL — source=
+    # access, "Report a Change" = active) has active OFF-FFM coverage that never
+    # appears in an FFM carrier portal book. build_all_clients collapses such a
+    # person to source="healthsherpa" whenever they ALSO carry an old HS row, so
+    # carrier-truth's access-skip (_ffm_mask) can't protect them: carrier-truth
+    # matches their OLD, termed FFM policy in the carrier export and cancels the
+    # whole person (e.g. Calvin Copeland/Oscar, Lavelva Ellerson/Ambetter). Restore
+    # anyone the access book still lists ACTIVE — but ONLY carrier-truth lapses
+    # (Cancelled with a still-blank cancel_reason at this point). AOR-taken,
+    # verification-expired, manual-lost and plan-switch all stamp a cancel_reason
+    # above, so they're excluded and never restored. Read the RAW input books
+    # (dry_run, no write) so the ingest HS-dedup can't hide the evidence. Runs after
+    # every cancel rule and before loss-dating, so it's the final word on status and
+    # restored clients get no loss date. Only flips existing rows (never adds), so it
+    # cannot double-count.
+    try:
+        from tracker.config import load_carrier_configs, load_full_carrier_config
+        from tracker.ingest import ingest_file as _ingest_acc, detect_source as _detect_acc
+        _acc_sc = load_carrier_configs(settings["carrier_config_path"])
+        _acc_fc = load_full_carrier_config(settings["carrier_config_path"])
+        _ACC_ACTIVE = {"Effectuated", "PendingEffectuation", "PendingFollowups"}
+        _acc_keys = set()
+        for _bp in sorted(Path(settings["input_dir"]).glob("*.csv")):
+            if _detect_acc(_bp.name, _acc_sc) != "access":
+                continue
+            _, _adf = _ingest_acc(_bp, _acc_sc, snapshot_dir, dry_run=True, full_config=_acc_fc)
+            if _adf is not None and {"name_key", "status"}.issubset(_adf.columns):
+                _acc_keys |= set(_adf.loc[_adf["status"].isin(_ACC_ACTIVE), "name_key"].dropna())
+        if _acc_keys and not all_clients.empty and "name_key" in all_clients.columns:
+            _acc_blank = (all_clients.get("cancel_reason", pd.Series("", index=all_clients.index))
+                          .fillna("").astype(str).str.strip() == "")
+            _acc_restore = (all_clients["status"].isin(["Cancelled", "Terminated"])
+                            & _acc_blank & all_clients["name_key"].isin(_acc_keys))
+            if _acc_restore.any():
+                all_clients.loc[_acc_restore, "status"] = "Effectuated"
+                all_clients.loc[_acc_restore, "term_date"] = pd.NaT
+                if "term_estimated" in all_clients.columns:
+                    all_clients.loc[_acc_restore, "term_estimated"] = False
+                print(f"  State-exchange re-activation: restored {int(_acc_restore.sum())} "
+                      f"GA/IL-enrolled client(s) wrongly lapsed by carrier-truth")
+    except Exception as _e:
+        print(f"  (state-exchange re-activation skipped: {_e})")
+
     # Loss dating: every gone client (AOR-taken, verification-expired, undated
     # HealthSherpa cancellation) that carries no cancel date gets one. We date it to
     # the month his COMMISSION on them stopped (money doesn't lie) — falling back to
