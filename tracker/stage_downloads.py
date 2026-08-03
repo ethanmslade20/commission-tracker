@@ -30,7 +30,12 @@ _DL = Path.home() / "Downloads"
 _STATE = _ROOT / "data" / ".staged_downloads.json"
 _LOG = Path.home() / "Library" / "Logs" / "commission-tracker-downloads.log"
 _MIN_AGE_S = 15          # let the browser finish writing
-_HS_MIN_ROWS = 1000      # full-book export sanity floor (partial = ~170)
+_HS_MIN_ROWS = 1000      # absolute floor: a "Last 30 days" partial is ~170
+_HS_MIN_FRACTION = 0.85  # relative floor: reject an export smaller than 85% of the
+                         # current book. Catches partials that clear the absolute
+                         # floor — e.g. an export with "Include unsubmitted search &
+                         # claimed applications" UNCHECKED drops ~29% (1,178 vs 1,656)
+                         # yet is still >1000, so the fixed floor alone missed it.
 
 
 def _log(msg):
@@ -93,19 +98,39 @@ def main():
         rows = body.count("\n") - 1
         from tracker.config import get_agent
         _npn = get_agent()["npn"]
+        # Relative floor: compare against the book we last staged. A partial export
+        # that clears the absolute floor (missing claimed/AOR apps → ~29% short) is
+        # caught here where a fixed number can't see it. Grows/self-heals as the book
+        # grows; a bigger export always passes, so the correct full export is never
+        # blocked.
+        _hs_dest = _ROOT / "input" / "healthsherpa.csv"
+        _base = 0
+        if _hs_dest.exists():
+            try:
+                _base = sum(1 for _ in open(_hs_dest, errors="replace")) - 1
+            except Exception:
+                _base = 0
+        _rel_floor = int(_base * _HS_MIN_FRACTION) if _base > 0 else 0
         if _npn not in body:
             _log(f"REJECTED foreign HealthSherpa export (no NPN {_npn} inside): {hs.name}")
             _text(f"⚠️ A HealthSherpa export landed in Downloads that isn't YOUR book "
                   f"(your NPN isn't in it) — probably another agent's audit file. "
                   f"Not uploaded. Move it to the audit folder instead.")
-        elif rows >= _HS_MIN_ROWS:
-            shutil.copy(hs, _ROOT / "input" / "healthsherpa.csv")
-            staged.append(f"HealthSherpa ({rows} rows)")
-        else:
-            _log(f"REJECTED partial HealthSherpa export: {hs.name} ({rows} rows)")
+        elif rows < _HS_MIN_ROWS:
+            _log(f"REJECTED partial HealthSherpa export: {hs.name} ({rows} rows < {_HS_MIN_ROWS} floor)")
             _text(f"⚠️ Your HealthSherpa export only has {rows} clients — looks like "
                   f"the Date Range was 'Last 30 days'. Re-export with Custom "
-                  f"01/01/2025 → today (both boxes). Nothing was uploaded.")
+                  f"01/01/2025 → today (both boxes checked). Nothing was uploaded.")
+        elif _rel_floor and rows < _rel_floor:
+            _log(f"REJECTED short HealthSherpa export: {hs.name} ({rows} rows < {_rel_floor} "
+                 f"= {_HS_MIN_FRACTION:.0%} of last book {_base}) — likely missing claimed/AOR apps")
+            _text(f"⚠️ Your HealthSherpa export has {rows} clients but your book was {_base} — "
+                  f"missing ~{_base - rows}. You likely left 'Include unsubmitted search & "
+                  f"claimed applications' UNCHECKED. Re-export with a Custom date range and "
+                  f"BOTH boxes checked. Nothing was uploaded.")
+        else:
+            shutil.copy(hs, _hs_dest)
+            staged.append(f"HealthSherpa ({rows} rows)")
         mark(hs)
 
     # Ambetter zip → newest policies_*.csv inside
