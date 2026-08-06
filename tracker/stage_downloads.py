@@ -64,6 +64,24 @@ def _newest(pattern):
     return max(files, key=lambda p: p.stat().st_mtime) if files else None
 
 
+def _archived_yes(src, is_text=False):
+    """How many rows have archived == 'Yes' in an HS export. Returns -1 if there's no
+    'archived' column (can't tell). Used to catch a pull left on 'Archived = Not archived',
+    which silently drops archived-but-active clients (found 2026-08-06: 'Not archived' =
+    1,030 effectuated vs 'All' = 1,041, matching HS's live count)."""
+    import csv, io
+    try:
+        f = io.StringIO(src) if is_text else open(src, errors="replace")
+        r = csv.reader(f)
+        header = next(r)
+        if "archived" not in header:
+            return -1
+        i = header.index("archived")
+        return sum(1 for row in r if len(row) > i and row[i].strip().lower() == "yes")
+    except Exception:
+        return -1
+
+
 def main():
     # macOS TCC: launchd jobs need Full Disk Access (System Settings) to read
     # ~/Downloads. Without it, log the denial loudly instead of silently seeing
@@ -111,6 +129,11 @@ def main():
             except Exception:
                 _base = 0
         _rel_floor = int(_base * _HS_MIN_FRACTION) if _base > 0 else 0
+        # Archived-completeness: a pull left on "Archived = Not archived" is only ~57 rows
+        # short (well inside the 85% floor above), so the row guards can't see it — but it
+        # silently drops archived-but-active clients. Catch it by the archived column.
+        _base_arch = _archived_yes(_hs_dest)           # archived clients in the current book
+        _new_arch = _archived_yes(body, is_text=True)  # archived clients in the incoming export
         if _npn not in body:
             _log(f"REJECTED foreign HealthSherpa export (no NPN {_npn} inside): {hs.name}")
             _text(f"⚠️ A HealthSherpa export landed in Downloads that isn't YOUR book "
@@ -128,6 +151,13 @@ def main():
                   f"missing ~{_base - rows}. You likely left 'Include unsubmitted search & "
                   f"claimed applications' UNCHECKED. Re-export with a Custom date range and "
                   f"BOTH boxes checked. Nothing was uploaded.")
+        elif _base_arch > 0 and _new_arch == 0:
+            _log(f"REJECTED not-archived HealthSherpa export: {hs.name} (0 archived rows vs "
+                 f"{_base_arch} in last book) — 'Archived status' left on 'Not archived'")
+            _text(f"⚠️ Your HealthSherpa export has 0 archived clients but your book had "
+                  f"{_base_arch}. You left 'Archived status' on 'Not archived' — that drops "
+                  f"archived-but-active clients from the book. Re-export with Archived = All "
+                  f"(Clients page → Archived status → All). Nothing was uploaded.")
         else:
             shutil.copy(hs, _hs_dest)
             staged.append(f"HealthSherpa ({rows} rows)")
