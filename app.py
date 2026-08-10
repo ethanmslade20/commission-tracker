@@ -3105,19 +3105,38 @@ elif page == "Commissions":
         # ── Monthly net chart ────────────────────────────────────────────────
         st.markdown("<br>", unsafe_allow_html=True)
         with st.container(border=True):
-            st.markdown(chart_head("Commission by month", "Net paid (after chargebacks)", "trend"), unsafe_allow_html=True)
+            st.markdown(chart_head("Commission by month", "Net paid — ACA health (green) vs dental (cyan), after chargebacks", "trend"), unsafe_allow_html=True)
             mc = msum.copy()
             mc["Label"] = mc["Month"].dt.strftime("%b %Y")
-            fig = px.bar(mc, x="Label", y="Net", text="Net")
-            fig.update_traces(marker_color=GREEN, marker_cornerradius=8,
-                              texttemplate="$%{text:,.0f}", textposition="outside",
-                              cliponaxis=False)
-            _ymax = float(pd.to_numeric(mc["Net"], errors="coerce").max() or 0)
-            fig.update_layout(height=340, margin=dict(l=10, r=20, t=42, b=10),
-                              bargap=0.45,
+            # Split the monthly net into ACA health vs Dental so each product is visible.
+            # Dental is booked as carrier="Dental" (from the YTD tab) with no chargebacks,
+            # so the ACA-health slice = total net − dental.
+            _dent = (pay[pay["carrier"].astype(str).str.strip().str.lower() == "dental"]
+                     .assign(_M=lambda d: d["payment_month"].dt.to_period("M").dt.to_timestamp())
+                     .groupby("_M")["amount"].sum())
+            mc["Dental"] = mc["Month"].dt.to_period("M").dt.to_timestamp().map(_dent).fillna(0.0)
+            mc["ACA Health"] = (pd.to_numeric(mc["Net"], errors="coerce").fillna(0.0) - mc["Dental"]).clip(lower=0)
+            _tot = mc["ACA Health"] + mc["Dental"]
+            fig = go.Figure()
+            fig.add_trace(go.Bar(x=mc["Label"], y=mc["ACA Health"], name="ACA Health",
+                                 marker_color=GREEN,
+                                 hovertemplate="ACA Health: $%{y:,.0f}<extra></extra>"))
+            fig.add_trace(go.Bar(x=mc["Label"], y=mc["Dental"], name="Dental",
+                                 marker_color=CYAN,
+                                 hovertemplate="Dental: $%{y:,.0f}<extra></extra>"))
+            fig.add_trace(go.Scatter(x=mc["Label"], y=_tot, mode="text",
+                                     text=[f"${v:,.0f}" for v in _tot],
+                                     textposition="top center",
+                                     textfont=dict(color="#cbd5e1"),
+                                     showlegend=False, hoverinfo="skip"))
+            _ymax = float(pd.to_numeric(_tot, errors="coerce").max() or 0)
+            fig.update_layout(height=360, margin=dict(l=10, r=20, t=54, b=10),
+                              barmode="stack", bargap=0.45,
+                              legend=dict(orientation="h", yanchor="bottom", y=1.02,
+                                          xanchor="right", x=1, font=dict(color="#cbd5e1")),
                               paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
                               xaxis_title=None, yaxis_title=None, font_color="#cbd5e1",
-                              yaxis=dict(range=[0, _ymax * 1.18]))
+                              yaxis=dict(range=[0, _ymax * 1.20]))
             show_chart(fig)
 
         # ── Each carrier by month (trend + exact numbers) ─────────────────────
