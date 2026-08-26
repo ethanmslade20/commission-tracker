@@ -39,6 +39,9 @@ EXTRA_COLS = [
     "net_premium",
     "subsidy",
     "applicant_count",
+    # Tax household size (drives the FPL threshold for subsidy eligibility) — used by
+    # the "$0 Plan Review" page to flag clients near the 100%-FPL floor. (Ethan 2026-08-26.)
+    "household_size",
     "missing_count_flag",
     "submission_date",
     "created_date",
@@ -58,6 +61,10 @@ EXTRA_COLS = [
     "followup_docs",
     # Current agent of record — used to flag AOR-taken clients on Re-Engage
     "policy_aor",
+    # Ownership signal — did Ethan ever enroll/submit this? Gates AOR-taken to
+    # clients he actually had, so never-mine noise isn't counted (Ethan 2026-08-15).
+    "npn_used",
+    "submitting_agent_name",
     # Last Marketplace sync — approximates WHEN the AOR change registered
     "last_ede_sync",
     # Which export this row came from ("healthsherpa" / "access"). Lets the

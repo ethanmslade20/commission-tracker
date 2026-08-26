@@ -36,6 +36,15 @@ _HS_MIN_FRACTION = 0.85  # relative floor: reject an export smaller than 85% of 
                          # floor — e.g. an export with "Include unsubmitted search &
                          # claimed applications" UNCHECKED drops ~29% (1,178 vs 1,656)
                          # yet is still >1000, so the fixed floor alone missed it.
+_HS_ARCH_FRACTION = 0.85  # archived-retention floor. Archived clients are older/terminated,
+                          # and a full book keeps essentially all of them (they rarely
+                          # un-archive). A short DATE-WINDOW export ("Last 12 months") drops
+                          # the OLDEST clients first, so its archived count collapses (50 vs
+                          # 133 = 38%) while total rows still clear the 85% row floor because
+                          # recent clients backfill. Reject when archived retention falls below
+                          # this — the row floors alone can't see a windowed export. (Ethan
+                          # 2026-08-25: a "Last 12 months" pull dropped 147 older clients and
+                          # nearly false-texted 2 of them as AOR losses.)
 
 
 def _log(msg):
@@ -158,6 +167,15 @@ def main():
                   f"{_base_arch}. You left 'Archived status' on 'Not archived' — that drops "
                   f"archived-but-active clients from the book. Re-export with Archived = All "
                   f"(Clients page → Archived status → All). Nothing was uploaded.")
+        elif _base_arch > 0 and _new_arch < int(_base_arch * _HS_ARCH_FRACTION):
+            _log(f"REJECTED windowed HealthSherpa export: {hs.name} ({_new_arch} archived vs "
+                 f"{_base_arch} in last book = {_new_arch/_base_arch:.0%}, below "
+                 f"{_HS_ARCH_FRACTION:.0%}) — Date Range too short (drops the oldest clients)")
+            _text(f"⚠️ Your HealthSherpa export only has {_new_arch} archived clients but your "
+                  f"book had {_base_arch} — the Date Range looks too short (e.g. 'Last 12 "
+                  f"months'), which silently drops your oldest ~{_base - rows} clients. "
+                  f"Re-export with Custom 01/01/2025 → today, Archived = All, both boxes "
+                  f"checked. Nothing was uploaded.")
         else:
             shutil.copy(hs, _hs_dest)
             staged.append(f"HealthSherpa ({rows} rows)")

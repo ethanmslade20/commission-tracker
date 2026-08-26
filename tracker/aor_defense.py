@@ -42,9 +42,13 @@ def _load_json(path, default):
         return default
 
 
-def build_aor_defense(risk_path=_RISK_PATH, hs_path=_HS_PATH, handled_path=_HANDLED_PATH):
+def build_aor_defense(risk_path=_RISK_PATH, hs_path=_HS_PATH, handled_path=_HANDLED_PATH,
+                      appointments=None):
     """Merge the scraped at-risk list with the HealthSherpa export into the
-    defense table. Returns None if the scraped list isn't available."""
+    defense table. Returns None if the scraped list isn't available.
+    appointments: {STATE: [carrier keywords]} — when given, rows in a non-appointed
+    state/carrier are dropped so the page matches Ethan's rule (only counts if it's a
+    state AND carrier he works). (Ethan 2026-08-17.)"""
     risk = _load_json(risk_path, None)
     if not risk:
         return None
@@ -116,6 +120,45 @@ def build_aor_defense(risk_path=_RISK_PATH, hs_path=_HS_PATH, handled_path=_HAND
         sub = str(row.get("submitting_agent_name", "") or "").lower()
         return _fn_low in sub and _ln_low in sub
 
+    # Never-held guard (Ethan 2026-08-25, corrected): a foreign policy_aor is only a real steal
+    # if the AOR was EVER his. Mirror report.py: scan ALL snapshots for rows whose policy_aor
+    # named HIM; a client never in that set was never his (claim or no claim) and must not be
+    # listed as taken (John/Cynthia). A client whose AOR was his in some snapshot IS a real
+    # steal (Laikka Batiste) and stays on the list.
+    import glob as _glob_bn
+    def _aor_is_his_ad(a):
+        al = str(a or "").lower()
+        return (_ETHAN_NPN in str(a)) or (_AGENT["last_name"].lower() in al and _AGENT["first_name"].lower() in al)
+    _his_ids, _his_names = set(), set()
+    for _sp in sorted(_glob_bn.glob(str(_ROOT / "snapshots" / "*healthsherpa*.parquet"))):
+        try:
+            _pdf = pd.read_parquet(_sp)
+        except Exception:
+            continue
+        _plc = {c.lower(): c for c in _pdf.columns}
+        if "policy_aor" not in _plc:
+            continue
+        _hu = _pdf[_plc["policy_aor"]].apply(_aor_is_his_ad)
+        if "ffm_app_id" in _plc:
+            for _v in _pdf.loc[_hu, _plc["ffm_app_id"]].astype(str):
+                _v = re.sub(r"\.0$", "", _v.strip())
+                if _v and _v.lower() != "nan":
+                    _his_ids.add(_v)
+        if "first_name" in _plc and "last_name" in _plc:
+            _his_names.update(zip(
+                _pdf.loc[_hu, _plc["first_name"]].astype(str).str.strip().str.lower(),
+                _pdf.loc[_hu, _plc["last_name"]].astype(str).str.strip().str.lower()))
+    _have_his = bool(_his_ids or _his_names)
+
+    def _never_held(row) -> bool:
+        if not _have_his:
+            return False                      # scan failed → don't suppress any steal
+        _pid = re.sub(r"\.0$", "", str(row.get("ffm_app_id", "") or "").strip())
+        if _pid and _pid.lower() != "nan" and _pid in _his_ids:
+            return False
+        return (str(row.get("first_name", "")).strip().lower(),
+                str(row.get("last_name", "")).strip().lower()) not in _his_names
+
     existing_keys = {_fl_key(r.get("name", "")) for r in risk}
     if len(hs) and "policy_aor" in hs.columns:
         for _, row in hs.reset_index().iterrows():
@@ -125,7 +168,7 @@ def build_aor_defense(risk_path=_RISK_PATH, hs_path=_HS_PATH, handled_path=_HAND
                           and _ETHAN_NPN not in aor
                           and _AGENT["last_name"].lower() not in a_low
                           and _AGENT["first_name"].lower() not in a_low)
-            if not is_foreign or not _ever_mine(row):
+            if not is_foreign or not _ever_mine(row) or _never_held(row):
                 continue
             disp = f"{row.get('first_name','')} {row.get('last_name','')}".strip()
             if not disp or _fl_key(disp) in existing_keys:
@@ -147,6 +190,17 @@ def build_aor_defense(risk_path=_RISK_PATH, hs_path=_HS_PATH, handled_path=_HAND
     # so an old steal can't keep re-dating itself to "fresh" on every re-sync.
     first_seen = _load_json(_FIRST_SEEN_PATH, {})
     _today = pd.Timestamp.today().normalize()
+    # Carrier normalization for the appointed gate: map the FULL issuer to its canonical
+    # brand (AMGP GA→Anthem/Wellpoint, Simply FL→Wellpoint) — same alias table the ingest
+    # uses — so a real loss hiding under a carrier's legal name isn't wrongly dropped.
+    _ALIASES, _norm_car = {}, None
+    if appointments:
+        try:
+            import yaml as _yaml
+            from tracker.ingest import _normalize_carrier as _norm_car
+            _ALIASES = _yaml.safe_load((_ROOT / "config" / "carrier_configs.yaml").read_text()).get("carrier_aliases", {})
+        except Exception:
+            _norm_car = None
     rows = []
     for r in risk:
         xid = str(r.get("exchange_id", "")).strip()
@@ -161,11 +215,17 @@ def build_aor_defense(risk_path=_RISK_PATH, hs_path=_HS_PATH, handled_path=_HAND
         state = r.get("state", "")
         members = int(r.get("members", 1) or 1)
         phone = status = ""
+        _ncar = "__UNKNOWN__"   # snapshot-sourced rows have no full issuer → don't risk hiding a steal
         if m is not None:
             aor = str(m.get("policy_aor", ""))
             if aor.strip() and _ETHAN_NPN not in aor and _AGENT["last_name"].lower() not in aor.lower():
                 taken_by = re.sub(r"\s*\(NPN.*\)", "", aor).strip().title()
-            carrier = str(m.get("issuer", ""))[:34]
+            _full_iss = str(m.get("issuer", ""))
+            carrier = _full_iss[:34]
+            # normalized brand if an alias matches, else the raw full issuer — same value
+            # the report's appointment filter matches against (e.g. SelectHealth, Molina
+            # have no alias but ARE appointed under their raw name).
+            _ncar = (_norm_car(_full_iss, _ALIASES) or _full_iss) if _norm_car else "__UNKNOWN__"
             state = str(m.get("state", ""))
             phone = str(m.get("phone", ""))
             status = str(m.get("policy_status", ""))
@@ -205,6 +265,7 @@ def build_aor_defense(risk_path=_RISK_PATH, hs_path=_HS_PATH, handled_path=_HAND
             "Policy Status": status,
             "Handled": h.get("outcome", ""),
             "Exchange ID": xid,
+            "_ncar": _ncar,
         })
 
     # Persist the frozen first-detection dates for the next run.
@@ -215,6 +276,25 @@ def build_aor_defense(risk_path=_RISK_PATH, hs_path=_HS_PATH, handled_path=_HAND
         pass
 
     df = pd.DataFrame(rows)
+    # Appointed-state/carrier gate (Ethan's rule): only count a taken/at-risk client if
+    # they're in a state AND carrier he actually works. Matches on the NORMALIZED carrier
+    # (from the full issuer) against appointments.yaml — exactly what report._filter_by_appointments
+    # does on the active book, so the page and the book agree. Snapshot-sourced rows (no
+    # export issuer) are kept rather than risk hiding a steal. (Ethan 2026-08-17.)
+    if appointments and not df.empty and "_ncar" in df.columns:
+        def _appt_ok(row):
+            nc = row.get("_ncar")
+            if nc == "__UNKNOWN__":
+                return True
+            st = str(row.get("State", "")).strip().upper()
+            if not st:
+                return True
+            kw = appointments.get(st, [])
+            if not kw:
+                return False            # state he doesn't work
+            return any(str(k).lower() in str(nc).lower() for k in kw)
+        df = df[df.apply(_appt_ok, axis=1)].reset_index(drop=True)
+    df = df.drop(columns=["_ncar"], errors="ignore")
     # Fires first: taken, unhandled, NEWEST steal first (freshest = most
     # winnable). Unknown dates sink to the bottom, never masquerade as day 0.
     df["_open"] = (df["Handled"] == "").astype(int)

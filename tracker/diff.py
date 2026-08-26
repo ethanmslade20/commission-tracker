@@ -168,11 +168,16 @@ def build_all_clients(months: dict) -> pd.DataFrame:
         for col in [
             "client_name", "first_name", "last_name", "carrier",
             "state", "ffm_app_id", "ffm_subscriber_id", "net_premium", "applicant_count",
+            "household_size", "subsidy",   # FPL floor + APTC context for the $0 Plan Review page
             "status", "client_key", "email", "phone", "cancel_notes",
             # HealthSherpa verification follow-ups — carry latest snapshot's values
             "dmi_outstanding", "dmi_expired", "svi_outstanding", "svi_expired", "followup_docs",
             # current agent of record (for AOR-taken detection on Re-Engage)
             "policy_aor", "last_ede_sync",
+            # ownership signal — did Ethan ever enroll/submit this? (poaching changes
+            # policy_aor but leaves npn_used intact, so "last" reliably preserves it).
+            # Used to gate AOR-taken to clients he actually enrolled (Ethan 2026-08-15).
+            "npn_used", "submitting_agent_name",
             # carrier-assigned policy ID (member's card) — most recent plan's
             "policy_number",
         ]
@@ -223,9 +228,10 @@ def build_all_clients(months: dict) -> pd.DataFrame:
     cols = [
         "name_key", "client_key", "first_name", "last_name", "carrier",
         "effective_date", "current_effective", "term_date", "status", "state", "ffm_app_id", "ffm_subscriber_id",
-        "email", "phone", "cancel_notes", "net_premium", "applicant_count", "first_seen", "last_seen", "last_active", "months_on_book",
+        "email", "phone", "cancel_notes", "net_premium", "applicant_count", "household_size", "subsidy", "first_seen", "last_seen", "last_active", "months_on_book",
         "dmi_outstanding", "dmi_expired", "svi_outstanding", "svi_expired", "followup_docs",
         "policy_aor", "last_ede_sync", "policy_number", "submission_date", "source",
+        "npn_used", "submitting_agent_name",
     ]
     return agg[[c for c in cols if c in agg.columns]]
 

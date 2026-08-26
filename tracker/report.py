@@ -470,6 +470,60 @@ def _upload_summary(all_clients, pastdue, snapshot_dir, today=None) -> None:
     def _is_e(v):
         v = str(v or "").lower()
         return _LN in v and _FN in v
+    def _ever_mine(r):
+        # Ethan enrolled/submitted it → his NPN in npn_used, or he's the submitting
+        # agent. Gates AOR-taken to clients he actually had (Ethan 2026-08-15).
+        if NPN and str(NPN) in str(r.get("npn_used", "") or ""):
+            return True
+        return _is_e(r.get("submitting_agent_name", ""))
+    # NEVER-MINE GUARD, authoritative here (Ethan 2026-08-25, corrected): a foreign policy_aor
+    # is only a real loss if the AOR was EVER his. Upstream re-stamps cancel_reason to "AOR
+    # taken — {agent}" for every foreign-AOR row (report.py ~L1452), wiping any earlier label,
+    # so the text-builder recomputes "was the AOR ever his" from the snapshots itself. A client
+    # whose policy_aor was foreign in EVERY snapshot was never his — no one took them over and
+    # he'd never be paid, so they are NOT a loss (claim or no claim). A client whose AOR named
+    # HIM in some snapshot and is foreign now IS a genuine steal (e.g. Laikka Batiste).
+    def _aor_is_his_us(a):
+        al = str(a or "").lower()
+        return (str(NPN) in str(a)) or (_LN in al and _FN in al)
+    _his_ids_us, _his_names_us = set(), set()
+    for _sp in hs:                            # ALL HS snapshots
+        try:
+            _pdf = pd.read_parquet(_sp)
+        except Exception:
+            continue
+        _plc = {c.lower(): c for c in _pdf.columns}
+        if "policy_aor" not in _plc:
+            continue
+        _hu = _pdf[_plc["policy_aor"]].apply(_aor_is_his_us)
+        if "ffm_app_id" in _plc:
+            for _v in _pdf.loc[_hu, _plc["ffm_app_id"]].astype(str):
+                _v = re.sub(r"\.0$", "", _v.strip())
+                if _v and _v.lower() != "nan":
+                    _his_ids_us.add(_v)
+        if "first_name" in _plc and "last_name" in _plc:
+            _his_names_us.update(zip(
+                _pdf.loc[_hu, _plc["first_name"]].astype(str).str.strip().str.lower(),
+                _pdf.loc[_hu, _plc["last_name"]].astype(str).str.strip().str.lower()))
+    _have_hist = bool(_his_ids_us or _his_names_us)
+
+    def _ever_his_aor(r):
+        if not _have_hist:
+            return True                       # scan failed → NEVER suppress a steal
+        _pid = re.sub(r"\.0$", "", str(r.get("ffm_app_id") or "").strip())
+        if _pid and _pid.lower() != "nan" and _pid in _his_ids_us:
+            return True
+        return (str(r.get("first_name") or "").strip().lower(),
+                str(r.get("last_name") or "").strip().lower()) in _his_names_us
+
+    def _foreign_aor_v(a):
+        al = str(a or "").strip().lower()
+        return al not in ("", "none", "nan") and str(NPN) not in str(a) and not _is_e(a)
+
+    def _is_never_mine(r):
+        # foreign AOR now + his NPN on the record + the AOR was NEVER his in any snapshot.
+        return (_foreign_aor_v(r.get("policy_aor")) and _ever_mine(r)
+                and not _ever_his_aor(r))
     def _key(f, l):
         s = unicodedata.normalize("NFKD", f"{f} {l}").encode("ascii", "ignore").decode().lower()
         return re.sub(r"[^a-z]", "", s)
@@ -489,24 +543,33 @@ def _upload_summary(all_clients, pastdue, snapshot_dir, today=None) -> None:
             pass
         return bool(v)
 
-    lost, vexp, aor, pol, polmem = {}, {}, {}, set(), {}
+    lost, vexp, aor, pol, polmem, polname = {}, {}, {}, set(), {}, {}
     lost_term = {}     # name_key -> real loss date (term_date), for freshness trim
     lost_estimated = {}  # name_key -> was the term date estimated/unconfirmed
     lost_basis = {}    # name_key -> how the loss date was derived (diff.assign_loss_months):
                        # "" / "commission" = confirmed; "sync" / "active" = inferred-recency
     active_mine = {}   # currently active AND credited to the agent — win-back proof
+    taken_pids = set()  # policy ids whose AOR is another agent — never a NEW SALE of his
     for _, r in all_clients.iterrows():
         f, l = r.get("first_name", ""), r.get("last_name", "")
         k = _key(f, l)
         if not k:
             continue
+        _never_mine = False
         st = str(r.get("status") or "")
         _reason = str(r.get("cancel_reason") or "")
         if st in ("Cancelled", "Terminated"):
             # Expired DMI/SVI verification ≠ cancelled: coverage is usually still
             # active with a termination date pending, so the client is SAVEABLE
             # (Ahmed Elzubair 2026-07-10 — Effectuated + paid, terming 7/31).
-            if "Verification expired" in _reason:
+            if _is_never_mine(r) or "never mine" in _reason.lower():
+                # Foreign AOR since the client's first appearance — he never held them,
+                # so it isn't a loss. Drop from active silently: no loss bucket, and no
+                # new-sale credit below. Checked by recomputed seen-before (not just the
+                # reason, which upstream re-stamps to "AOR taken — {agent}"). (Ethan
+                # 2026-08-25 — John MacDonald/Cynthia Crowe.)
+                _never_mine = True
+            elif "Verification expired" in _reason:
                 vexp[k] = _disp(f, l)
             elif "AOR taken" in _reason:
                 # taken clients are now reclassified Terminated, but they belong
@@ -522,13 +585,23 @@ def _upload_summary(all_clients, pastdue, snapshot_dir, today=None) -> None:
             a = "" if pd.isna(_a) else str(_a)
             # A missing AOR is unknown, NOT another agent — "nan"/"none" text
             # slipping through here caused false "taken" alerts (2026-07-06).
-            if a.strip().lower() not in ("", "none", "nan") and NPN not in a and not _is_e(a):
-                aor[k] = _disp(f, l)
+            _foreign = a.strip().lower() not in ("", "none", "nan") and NPN not in a and not _is_e(a)
+            if _foreign and _ever_mine(r) and not _is_never_mine(r):
+                aor[k] = _disp(f, l)          # taken from me — I enrolled AND held them before
+            elif _foreign and _ever_mine(r):
+                _never_mine = True            # claimed someone else's app OR brand-new foreign →
+                                              # never his; drop, don't credit as a sale (2026-08-25)
+            elif _foreign:
+                pass                          # foreign AOR but never mine → not my client,
+                                              # don't report as a loss (Ethan's rule 2026-08-15)
             else:
                 active_mine[k] = _disp(f, l)
         pid = re.sub(r"\.0$", "", str(r.get("ffm_app_id") or "").strip())
         if pid and pid.lower() != "nan":
             pol.add(pid)
+            polname.setdefault(pid, _disp(f, l))   # first name seen on the policy (primary)
+            if k in aor or _never_mine:   # taken, or never his → not a new sale of his
+                taken_pids.add(pid)
             # NaN is truthy, so `int(nan or 1)` raises ValueError and kills the
             # whole summary — treat missing applicant_count as 1 explicitly.
             _n = pd.to_numeric(r.get("applicant_count"), errors="coerce")
@@ -585,6 +658,27 @@ def _upload_summary(all_clients, pastdue, snapshot_dir, today=None) -> None:
     # re-win can announce afresh. (Ethan 2026-07-25)
     base_wb = set(_load("winback_alerted.json") or [])
 
+    # Day-total baselines: freeze the book as it stood at the START OF TODAY (opening
+    # policies + the open lost/taken/past-due sets). Every text that day counts new
+    # sales AND new losses from this opening, so multiple same-day pulls show the
+    # running DAY total, not that pull's delta. Resets automatically at midnight (new
+    # date → new opening book). The per-run known_*.json baselines still update every
+    # run, so cross-day de-dup is unaffected. (Ethan 2026-08-13.)
+    _day_file = _data / "day_baseline.json"
+    _today_str = today.strftime("%Y-%m-%d")
+    try:
+        _db = json.loads(_day_file.read_text())
+    except Exception:
+        _db = {}
+    if _db.get("date") == _today_str:            # later pull today → keep this morning's opening
+        day_start_pol = set(_db.get("policies") or [])
+        day_lost = _db.get("lost", base_lost)
+        day_aor  = _db.get("aor", base_aor)
+        day_pd   = _db.get("pastdue", base_pd)
+    else:                                         # first pull today → opening = end of last run
+        day_start_pol = set(base_pol or [])
+        day_lost, day_aor, day_pd = base_lost, base_aor, base_pd
+
     def _new(cur, base):
         return [] if base is None else [v for k, v in cur.items() if k not in base]
     # Only surface cancellations whose REAL loss date is recent (≤45 days) as
@@ -619,14 +713,14 @@ def _upload_summary(all_clients, pastdue, snapshot_dir, today=None) -> None:
         # cancel, not a loss that already happened, so it is not a fresh lead yet.
         _days = (today - td).days
         return 0 <= _days <= _FRESH_LOST_DAYS
-    _new_lost_keys = [] if base_lost is None else [k for k in lost if k not in base_lost]
+    _new_lost_keys = [] if day_lost is None else [k for k in lost if k not in day_lost]
     new_lost   = [lost[k] for k in _new_lost_keys if _fresh_lost(k)]
     stale_lost = [lost[k] for k in _new_lost_keys if not _fresh_lost(k)]
     # Expired verifications share the known_lapsed baseline so a client already
     # texted under either label never re-alerts when they move between buckets.
-    new_vexp = _new(vexp, base_lost)
-    new_aor = _new(aor, base_aor)
-    new_pd = _new(pdue, base_pd)
+    new_vexp = _new(vexp, day_lost)
+    new_aor = _new(aor, day_aor)
+    new_pd = _new(pdue, day_pd)
     # Win-backs: was lost/taken at the last text, now active AND his again.
     # (Ethan 2026-07-08: "if I ever get a person back that was lost or win them
     # back from an AOR I want you to include that in the text".)
@@ -639,8 +733,9 @@ def _upload_summary(all_clients, pastdue, snapshot_dir, today=None) -> None:
                     if k not in aor and k in active_mine and k not in base_wb]
     won_lost = [base_lost[k] for k in won_lost_keys]
     won_aor = [base_aor[k] for k in won_aor_keys]
-    base_pol_set = set(base_pol or [])
-    new_pol = [p for p in pol if p not in base_pol_set]
+    # day-total: new since today's opening, EXCLUDING policies taken by another agent
+    # (an old app that only just reappeared under a foreign AOR is not a new sale).
+    new_pol = [p for p in pol if p not in day_start_pol and p not in taken_pids]
     new_pol_n = 0 if first_run else len(new_pol)
     new_mem = 0 if first_run else sum(polmem.get(p, 1) for p in new_pol)
 
@@ -653,6 +748,12 @@ def _upload_summary(all_clients, pastdue, snapshot_dir, today=None) -> None:
         (_data / "known_aor.json").write_text(json.dumps(aor, indent=2))
         (_data / "known_pastdue.json").write_text(json.dumps(pdue, indent=2))
         (_data / "known_policies.json").write_text(json.dumps(sorted(pol), indent=2))
+        # Persist today's opening book so later same-day pulls keep counting from the
+        # start of the day (idempotent: same sets re-written on same-day runs).
+        _day_file.write_text(json.dumps({
+            "date": _today_str, "policies": sorted(day_start_pol),
+            "lost": day_lost or {}, "aor": day_aor or {}, "pastdue": day_pd or {},
+        }, indent=1))
         (_data / "winback_alerted.json").write_text(
             json.dumps(sorted(base_wb | set(won_lost_keys) | set(won_aor_keys)), indent=1))
         marker.write_text(h)
@@ -665,8 +766,11 @@ def _upload_summary(all_clients, pastdue, snapshot_dir, today=None) -> None:
     def _fmt(names):
         return ", ".join(names[:6]) + (f" +{len(names) - 6} more" if len(names) > 6 else "")
     d = today.strftime("%b %d")
-    lines = [f"HealthSherpa updated · {d}",
-             f"✅ Signed: {new_pol_n} new policies / {new_mem} members"]
+    _new_names = [polname[p] for p in new_pol if polname.get(p)]
+    _signed = f"✅ Signed: {new_pol_n} new policies / {new_mem} members"
+    if _new_names:
+        _signed += f":\n • {_fmt(_new_names)}"
+    lines = [f"HealthSherpa updated · {d}", _signed]
     total = len(new_lost) + len(new_pd) + len(new_aor)
     if total == 0:
         if not new_vexp and not stale_lost:
@@ -883,42 +987,112 @@ def run_report(settings: dict) -> None:
     except Exception as _e:
         print(f"  (manual-lost override skipped: {_e})")
 
-    # AOR'd = gone (matches the agent site). A client on HealthSherpa's own AOR at-risk
-    # export (input/aor_at_risk.csv — a list of Federal Exchange IDs = ffm_app_id) whose
-    # agent-of-record now shows ANOTHER agent is marked Cancelled ("AOR taken") so they
-    # drop out of the active count / book. Blank-AOR (disconnected) ones on the list stay
-    # active — still yours, just needs a reconnect. Refresh by re-exporting the AOR at-risk
-    # list from HealthSherpa (Exports → Quick Exports) into input/aor_at_risk.csv.
-    _risk_p = Path(__file__).resolve().parent.parent / "input" / "aor_at_risk.csv"
-    if _risk_p.exists() and "ffm_app_id" in all_clients.columns and "policy_aor" in all_clients.columns:
+    # AOR-taken = a client Ethan SIGNED UP (his NPN in npn_used, or he submitted it) whose
+    # agent-of-record now shows ANOTHER agent → taken from him, marked Cancelled so he drops
+    # out of the active book. Ethan's rule (2026-08-15, locked in): he does NOT need to have
+    # been paid, and it does NOT depend on HealthSherpa's at-risk flag — "as long as I was
+    # shown as the agent and later another agent took over, it counts." The appointed
+    # state+carrier gate is applied by _filter_by_appointments just below (non-appointed
+    # rows are dropped entirely, so only appointed steals survive). Poaching flips policy_aor
+    # but leaves npn_used = his, so this reliably catches steals while ignoring never-mine
+    # noise. (The AOR at-risk scrape still feeds the AOR Defense tab via aor_defense.py; it's
+    # just no longer the gate for the active-count drop.)
+    if "policy_aor" in all_clients.columns:
         try:
-            _rd = pd.read_csv(_risk_p, dtype=str).fillna("")
-            _idc = next((c for c in _rd.columns
-                         if "exchange id" in c.lower() or c.strip().lower() == "ffm_app_id"), None)
-            if _idc:
-                _rids = {re.sub(r"[^0-9]", "", str(x)) for x in _rd[_idc]} - {""}
-                _cid = all_clients["ffm_app_id"].apply(lambda x: re.sub(r"[^0-9]", "", str(x)))
+            def _foreign_aor(a):
+                al = str(a or "").lower()
+                if not al.strip() or "none" in al:
+                    return False
+                if _NPN and str(_NPN) in str(a):
+                    return False
+                if _LN in al and _FN in al:
+                    return False
+                return True
 
-                def _foreign_aor(a):
-                    al = str(a or "").lower()
-                    if not al.strip() or "none" in al:
-                        return False
-                    if _NPN and str(_NPN) in str(a):
-                        return False
-                    if _LN in al and _FN in al:
-                        return False
+            _mine = pd.Series(False, index=all_clients.index)
+            if "npn_used" in all_clients.columns:
+                _mine |= all_clients["npn_used"].astype(str).str.contains(str(_NPN), na=False, regex=False)
+            if "submitting_agent_name" in all_clients.columns:
+                _sub = all_clients["submitting_agent_name"].astype(str).str.lower()
+                _mine |= (_sub.str.contains(_FN, na=False, regex=False)
+                          & _sub.str.contains(_LN, na=False, regex=False))
+
+            _taken = all_clients["policy_aor"].apply(_foreign_aor) & _mine
+
+            # NEVER-MINE GUARD (Ethan 2026-08-25, corrected): npn_used = his NPN does NOT prove
+            # he ever HELD the client. The ONLY reliable test of a real steal vs. a never-his
+            # client is: was the AOR EVER his in any snapshot? He can CLAIM an application (which
+            # stamps his NPN on it) and never be the agent of record — a claim earns nothing. But
+            # he can also claim one, briefly BE the AOR, then lose it — a genuine steal (e.g.
+            # Laikka Batiste). So "claimed" is NOT the discriminator; AOR history is.
+            #   real steal = foreign AOR now  AND  policy_aor named HIM in some snapshot
+            #   never mine = foreign AOR now  AND  policy_aor was foreign in EVERY snapshot
+            # (John MacDonald / Cynthia Crowe: claimed, foreign from first sight, never his.)
+            def _aor_is_his(a):
+                al = str(a or "").lower()
+                return (str(_NPN) in str(a)) or (_LN in al and _FN in al)
+            _his_ids, _his_names = set(), set()
+            for _sp in sorted(Path(snapshot_dir).glob("*healthsherpa*.parquet")):
+                try:
+                    _pdf = pd.read_parquet(_sp)
+                except Exception:
+                    continue
+                _plc = {c.lower(): c for c in _pdf.columns}
+                if "policy_aor" not in _plc:
+                    continue
+                _hu = _pdf[_plc["policy_aor"]].apply(_aor_is_his)
+                if "ffm_app_id" in _plc:
+                    for _v in _pdf.loc[_hu, _plc["ffm_app_id"]].astype(str):
+                        _v = re.sub(r"\.0$", "", _v.strip())
+                        if _v and _v.lower() != "nan":
+                            _his_ids.add(_v)
+                if "first_name" in _plc and "last_name" in _plc:
+                    _his_names.update(zip(
+                        _pdf.loc[_hu, _plc["first_name"]].astype(str).str.strip().str.lower(),
+                        _pdf.loc[_hu, _plc["last_name"]].astype(str).str.strip().str.lower()))
+
+            def _ever_his_aor(r) -> bool:
+                _pid = re.sub(r"\.0$", "", str(r.get("ffm_app_id") or "").strip())
+                if _pid and _pid.lower() != "nan" and _pid in _his_ids:
                     return True
+                return (str(r.get("first_name") or "").strip().lower(),
+                        str(r.get("last_name") or "").strip().lower()) in _his_names
 
-                _taken = _cid.isin(_rids) & all_clients["policy_aor"].apply(_foreign_aor)
-                if "cancel_reason" not in all_clients.columns:
-                    all_clients["cancel_reason"] = ""
-                all_clients.loc[_taken, "status"] = "Cancelled"
-                all_clients.loc[_taken, "cancel_reason"] = "AOR taken"
-                if int(_taken.sum()):
-                    print(f"  AOR-taken (at-risk list + foreign AOR): marked {int(_taken.sum())} "
-                          f"client(s) Cancelled, out of the active count")
+            # SAFETY: if the "ever his" scan found nothing (unreadable snapshots), do NOT
+            # suppress anything — treat every taken client as a real steal. Never let a scan
+            # failure mass-hide genuine steals.
+            if not _his_ids and not _his_names:
+                _held = pd.Series(True, index=all_clients.index)
+            elif len(all_clients):
+                _held = all_clients.apply(_ever_his_aor, axis=1)
+            else:
+                _held = pd.Series(False, index=all_clients.index)
+            _taken_real  = _taken & _held
+            _taken_never = _taken & ~_held
+
+            if "cancel_reason" not in all_clients.columns:
+                all_clients["cancel_reason"] = ""
+            _active_sts = all_clients["status"].isin(
+                ["Effectuated", "PendingEffectuation", "PendingFollowups"])
+            _newly = int((_taken_real & _active_sts).sum())    # active-count impact (excl. already-gone)
+            _never = int(_taken_never.sum())
+            all_clients.loc[_taken_real, "status"] = "Cancelled"
+            all_clients.loc[_taken_real, "cancel_reason"] = "AOR taken"
+            # Never-mine (foreign AOR that was NEVER credited to his NPN in any snapshot): he
+            # never held them, so they are not his active clients, not a loss, and not "taken
+            # from him". REMOVE from the book — otherwise the downstream re-stamp (~L1452)
+            # relabels them "AOR taken — {agent}" and surfaces them on Re-Engage / AOR Defense
+            # and in the text. Safe: _filter_by_appointments drops rows right below.
+            if _taken_never.any():
+                all_clients = all_clients[~_taken_never].reset_index(drop=True)
+            if _newly:
+                print(f"  AOR-taken (signed by me + foreign AOR; appointed gate applied next): "
+                      f"marked {_newly} active client(s) Cancelled")
+            if _never:
+                print(f"  Never-mine (foreign AOR, never credited to my NPN in any snapshot): "
+                      f"removed {_never} client(s) from the book (not a loss, not reported)")
         except Exception as _e:
-            print(f"  (AOR at-risk rule skipped: {_e})")
+            print(f"  (AOR-taken rule skipped: {_e})")
 
     before_ct    = len(all_clients)
     all_clients  = _filter_by_appointments(all_clients, appointments)
@@ -1359,6 +1533,77 @@ def run_report(settings: dict) -> None:
         missing_df = pd.DataFrame()
         print("  Only one month of data.")
 
+    # Manually-added clients (data/manual_clients.json): active clients Ethan is the
+    # agent of record for but who are in NO export — plans "not submitted through
+    # HealthSherpa" (AOR transfers). They can't come through ingest, so inject them
+    # here as Effectuated — AFTER every filter/override/re-activation and right before
+    # the active split — so nothing drops them. Skips any name_key already present (no
+    # double-count once they show up in a real export; delete them from the JSON then).
+    # Guarded so a bad file can never break the report.
+    try:
+        import json as _json_mc
+        from tracker.ingest import normalize_name
+        _mcp = Path(__file__).resolve().parent.parent / "data" / "manual_clients.json"
+        if _mcp.exists() and "status" in all_clients.columns and not all_clients.empty:
+            _mc = _json_mc.loads(_mcp.read_text())
+            _ACT_MC = {"Effectuated", "PendingEffectuation", "PendingFollowups"}
+            _idx_by_key = {}
+            if "name_key" in all_clients.columns:
+                for _i2, _k2 in all_clients["name_key"].items():
+                    _idx_by_key.setdefault(str(_k2), _i2)
+            _latest = max(months.keys())
+            _added = _react = _already = 0
+            _mrows = []
+            for _c in _mc:
+                _f = str(_c.get("first", "")).strip(); _l = str(_c.get("last", "")).strip()
+                if not (_f and _l):
+                    continue
+                _nk = normalize_name(f"{_f} {_l}")
+                _eff = pd.to_datetime(_c.get("effective"), errors="coerce")
+                _i = _idx_by_key.get(_nk)
+                if _i is not None:
+                    # Already in the roster (from an earlier month). If it got dropped to
+                    # Cancelled/Terminated (they fell off the export), re-activate it; if it's
+                    # already active, leave it (no double-count).
+                    if str(all_clients.at[_i, "status"]) in _ACT_MC:
+                        _already += 1
+                    else:
+                        all_clients.at[_i, "status"] = "Effectuated"
+                        if "cancel_reason" in all_clients.columns: all_clients.at[_i, "cancel_reason"] = ""
+                        if "cancel_notes" in all_clients.columns: all_clients.at[_i, "cancel_notes"] = "manual: active in HealthSherpa (AOR Ethan)"
+                        if "term_date" in all_clients.columns: all_clients.at[_i, "term_date"] = pd.NaT
+                        if "last_seen" in all_clients.columns: all_clients.at[_i, "last_seen"] = _latest
+                        if "source" in all_clients.columns: all_clients.at[_i, "source"] = "manual"
+                        _react += 1
+                    continue
+                _mob = None
+                if pd.notna(_eff):
+                    _mob = max(0, (int(_latest[:4]) - _eff.year) * 12 + (int(_latest[5:7]) - _eff.month))
+                _mrows.append({
+                    "name_key": _nk, "client_key": "", "first_name": _f, "last_name": _l,
+                    "carrier": str(_c.get("carrier", "")).strip(),
+                    "effective_date": _eff, "current_effective": _eff, "term_date": pd.NaT,
+                    "status": "Effectuated", "state": str(_c.get("state", "")).strip().upper(),
+                    "ffm_app_id": "", "ffm_subscriber_id": "", "email": "", "phone": "",
+                    "cancel_reason": "", "cancel_notes": "",
+                    "net_premium": float(_c.get("net_premium", 0) or 0),
+                    "applicant_count": float(_c.get("members", 1) or 1),
+                    "first_seen": (_eff.strftime("%Y-%m") if pd.notna(_eff) else _latest),
+                    "last_seen": _latest, "last_active": _latest, "months_on_book": _mob,
+                    "dmi_outstanding": False, "dmi_expired": False, "svi_outstanding": False,
+                    "svi_expired": False, "followup_docs": "",
+                    "policy_aor": "Ethan Slade (NPN: 21457938)", "last_ede_sync": "",
+                    "policy_number": "", "submission_date": "", "source": "manual",
+                })
+                _added += 1
+            if _mrows:
+                _mdf = pd.DataFrame(_mrows).reindex(columns=all_clients.columns)
+                all_clients = pd.concat([all_clients, _mdf], ignore_index=True)
+            print(f"  Manual-add: {_added} injected, {_react} re-activated, {_already} already-active "
+                  f"(AOR clients not in current export)")
+    except Exception as _e:
+        print(f"  (manual-add injection skipped: {_e})")
+
     # All Active: Effectuated, PendingEffectuation, or PendingFollowups
     # Must match _ACTIVE_STATUSES in dashboard.py so member counts agree.
     active_pending = all_clients[
@@ -1587,7 +1832,7 @@ def run_report(settings: dict) -> None:
         def _fl_key(name):
             p = str(name).split()
             return _re_sd.sub(r"[^a-z]", "", (p[0] + p[-1]).lower()) if p else ""
-        aor_defense = build_aor_defense()
+        aor_defense = build_aor_defense(appointments=appointments)
 
         # Silent drop-offs: clients who were ACTIVE in the last HS export, then
         # vanished from it and got carrier-truth-lapsed — the hidden-AOR pattern

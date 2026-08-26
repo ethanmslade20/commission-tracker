@@ -673,6 +673,7 @@ def _nav_icon_css():
         "<path d='M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2'/><circle cx='9' cy='7' r='4'/><path d='M23 21v-2a4 4 0 0 0-3-3.87'/><path d='M16 3.13a4 4 0 0 1 0 7.75'/>",  # Re-Engage (users)
         "<polyline points='23 4 23 10 17 10'/><polyline points='1 20 1 14 7 14'/><path d='M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15'/>",  # Supplemental Re-Engage (refresh)
         "<path d='M12 2l8 4v6c0 5-3.5 8.5-8 10-4.5-1.5-8-5-8-10V6l8-4z'/>",  # AEP Tracker (shield)
+        "<polyline points='9 11 12 14 22 4'/><path d='M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11'/>",  # $0 Plan Review (check-square)
         "<circle cx='12' cy='12' r='3'/><path d='M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z'/>",  # Settings (gear)
     ]
     rules = "".join(
@@ -694,9 +695,9 @@ def _nav_icon_css():
         f'{_SB}:nth-of-type(1) {{margin-top:20px;}}'
         # Settings: pinned visually apart — hairline divider above + its own
         # filled rounded row (matches the reference sidebar).
-        f'{_SB}:nth-of-type(15) {{margin-top:30px; position:relative; overflow:visible;'
+        f'{_SB}:nth-of-type(16) {{margin-top:30px; position:relative; overflow:visible;'
         f'background:rgba(19,31,58,.55);}}'
-        f'{_SB}:nth-of-type(15)::after {{content:""; position:absolute; top:-15px; left:10px; right:10px;'
+        f'{_SB}:nth-of-type(16)::after {{content:""; position:absolute; top:-15px; left:10px; right:10px;'
         f'height:1px; background:rgba(148,163,184,.16);}}'
     )
     return f"<style>{rules}</style>"
@@ -1646,6 +1647,76 @@ def _save_aep_tab(tab_name: str, df: pd.DataFrame) -> bool:
         return False
 
 
+# ── $0 Plan Review (FPL-floor watch) ─────────────────────────────────────────
+# 2026 HHS poverty guidelines (48 contiguous states + DC). Subsidy eligibility for a
+# coverage year uses the PRIOR year's FPL, so these are the floor for 2027 coverage: a
+# client whose reported income is below 100% of this for their tax household size loses
+# their subsidy for 2027 — and in a non-expansion state (GA/TX/FL) falls into the
+# coverage gap (no subsidy AND no Medicaid). (Pulled 2026-08-26.)
+_FPL_2027_BASE = 15960     # household of 1
+_FPL_2027_STEP = 5680      # per additional person
+_FPL_2026_BASE = 15650     # 2025 guidelines = the floor their CURRENT (2026) plan used
+_FPL_2026_STEP = 5500
+
+
+def _fpl_floor_2027(hh) -> int:
+    try:
+        n = int(float(hh))
+    except (TypeError, ValueError):
+        return 0
+    return _FPL_2027_BASE + (n - 1) * _FPL_2027_STEP if n >= 1 else 0
+
+
+_FPL_REVIEW_TAB = "Zero-Dollar Review"
+
+
+@st.cache_data(ttl=3600)
+def _read_fpl_review() -> dict:
+    """Persisted review checkmarks: {client_key: 'reviewed-on date'}. Cloud only."""
+    if not _running_in_cloud():
+        return {}
+    try:
+        import gspread
+        client = _gspread_client()
+        sheet  = client.open_by_url(st.secrets["sheet_url"])
+        try:
+            ws = sheet.worksheet(_FPL_REVIEW_TAB)
+        except gspread.WorksheetNotFound:
+            return {}
+        out = {}
+        for r in ws.get_all_records():
+            k = str(r.get("Key", "")).strip()
+            if k and str(r.get("Reviewed", "")).strip().lower() in ("true", "1", "yes", "✓"):
+                out[k] = str(r.get("Reviewed On", "")).strip()
+        return out
+    except Exception:
+        return {}
+
+
+def _save_fpl_review(reviewed: dict) -> bool:
+    """Write the reviewed map {key: on-date} back to the Sheet tab. Cloud only."""
+    if not _running_in_cloud():
+        return False
+    try:
+        client = _gspread_client()
+        sheet  = client.open_by_url(st.secrets["sheet_url"])
+        try:
+            ws = sheet.worksheet(_FPL_REVIEW_TAB)
+        except Exception:
+            ws = sheet.add_worksheet(title=_FPL_REVIEW_TAB, rows=max(len(reviewed) + 20, 500), cols=4)
+        rows = [["Key", "Reviewed", "Reviewed On"]]
+        for k, on in reviewed.items():
+            rows.append([str(k), "TRUE", str(on or "")])
+        ws.clear()
+        ws.update(rows, value_input_option="USER_ENTERED")
+        ws.format("A1:C1", {"textFormat": {"bold": True}})
+        _read_fpl_review.clear()
+        return True
+    except Exception as e:
+        st.error(f"Save failed: {e}")
+        return False
+
+
 _SETTINGS_TAB = "App Settings"
 
 
@@ -1879,6 +1950,7 @@ with st.sidebar:
             "Client Lookup", "Book", "Monthly Trends",
             "Commissions", "Money Owed", "Past Due",
             "AOR Defense", "Follow-ups", "Re-Engage", "Supplemental Re-Engage", "AEP Tracker",
+            "$0 Plan Review",
             "Settings"]
     # Old page names still arrive via bookmarks / stale ?goto= links.
     _ALIASES = {"Month-over-Month": "Monthly Trends", "Book of Business": "Book",
@@ -4639,6 +4711,139 @@ elif page == "AEP Tracker":
                 on_change=_aep_autosave,
             )
             st.caption("✓ Changes save automatically.")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# $0 PLAN REVIEW — FPL-floor watch for 2027
+# ══════════════════════════════════════════════════════════════════════════════
+elif page == "$0 Plan Review":
+    st.title("$0 Plan Review")
+    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+    st.markdown(
+        "Every fully-subsidized (**$0/mo**) client — so you can check who's sitting near the "
+        "**100% federal-poverty floor** and could lose their subsidy when the FPL rises for **2027**. "
+        "Below the floor in a non-expansion state (GA / TX / FL) means the *coverage gap* — no subsidy "
+        "**and** no Medicaid. Tick **Reviewed** as you work each client; it saves automatically."
+    )
+
+    with st.expander("📋  2027 subsidy floor by household size (100% FPL)"):
+        _ref = pd.DataFrame({"Household size": list(range(1, 9))})
+        _ref["2026-plan floor"] = _ref["Household size"].map(lambda n: _FPL_2026_BASE + (n - 1) * _FPL_2026_STEP)
+        _ref["2027-plan floor"] = _ref["Household size"].map(_fpl_floor_2027)
+        _ref["Danger-zone income"] = _ref.apply(
+            lambda r: f"${int(r['2026-plan floor']):,} – ${int(r['2027-plan floor']):,}", axis=1)
+        _ref_disp = _ref.copy()
+        _ref_disp["2026-plan floor"] = _ref_disp["2026-plan floor"].map(lambda v: f"${int(v):,}")
+        _ref_disp["2027-plan floor"] = _ref_disp["2027-plan floor"].map(lambda v: f"${int(v):,}")
+        st.dataframe(_ref_disp, use_container_width=True, hide_index=True, height=46 + 35 * len(_ref_disp))
+        st.caption("Reported income in the *danger zone* qualified for 2026 coverage but falls below the 2027 floor. "
+                   "(Income itself is masked in the HealthSherpa export, so this list is every $0 client for you to check.)")
+
+    # ── Build the $0-plan active-client worklist ─────────────────────────────
+    _ac = all_clients.copy()
+    _active_sts = ["Effectuated", "PendingEffectuation", "PendingFollowups"]
+    _act = _ac["status"].isin(_active_sts) if "status" in _ac.columns else pd.Series(True, index=_ac.index)
+    _np  = pd.to_numeric(_ac.get("net_premium"), errors="coerce").fillna(0)
+    _zero = _ac[_act & (_np <= 0)].copy()
+
+    if _zero.empty:
+        st.info("No $0 plans found in the current book.")
+    else:
+        _fn = _zero.get("first_name", pd.Series("", index=_zero.index)).fillna("").astype(str)
+        _ln = _zero.get("last_name",  pd.Series("", index=_zero.index)).fillna("").astype(str)
+        _id = (_zero.get("ffm_app_id", pd.Series("", index=_zero.index)).fillna("").astype(str)
+               .str.replace(r"\.0$", "", regex=True).str.strip())
+        _namekey = _fn.str.lower().str.strip() + "|" + _ln.str.lower().str.strip()
+        _zero["_key"] = _id.where(_id.str.len() > 0, _namekey)
+
+        _hh = pd.to_numeric(_zero.get("household_size"), errors="coerce")
+        _zero["Client"]     = (_fn + " " + _ln).str.strip()
+        _zero["State"]      = _zero.get("state", pd.Series("", index=_zero.index)).fillna("").astype(str)
+        _zero["Carrier"]    = _zero.get("carrier", pd.Series("", index=_zero.index)).fillna("").astype(str)
+        _zero["Household"]  = _hh
+        _zero["2027 Floor"] = _hh.map(lambda h: _fpl_floor_2027(h) if pd.notna(h) else None)
+        _zero["Subsidy/mo"] = pd.to_numeric(_zero.get("subsidy"), errors="coerce")
+        _zero["Effective"]  = pd.to_datetime(_zero.get("effective_date"), errors="coerce").dt.strftime("%b %d, %Y").fillna("")
+        _zero["Phone"]      = _zero.get("phone", pd.Series("", index=_zero.index)).fillna("").astype(str)
+
+        _reviewed = _read_fpl_review()
+        st.session_state["_fpl_reviewed"] = dict(_reviewed)
+        _zero["Reviewed"]    = _zero["_key"].map(lambda k: k in _reviewed)
+        _zero["Reviewed On"] = _zero["_key"].map(lambda k: _reviewed.get(k, ""))
+
+        _total = len(_zero); _done = int(_zero["Reviewed"].sum())
+        m1, m2, m3 = st.columns(3)
+        m1.metric("$0 clients", _total)
+        m2.metric("Reviewed", _done)
+        m3.metric("Left to review", _total - _done)
+
+        f1, f2, f3 = st.columns([2, 2, 2])
+        with f1:
+            _filt = st.radio("Show", ["Not done", "Done", "All"], horizontal=True, key="fpl_filter")
+        with f2:
+            _hh_opts = ["All"] + [str(int(x)) for x in sorted(_zero["Household"].dropna().unique())]
+            _hhf = st.selectbox("Household size", _hh_opts, key="fpl_hh")
+        with f3:
+            _st_opts = ["All"] + sorted(s for s in _zero["State"].dropna().unique() if str(s).strip())
+            _stf = st.selectbox("State", _st_opts, key="fpl_state")
+
+        _view = _zero
+        if   _filt == "Not done": _view = _view[~_view["Reviewed"]]
+        elif _filt == "Done":     _view = _view[_view["Reviewed"]]
+        if _hhf != "All": _view = _view[_view["Household"] == int(_hhf)]
+        if _stf != "All": _view = _view[_view["State"] == _stf]
+        _view = _view.sort_values(["Household", "Client"], na_position="last")
+
+        # keys of the CURRENT render, so the autosave can map editor positions → client
+        st.session_state["_fpl_view_keys"] = _view["_key"].tolist()
+
+        def _fpl_autosave():
+            import datetime as _dt
+            _ed      = st.session_state.get("fpl_editor", {}) or {}
+            _changes = _ed.get("edited_rows", {}) or {}
+            _keys    = st.session_state.get("_fpl_view_keys", [])
+            _rev     = dict(st.session_state.get("_fpl_reviewed", {}))
+            _today   = _dt.date.today().strftime("%b %d, %Y")
+            for _p, _v in _changes.items():
+                _pos = int(_p)
+                if _pos < len(_keys) and "Reviewed" in _v:
+                    _k = _keys[_pos]
+                    if _v["Reviewed"]:
+                        _rev[_k] = _today
+                    else:
+                        _rev.pop(_k, None)
+            if _save_fpl_review(_rev):
+                st.session_state["_fpl_reviewed"] = _rev
+                st.toast("Saved ✓")
+            else:
+                st.toast("Save failed — check connection", icon="⚠️")
+
+        _disp = _view[["Reviewed", "Client", "State", "Carrier", "Household", "2027 Floor",
+                       "Subsidy/mo", "Effective", "Phone", "Reviewed On"]].reset_index(drop=True)
+        st.data_editor(
+            _disp,
+            use_container_width=True,
+            hide_index=True,
+            height=min(80 + len(_disp) * 35, 640),
+            column_config={
+                "Reviewed":    st.column_config.CheckboxColumn("✓ Reviewed", width="small"),
+                "Client":      st.column_config.TextColumn("Client", disabled=True),
+                "State":       st.column_config.TextColumn("State", disabled=True, width="small"),
+                "Carrier":     st.column_config.TextColumn("Carrier", disabled=True),
+                "Household":   st.column_config.NumberColumn("Household", disabled=True, width="small"),
+                "2027 Floor":  st.column_config.NumberColumn("2027 Floor", disabled=True, format="$%d", width="small"),
+                "Subsidy/mo":  st.column_config.NumberColumn("Subsidy/mo", disabled=True, format="$%.0f", width="small"),
+                "Effective":   st.column_config.TextColumn("Effective", disabled=True, width="small"),
+                "Phone":       st.column_config.TextColumn("Phone", disabled=True),
+                "Reviewed On": st.column_config.TextColumn("Reviewed On", disabled=True, width="small"),
+            },
+            key="fpl_editor",
+            on_change=_fpl_autosave,
+        )
+        st.caption("✓ Check the box after you review each client on HealthSherpa — it saves automatically "
+                   "and drops out of your \"Not done\" list.")
+        if not _running_in_cloud():
+            st.caption("⚠️ Checkmarks only persist on the deployed (cloud) site — this local preview won't save them.")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
