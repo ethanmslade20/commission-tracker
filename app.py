@@ -4756,14 +4756,18 @@ elif page == "$0 Plan Review":
         _namekey = _fn.str.lower().str.strip() + "|" + _ln.str.lower().str.strip()
         _zero["_key"] = _id.where(_id.str.len() > 0, _namekey)
 
-        _hh = pd.to_numeric(_zero.get("household_size"), errors="coerce")
+        # .get(col) returns None (a scalar) when the column is absent — e.g. before the
+        # Sheet has household_size — so always fall back to an index-aligned Series.
+        def _scol(_name, _default=pd.NA):
+            return _zero[_name] if _name in _zero.columns else pd.Series(_default, index=_zero.index)
+        _hh = pd.to_numeric(_scol("household_size"), errors="coerce")
         _zero["Client"]     = (_fn + " " + _ln).str.strip()
         _zero["State"]      = _zero.get("state", pd.Series("", index=_zero.index)).fillna("").astype(str)
         _zero["Carrier"]    = _zero.get("carrier", pd.Series("", index=_zero.index)).fillna("").astype(str)
         _zero["Household"]  = _hh
         _zero["2027 Floor"] = _hh.map(lambda h: _fpl_floor_2027(h) if pd.notna(h) else None)
-        _zero["Subsidy/mo"] = pd.to_numeric(_zero.get("subsidy"), errors="coerce")
-        _zero["Effective"]  = pd.to_datetime(_zero.get("effective_date"), errors="coerce").dt.strftime("%b %d, %Y").fillna("")
+        _zero["Subsidy/mo"] = pd.to_numeric(_scol("subsidy"), errors="coerce")
+        _zero["Effective"]  = pd.to_datetime(_scol("effective_date", pd.NaT), errors="coerce").dt.strftime("%b %d, %Y").fillna("")
         _zero["Phone"]      = _zero.get("phone", pd.Series("", index=_zero.index)).fillna("").astype(str)
 
         _reviewed = _read_fpl_review()
