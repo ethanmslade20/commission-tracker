@@ -225,13 +225,35 @@ def build_all_clients(months: dict) -> pd.DataFrame:
 
     agg["months_on_book"] = agg["effective_date"].apply(_calendar_months)
 
+    # ── HS-terminal FLAG (Ethan 2026-08-26) ─────────────────────────────────
+    # Mark policies the NEWEST HealthSherpa snapshot shows as terminal (Cancelled/
+    # Terminated), keyed by ffm_app_id. This does NOT change `status` — carrier-truth
+    # still governs the global active book (a policy HS shows cancelled can be carrier-
+    # confirmed active). The $0 Plan Review page uses this flag to hide clients that
+    # HealthSherpa itself shows cancelled. (Amber Myrick & ~10 others.)
+    agg["hs_terminal"] = False
+    if "ffm_app_id" in agg.columns and len(months):
+        import re as _re
+        _latest  = max(months.keys())
+        _hs_term = all_df[(all_df["month"] == _latest)
+                          & (all_df["_is_hs"] == True)
+                          & (all_df["status"].isin(["Cancelled", "Terminated"]))]
+        if len(_hs_term):
+            def _nid(v):
+                v = _re.sub(r"\.0$", "", str(v or "").strip())
+                return v if v and v.lower() != "nan" else ""
+            _term_ids = {_nid(_r.get("ffm_app_id")) for _, _r in _hs_term.iterrows()}
+            _term_ids.discard("")
+            if _term_ids:
+                agg["hs_terminal"] = agg["ffm_app_id"].map(_nid).isin(_term_ids)
+
     cols = [
         "name_key", "client_key", "first_name", "last_name", "carrier",
         "effective_date", "current_effective", "term_date", "status", "state", "ffm_app_id", "ffm_subscriber_id",
         "email", "phone", "cancel_notes", "net_premium", "applicant_count", "household_size", "subsidy", "first_seen", "last_seen", "last_active", "months_on_book",
         "dmi_outstanding", "dmi_expired", "svi_outstanding", "svi_expired", "followup_docs",
         "policy_aor", "last_ede_sync", "policy_number", "submission_date", "source",
-        "npn_used", "submitting_agent_name",
+        "npn_used", "submitting_agent_name", "hs_terminal",
     ]
     return agg[[c for c in cols if c in agg.columns]]
 

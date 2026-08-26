@@ -4744,7 +4744,11 @@ elif page == "$0 Plan Review":
     _active_sts = ["Effectuated", "PendingEffectuation", "PendingFollowups"]
     _act = _ac["status"].isin(_active_sts) if "status" in _ac.columns else pd.Series(True, index=_ac.index)
     _np  = pd.to_numeric(_ac.get("net_premium"), errors="coerce").fillna(0)
-    _zero = _ac[_act & (_np <= 0)].copy()
+    # Hide policies HealthSherpa itself shows as cancelled/terminated, even if carrier-truth
+    # keeps them active in the global book (the Amber Myrick case). (Ethan 2026-08-26.)
+    _hst = (_ac["hs_terminal"].astype(str).str.strip().str.lower().isin(["true", "1", "yes"])
+            if "hs_terminal" in _ac.columns else pd.Series(False, index=_ac.index))
+    _zero = _ac[_act & (_np <= 0) & (~_hst)].copy()
 
     if _zero.empty:
         st.info("No $0 plans found in the current book.")

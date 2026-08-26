@@ -64,7 +64,7 @@ _ALL_CLIENTS_COLS = ["first_name", "last_name", "carrier", "effective_date", "te
                      "status", "state", "ffm_app_id", "net_premium", "applicant_count",
                      "household_size", "subsidy", "months_on_book",
                      "client_since", "cancel_reason", "term_estimated", "phone", "email",
-                     "policy_number", "loss_basis"]
+                     "policy_number", "loss_basis", "hs_terminal"]
 
 _ACTIVE_COLS = ["first_name", "last_name", "carrier", "effective_date",
                 "status", "state", "ffm_app_id", "net_premium", "applicant_count", "months_on_book"]
