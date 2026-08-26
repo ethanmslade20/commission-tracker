@@ -61,7 +61,8 @@ def _filter_excluded(df: pd.DataFrame, exclusions: list) -> pd.DataFrame:
     return df[df.apply(_keep, axis=1)].copy()
 
 _ALL_CLIENTS_COLS = ["first_name", "last_name", "carrier", "effective_date", "term_date",
-                     "status", "state", "ffm_app_id", "net_premium", "applicant_count", "months_on_book",
+                     "status", "state", "ffm_app_id", "net_premium", "applicant_count",
+                     "household_size", "subsidy", "months_on_book",
                      "client_since", "cancel_reason", "term_estimated", "phone", "email",
                      "policy_number", "loss_basis"]
 
