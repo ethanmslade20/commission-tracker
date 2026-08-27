@@ -4802,33 +4802,17 @@ elif page == "$0 Plan Review":
         if _stf != "All": _view = _view[_view["State"] == _stf]
         _view = _view.sort_values(["Household", "Client"], na_position="last")
 
-        # keys of the CURRENT render, so the autosave can map editor positions → client
-        st.session_state["_fpl_view_keys"] = _view["_key"].tolist()
-
-        def _fpl_autosave():
-            import datetime as _dt
-            _ed      = st.session_state.get("fpl_editor", {}) or {}
-            _changes = _ed.get("edited_rows", {}) or {}
-            _keys    = st.session_state.get("_fpl_view_keys", [])
-            _rev     = dict(st.session_state.get("_fpl_reviewed", {}))
-            _today   = _dt.date.today().strftime("%b %d, %Y")
-            for _p, _v in _changes.items():
-                _pos = int(_p)
-                if _pos < len(_keys) and "Reviewed" in _v:
-                    _k = _keys[_pos]
-                    if _v["Reviewed"]:
-                        _rev[_k] = _today
-                    else:
-                        _rev.pop(_k, None)
-            if _save_fpl_review(_rev):
-                st.session_state["_fpl_reviewed"] = _rev
-                st.toast("Saved ✓")
-            else:
-                st.toast("Save failed — check connection", icon="⚠️")
+        # Positional keys of the CURRENT render — the row order of _disp below matches
+        # this list exactly, so editor row N ↔ _view_keys[N].
+        _view_keys = _view["_key"].tolist()
 
         _disp = _view[["Reviewed", "Client", "State", "Carrier", "Household", "2027 Floor",
                        "Subsidy/mo", "Effective", "Phone", "Reviewed On"]].reset_index(drop=True)
-        st.data_editor(
+        # Persistence is driven off the editor's RETURN VALUE (diffed below), NOT an
+        # on_change callback. The callback fired unreliably and silently dropped saves;
+        # the return-value diff runs in the main script body on every rerun, so a checked
+        # box is always caught and written to the Sheet.
+        _edited = st.data_editor(
             _disp,
             use_container_width=True,
             hide_index=True,
@@ -4846,8 +4830,35 @@ elif page == "$0 Plan Review":
                 "Reviewed On": st.column_config.TextColumn("Reviewed On", disabled=True, width="small"),
             },
             key="fpl_editor",
-            on_change=_fpl_autosave,
         )
+
+        # ── Save any checkbox change (diff editor state vs the persisted map) ──
+        import datetime as _dt
+        _rev     = dict(st.session_state.get("_fpl_reviewed", {}))
+        _today   = _dt.date.today().strftime("%b %d, %Y")
+        _rcol    = _edited["Reviewed"].tolist()
+        _changed = False
+        for _pos, _k in enumerate(_view_keys):
+            if _pos >= len(_rcol):
+                break
+            _is  = bool(_rcol[_pos])
+            _was = _k in _rev
+            if _is and not _was:
+                _rev[_k] = _today; _changed = True
+            elif not _is and _was:
+                _rev.pop(_k, None); _changed = True
+        if _changed and _running_in_cloud():
+            if _save_fpl_review(_rev):
+                st.session_state["_fpl_reviewed"] = _rev
+                st.toast("Saved ✓")
+                st.rerun()
+            else:
+                st.error("Couldn't save your checkmark — try again in a moment.")
+        elif _changed:
+            # Local preview: keep it for this session (the caption below explains it
+            # only truly persists on the deployed site).
+            st.session_state["_fpl_reviewed"] = _rev
+
         st.caption("✓ Check the box after you review each client on HealthSherpa — it saves automatically "
                    "and drops out of your \"Not done\" list.")
         if not _running_in_cloud():
