@@ -20,6 +20,8 @@ from pathlib import Path
 
 import pandas as pd
 
+from tracker.diff import is_plan_year_rollover
+
 _ROOT = Path(__file__).resolve().parent.parent
 _RISK_PATH = _ROOT / "data" / "aor_at_risk.json"
 _HANDLED_PATH = _ROOT / "data" / "aor_handled.json"
@@ -361,6 +363,10 @@ def build_silent_dropoffs(all_clients, months) -> pd.DataFrame:
             continue                       # last-known already cancelled → genuine
         if _GENUINE_CANCEL.search(h.get("note", "")):
             continue                       # real cancel note → genuine
+        if is_plan_year_rollover(r):
+            continue                       # 12/31 plan-year end with no cancel reason →
+                                           # almost certainly a BAR passive renewal whose new
+                                           # FFM app id isn't claimed yet, not a stolen client
         term = pd.to_datetime(r.get("term_date"), errors="coerce")
         _mn = pd.to_numeric(r.get("applicant_count"), errors="coerce")
         members = 1 if pd.isna(_mn) else max(int(_mn), 1)

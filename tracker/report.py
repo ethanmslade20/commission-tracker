@@ -16,7 +16,7 @@ _NPN = _AGENT["npn"]
 _FN = _AGENT["first_name"].lower()
 _LN = _AGENT["last_name"].lower()
 
-from tracker.diff import build_all_clients, compute_diff, assign_loss_months
+from tracker.diff import build_all_clients, compute_diff, assign_loss_months, is_plan_year_rollover
 from tracker.ingest import load_all_snapshots
 from tracker.sheets import update_sheet
 
@@ -545,6 +545,7 @@ def _upload_summary(all_clients, pastdue, snapshot_dir, today=None) -> None:
         return bool(v)
 
     lost, vexp, aor, pol, polmem, polname = {}, {}, {}, set(), {}, {}
+    rollover = {}   # plan-year-end terms that look like BAR passive renewals, not losses
     lost_term = {}     # name_key -> real loss date (term_date), for freshness trim
     lost_estimated = {}  # name_key -> was the term date estimated/unconfirmed
     lost_basis = {}    # name_key -> how the loss date was derived (diff.assign_loss_months):
@@ -576,6 +577,12 @@ def _upload_summary(all_clients, pastdue, snapshot_dir, today=None) -> None:
                 # taken clients are now reclassified Terminated, but they belong
                 # in the "taken by another agent" bucket, not generic "lost"
                 aor[k] = _disp(f, l)
+            elif is_plan_year_rollover(r):
+                # Plan-year-end (12/31) term with no real cancel language. During
+                # OEP this is almost always a BAR passive renewal whose new FFM
+                # app id hasn't been claimed yet — NOT a lost client. Hold it out
+                # of the loss text and surface it as a claim-and-verify list.
+                rollover[k] = _disp(f, l)
             else:
                 lost[k] = _disp(f, l)
                 lost_term[k] = pd.to_datetime(r.get("term_date"), errors="coerce")
@@ -607,6 +614,12 @@ def _upload_summary(all_clients, pastdue, snapshot_dir, today=None) -> None:
             # whole summary — treat missing applicant_count as 1 explicitly.
             _n = pd.to_numeric(r.get("applicant_count"), errors="coerce")
             polmem[pid] = 1 if pd.isna(_n) else max(int(_n), 1)
+
+    if rollover:
+        print(f"  Plan-year rollover guard: held {len(rollover)} client(s) out of the loss "
+              f"buckets (12/31 term, no cancel reason — likely passive renewals whose new "
+              f"FFM app id isn't claimed yet): {', '.join(sorted(rollover.values())[:8])}"
+              + (f" +{len(rollover) - 8} more" if len(rollover) > 8 else ""))
 
     pdue = {}
     if pastdue is not None and not pastdue.empty:

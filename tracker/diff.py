@@ -6,6 +6,7 @@ policy-based. This means plan switches and AEP rollovers are treated as
 retention, not churn+new.
 """
 
+import re
 from typing import Optional
 
 import pandas as pd
@@ -14,6 +15,34 @@ import pandas as pd
 # Active statuses — used to prefer active rows when a person has multiple plans
 _ACTIVE_STS = {"Effectuated", "PendingEffectuation", "PendingFollowups"}
 _STATUS_RANK = {s: 1 for s in _ACTIVE_STS}   # active → rank 1 (sorts last = "last")
+
+
+# A Dec-31 term date is the natural END OF A PLAN YEAR, not a cancellation.
+# During OEP, CMS's Batch Auto Re-enrollment (BAR) issues the renewed policy a
+# BRAND-NEW ffm_app_id that the agent cannot see until he search-&-claims it
+# (HealthSherpa "Renewal pathways": "CMS creates a new FFM application ID...
+# agents need to search & claim the new FFM ID... to view this in the dashboard",
+# and passive renewals are invisible to agents until after Dec 15). So a
+# passively-renewed client LOOKS like a vanished client: their old plan terms
+# 12/31 and nothing replaces it in the export. Reporting that as a confirmed
+# loss (or an AOR steal) would false-alarm across a whole book every January.
+# Treat the shape as a ROLLOVER TO VERIFY instead. (Ethan 2026-09-01.)
+_GENUINE_CANCEL_TEXT = re.compile(
+    r"cancel|member|request|non[- ]?payment|nonpayment|termin|delinqu|failed|unpaid|expired"
+    r"|aor|taken|another agent|switch",
+    re.I)
+
+
+def is_plan_year_rollover(row) -> bool:
+    """True when a client's only 'loss' signal is a plan-year-end (Dec 31) term
+    date with no real cancellation language — i.e. probably a passive renewal
+    whose new FFM app id hasn't been claimed yet, not a lost client."""
+    td = pd.to_datetime(row.get("term_date"), errors="coerce")
+    if pd.isna(td) or (td.month, td.day) != (12, 31):
+        return False
+    note = " ".join(str(row.get(c) or "") for c in
+                    ("cancel_notes", "cancel_reason", "loss_basis"))
+    return not _GENUINE_CANCEL_TEXT.search(note)
 
 
 def _person_key(df: pd.DataFrame, month_col: Optional[str] = None) -> pd.Series:
