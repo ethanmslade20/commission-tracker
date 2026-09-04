@@ -1333,6 +1333,13 @@ def _gspread_client():
     return client
 
 
+# Fills when the data cache fills and clears with it, so the sidebar can say how old
+# the numbers on screen actually are. Without this the only clue was the hourly TTL.
+@st.cache_data(ttl=3600)
+def _data_loaded_at():
+    return dt.datetime.now()
+
+
 @st.cache_data(ttl=3600, show_spinner="Loading your book (hourly refresh)…")
 def _main_sheet_values() -> dict:
     """EVERY tab of the main sheet in 1-2 API calls via values_batch_get.
@@ -2046,6 +2053,16 @@ with st.sidebar:
         for _k in ["aep_df", "aep_tab"]:
             st.session_state.pop(_k, None)
         st.rerun()
+
+    # Say how old the numbers are. The book is cached hourly, so after a HealthSherpa
+    # upload the site can sit on stale figures with nothing on screen admitting it —
+    # which makes the Refresh button above look broken when it is just not needed yet.
+    try:
+        _mins = int((dt.datetime.now() - _data_loaded_at()).total_seconds() // 60)
+        _age = "just now" if _mins < 1 else (f"{_mins} min ago" if _mins < 60 else f"{_mins // 60}h ago")
+        st.caption(f"Book loaded {_age}")
+    except Exception:
+        pass
 
     # Export Report button removed on purpose (Ethan 2026-07-07): no data
     # export from the site — tables also have their download toolbars hidden.
