@@ -110,16 +110,39 @@ def main():
 
     staged = []
 
-    def fresh(p):
-        return p is not None and state.get(str(p)) != p.stat().st_mtime
+    # Both of these used to call stat() unguarded, and mark() runs AFTER the file has
+    # been handed to the ingest — which moves it. The window is small but real, and a
+    # FileNotFoundError here kills the whole watcher run partway through, leaving later
+    # files unmarked and the state file unwritten. A watcher that dies silently is the
+    # worst failure mode available: the next pull looks fine and never ingests.
+    def _mtime(p):
+        try:
+            return p.stat().st_mtime
+        except (FileNotFoundError, OSError):
+            return None
 
-    def mark(p):
-        state[str(p)] = p.stat().st_mtime
+    def fresh(p):
+        if p is None:
+            return False
+        m = _mtime(p)
+        if m is None:
+            return False                      # vanished between glob and check
+        return state.get(str(p)) != m
+
+    def mark(p, mtime=None):
+        m = mtime if mtime is not None else _mtime(p)
+        if m is None:
+            # Already moved by the ingest. Record that we handled it so the next run
+            # does not reprocess a path that no longer exists.
+            state[str(p)] = state.get(str(p), 0) or -1
+            return
+        state[str(p)] = m
 
     # HealthSherpa client export — validate size AND ownership before it can
     # touch the book. Another agent's export (Phase-B audit files!) must never
     # auto-stage into this tracker.
     hs = _newest("on_ex_applications-export-*.csv")
+    _hs_mtime = _mtime(hs) if hs is not None else None
     if fresh(hs):
         body = open(hs, errors="replace").read()
         rows = body.count("\n") - 1
@@ -179,7 +202,7 @@ def main():
         else:
             shutil.copy(hs, _hs_dest)
             staged.append(f"HealthSherpa ({rows} rows)")
-        mark(hs)
+        mark(hs, _hs_mtime)
 
     # Ambetter zip → newest policies_*.csv inside
     zp = _newest("policies*.zip")
@@ -207,6 +230,11 @@ def main():
             shutil.copy(p, _ROOT / dest)
             staged.append(label)
             mark(p)
+
+    # Forget paths that are gone. Without this the state grows without bound and keeps
+    # mtimes for files the ingest deleted months ago.
+    import os as _os
+    state = {k: v for k, v in state.items() if v == -1 or _os.path.exists(k)}
 
     _STATE.parent.mkdir(parents=True, exist_ok=True)
     _STATE.write_text(json.dumps(state, indent=1))
