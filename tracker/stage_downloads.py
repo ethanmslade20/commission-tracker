@@ -219,14 +219,33 @@ def main():
             _log(f"ambetter zip failed: {e}")
         mark(zp)
 
-    for pattern, dest, label in [
-        ("Oscar_INDIVIDUAL_Book_*.csv", "carrier_books/oscar.csv", "Oscar book"),
-        ("Producer ToolBox*Clients report.csv", "carrier_books/anthem.csv", "Anthem book"),
-        ("Jarvis*BookOfBusiness*.xlsx", "carrier_books/uhc_source.xlsx", "UHC book"),
-        ("BookOfBusinessExport*.xlsx", "carrier_books/cigna.xlsx", "Cigna book"),
+    # The 4th element is a header column the file MUST contain, or None to accept it on
+    # the filename alone. Only the NatGen export needs one: see its entry below.
+    for pattern, dest, label, marker in [
+        ("Oscar_INDIVIDUAL_Book_*.csv", "carrier_books/oscar.csv", "Oscar book", None),
+        ("Producer ToolBox*Clients report.csv", "carrier_books/anthem.csv", "Anthem book", None),
+        ("Jarvis*BookOfBusiness*.xlsx", "carrier_books/uhc_source.xlsx", "UHC book", None),
+        ("BookOfBusinessExport*.xlsx", "carrier_books/cigna.xlsx", "Cigna book", None),
+        # Allstate / National General supplemental — dental, cancer, STM. supplemental.py
+        # has always named "Policy List" as this book's source, but nothing ever staged it,
+        # so carrier_books/supp_natgen.csv sat at its 2026-07-10 copy while fresh exports
+        # piled up in Downloads unread and the site quietly reported a stale supplemental
+        # book. Matched on a header rather than the filename alone, because "Policy List"
+        # is generic enough that another portal could plausibly use it and silently
+        # overwrite this book with someone else's data.
+        ("Policy List*.csv", "carrier_books/supp_natgen.csv", "NatGen supp book", "STM Indicator"),
     ]:
         p = _newest(pattern)
         if fresh(p):
+            if marker:
+                try:
+                    head = open(p, errors="replace").readline()
+                except Exception:
+                    head = ""
+                if marker not in head:
+                    _log(f"SKIPPED {label}: {p.name} has no {marker!r} column — not this carrier's export")
+                    mark(p)
+                    continue
             shutil.copy(p, _ROOT / dest)
             staged.append(label)
             mark(p)
