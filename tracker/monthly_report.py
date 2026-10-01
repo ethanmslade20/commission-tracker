@@ -28,6 +28,33 @@ def _money_data(settings):
     return pay, monthly_summary(pay)
 
 
+def _reconciled_book(settings) -> pd.DataFrame:
+    """The book as the site shows it: the All Clients tab, written by report.py AFTER
+    it strips what the raw HealthSherpa export cannot know about.
+
+    The raw snapshot still lists people another agent now holds the AOR on, people
+    never credited to Ethan's NPN, carriers he does not count (Florida Blue, Alliant),
+    his hand-kept never-sold list, and the same person twice after a plan switch. On
+    2026-10-01 that was 1,258 policies against a real 1,146 — the Sep report overstated
+    the book by about 9%.
+    """
+    from tracker.sheets import _open_sheet
+    imp = next((settings[k] for k in settings if "impersonat" in k.lower()), None)
+    tab = (settings.get("tabs") or {}).get("all_clients", "All Clients")
+    vals = _open_sheet(settings["sheet_url"], imp).worksheet(tab).get_all_values()
+    # Rows 0-1 are the Active/Inactive summary lines, row 2 the column headers.
+    if len(vals) < 4:
+        raise ValueError(f"'{tab}' tab has no data rows")
+    df = pd.DataFrame(vals[3:], columns=vals[2]).replace("", None)
+    for c in ("effective_date", "term_date", "client_since"):
+        if c in df.columns:
+            df[c] = pd.to_datetime(df[c], errors="coerce")
+    for c in ("applicant_count", "net_premium", "months_on_book"):
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+    return df
+
+
 def build_monthly_pdf(month: str = None, out_dir: Path = None) -> Path:
     """month='YYYY-MM' (default: last calendar month). Returns the PDF path."""
     import matplotlib
@@ -55,24 +82,37 @@ def build_monthly_pdf(month: str = None, out_dir: Path = None) -> Path:
 
     settings = load_settings()
     pay, ms = _money_data(settings)
-    snap = pd.read_parquet(sorted(glob.glob(str(_ROOT / "snapshots" / "*healthsherpa*.parquet")))[-1])
+    # The reconciled book, not the raw export — see _reconciled_book. Falling back
+    # keeps the monthly job producing a PDF when the sheet is unreachable, but says
+    # so loudly, because the fallback numbers are the inflated ones.
+    try:
+        book = _reconciled_book(settings)
+    except Exception as exc:
+        print(f"  ! All Clients tab unreadable ({exc}) — falling back to the raw "
+              f"snapshot. Counts will include foreign-AOR, non-counted carriers "
+              f"and duplicate policies, and will read HIGH.")
+        book = pd.read_parquet(sorted(glob.glob(str(_ROOT / "snapshots" / "*healthsherpa*.parquet")))[-1])
 
     # ---- numbers ----
     _ACT = {"Effectuated", "PendingEffectuation", "PendingFollowups"}
-    act = snap[snap["status"].isin(_ACT)]
+    act = book[book["status"].isin(_ACT)]
     n_pol = len(act)
     n_mem = int(pd.to_numeric(act["applicant_count"], errors="coerce").fillna(1).sum())
     row = ms[pd.to_datetime(ms["Month"]).dt.strftime("%Y-%m") == month]
     m_net = float(row["Net"].iloc[0]) if len(row) else 0.0
     m_cb = float(row["Chargebacks"].iloc[0]) if len(row) else 0.0
     ytd = float(pay[pay["payment_month"].dt.year == m_ts.year]["amount"].sum())
-    sub = pd.to_datetime(snap["submission_date"], errors="coerce")
-    sold = snap[sub.dt.strftime("%Y-%m") == month]
-    sold_mem = int(pd.to_numeric(sold["applicant_count"], errors="coerce").fillna(1).sum())
-    mom = _build_mom_from_all_clients(snap)
-    lrow = mom[mom["Month"] == month]
-    lost_p = int(lrow["Policies Lost"].iloc[0]) if len(lrow) else 0
-    lost_m = int(lrow["Members Lost"].iloc[0]) if len(lrow) else 0
+    # Sold and lost both come from the same month-over-month table the site's Growth
+    # Metrics use, so every number on this page agrees with the screen. The old sold
+    # count filtered the raw export on submission_date, which counts an application
+    # keyed in August as an August sale even when the client only joined the book in
+    # September — and counted people the reconciliation later removed.
+    mom = _build_mom_from_all_clients(book)
+    mrow = mom[mom["Month"] == month]
+    sold_p = int(mrow["New Policies"].iloc[0]) if len(mrow) else 0
+    sold_mem = int(mrow["New Members"].iloc[0]) if len(mrow) else 0
+    lost_p = int(mrow["Policies Lost"].iloc[0]) if len(mrow) else 0
+    lost_m = int(mrow["Members Lost"].iloc[0]) if len(mrow) else 0
     jun_c = (pay[pay["payment_month"].dt.strftime("%Y-%m") == month]
              .groupby("carrier")["amount"].sum().sort_values(ascending=False))
 
@@ -156,7 +196,7 @@ def build_monthly_pdf(month: str = None, out_dir: Path = None) -> Path:
     cards = Table([[kpi(f"${m_net:,.0f}", f"{m_ts.strftime('%b').upper()} NET INCOME", GRN),
                     kpi(f"${ytd:,.0f}", f"{m_ts.year} NET (YTD)", colors.HexColor("#2563eb")),
                     kpi(f"{n_mem:,}", f"ACTIVE MEMBERS ({n_pol:,} POLICIES)", colors.HexColor("#0891b2")),
-                    kpi(f"{len(sold)}", f"POLICIES SOLD IN {m_ts.strftime('%b').upper()} ({sold_mem} MEMBERS)",
+                    kpi(f"{sold_p}", f"POLICIES SOLD IN {m_ts.strftime('%b').upper()} ({sold_mem} MEMBERS)",
                         colors.HexColor("#d97706"))]],
                   colWidths=[1.75 * inch] * 4)
     cards.setStyle(TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 3),
@@ -176,7 +216,7 @@ def build_monthly_pdf(month: str = None, out_dir: Path = None) -> Path:
     story += sec("3.  Book Health")
     story += [Paragraph(
         f"•  Active book: <b>{n_pol:,} policies / {n_mem:,} members</b><br/>"
-        f"•  Sold in {m_label}: <b>{len(sold)} policies / {sold_mem} members</b><br/>"
+        f"•  Sold in {m_label}: <b>{sold_p} policies / {sold_mem} members</b><br/>"
         f"•  Lost in {m_label} (real termination dates): <b>{lost_p} policies / {lost_m} members</b><br/>"
         f"•  Net member change: <b>{sold_mem - lost_m:+,}</b>", BODY)]
 
