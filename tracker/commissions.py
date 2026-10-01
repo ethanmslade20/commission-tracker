@@ -290,6 +290,30 @@ def monthly_summary(payments: pd.DataFrame) -> pd.DataFrame:
     return out.sort_values("Month")
 
 
+# Money that lands once rather than every month a client stays. September 2026
+# carried $15,975 of Ambetter bonus — $100 a member on 161 members — against
+# $29,754 of recurring pay. Left in, it would have shown $62.39 per client per
+# month instead of $40.59, and multiplying THAT by 17 months of tenure invents
+# roughly $370 of lifetime value per client that no client will ever pay.
+#
+# Substring, not an exact set: the carrier writes the label, and "Bonus Payment"
+# or "Q4 Bonus" next quarter must not slip back in. Nothing else Ethan is paid
+# contains the word, so this cannot over-match today.
+#
+# Note this makes the figure slightly CONSERVATIVE — that $100 a member is real
+# money, just not monthly. Erring low is the right direction for a number whose
+# whole job is capping ad spend.
+NON_RECURRING_PATTERN = r"bonus"
+
+
+def recurring_monthly_summary(payments: pd.DataFrame) -> pd.DataFrame:
+    """monthly_summary with one-off payments stripped — the basis for lifetime value."""
+    if payments.empty or "description" not in payments.columns:
+        return monthly_summary(payments)
+    desc = payments["description"].astype(str).str.lower()
+    return monthly_summary(payments[~desc.str.contains(NON_RECURRING_PATTERN, na=False)])
+
+
 def carrier_summary(payments: pd.DataFrame) -> pd.DataFrame:
     if payments.empty:
         return pd.DataFrame(columns=["Carrier", "Net", "Payments"])

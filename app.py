@@ -2343,11 +2343,16 @@ if page == "Dashboard":
     # ── LIFETIME VALUE ────────────────────────────────────────────────────────
     # LTV = avg client tenure (1 ÷ monthly churn) × REAL commission per client from
     # the latest COMPLETE month of actual payments (not the $23 estimate). This is
-    # the honest max-CAC ceiling for ad spend. Reuses _ms (monthly_summary) loaded
-    # in the Your Money section above.
+    # the honest max-CAC ceiling for ad spend.
+    #
+    # Deliberately NOT _ms: bonuses are stripped first. A bonus is real money and
+    # stays in "Your Money" above, but it is not a client paying every month, and
+    # multiplying it by 17 months of tenure invents value the book never earns.
     _real_pp = None
     try:
-        _cm = _ms.copy(); _cm["_m"] = pd.to_datetime(_cm["Month"], errors="coerce")
+        from tracker.commissions import recurring_monthly_summary
+        _cm = recurring_monthly_summary(_load_payments())
+        _cm["_m"] = pd.to_datetime(_cm["Month"], errors="coerce")
         _curp = pd.Timestamp(dt.date.today()).to_period("M")
         _cc = _cm[_cm["_m"].dt.to_period("M") < _curp].sort_values("_m")
         if not _cc.empty and _active_policies:
