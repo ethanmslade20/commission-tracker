@@ -1500,16 +1500,30 @@ def run_report(settings: dict) -> None:
         except Exception:
             pass
 
+        # AOR Defense's frozen "Taken On" (data/aor_first_seen.json, keyed by exchange id
+        # or first+last name). A steal can drop OFF the at-risk scrape while the client
+        # stays taken — then the only date left was last_ede_sync, which jumps to ~today
+        # on every HealthSherpa re-sync and re-surfaced a months-old steal as "lost
+        # today" (Ethan 2026-10-07: Curtisha Williams — AOR Defense Jul 15, Re-Engage
+        # "today"). Read the same frozen date AOR Defense shows, so the two pages agree.
+        _first_seen = {}
+        try:
+            _fsp = Path(__file__).resolve().parent.parent / "data" / "aor_first_seen.json"
+            _first_seen = {str(k): pd.to_datetime(v, errors="coerce")
+                           for k, v in _json.loads(_fsp.read_text()).items()}
+        except Exception:
+            pass
+
         def _steal_date(row):
+            # Earliest known detection across the scrape and the frozen first-seen
+            # record: never later than AOR Defense's date, and never drifting later.
             _x = re.sub(r"\.0$", "", str(row.get("ffm_app_id", "")).strip())
-            if _x in _steal_by_xid:
-                return _steal_by_xid[_x]
             _p = f"{row.get('first_name','')} {row.get('last_name','')}".split()
-            if _p:
-                _k = re.sub(r"[^a-z]", "", (_p[0] + _p[-1]).lower())
-                if _k in _steal_by_name:
-                    return _steal_by_name[_k]
-            return pd.NaT
+            _k = re.sub(r"[^a-z]", "", (_p[0] + _p[-1]).lower()) if _p else ""
+            _c = [_steal_by_xid.get(_x) if _x else None, _steal_by_name.get(_k) if _k else None,
+                  _first_seen.get(_x) if _x else None, _first_seen.get(_k) if _k else None]
+            _c = [d for d in _c if d is not None and pd.notna(d)]
+            return min(_c) if _c else pd.NaT
 
         _ede = (pd.to_datetime(all_clients["last_ede_sync"], errors="coerce")
                 if "last_ede_sync" in all_clients.columns
