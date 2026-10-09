@@ -89,6 +89,9 @@ sources:
       # stamped 10/08 on plans that ended months earlier. The tracker dates a
       # Terminated client's loss by this instead (tracker/diff.py build_all_clients).
       coverage_end:         "expiration_date"
+      # The plan's REAL start day. effective_date is rounded down to the 1st at ingest,
+      # so a plan starting 4/16 that HS ended 4/15 (never in force) would look valid.
+      plan_start:           "effective_date"
       agent:                "agent"
       email:                "email"
       phone:                "phone"
@@ -124,7 +127,7 @@ sources:
       submitting_agent_col: "submitting_agent_name"
 
     date_columns:   ["effective_date", "submission_date", "created_date", "date_effectuated", "term_date",
-                     "coverage_end"]
+                     "coverage_end", "plan_start"]
     amount_columns: ["commission", "net_premium", "subsidy", "applicant_count",
                      "dmi_outstanding", "dmi_expired", "svi_outstanding", "svi_expired"]
 

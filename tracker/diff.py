@@ -212,14 +212,23 @@ def build_all_clients(months: dict) -> pd.DataFrame:
     _cov_raw = (pd.to_datetime(all_df["coverage_end"], errors="coerce")
                 if "coverage_end" in all_df.columns
                 else pd.Series(pd.NaT, index=all_df.index, dtype="datetime64[ns]"))
-    _in_latest = (all_df["month"] == max(months.keys())) & all_df["_is_hs"].astype(bool)
+    # "Newest" = the newest month that holds HealthSherpa rows: a GA/IL book staged
+    # first in a new month must not switch coverage dating off.
+    _hs_months = all_df.loc[all_df["_is_hs"].astype(bool), "month"]
+    _hs_latest = _hs_months.max() if len(_hs_months) else max(months.keys())
+    _in_latest = (all_df["month"] == _hs_latest) & all_df["_is_hs"].astype(bool)
+    # Compare against the plan's real start day where ingest carried it (older
+    # snapshots only have the month-rounded effective_date).
+    _start = (pd.to_datetime(all_df["plan_start"], errors="coerce")
+              if "plan_start" in all_df.columns
+              else pd.Series(pd.NaT, index=all_df.index, dtype="datetime64[ns]")).fillna(all_df["effective_date"])
     _lm = all_df[_in_latest]
     _newest_idx = (_lm.assign(_ce=_cov_raw.loc[_lm.index],
                               _eff=_lm["effective_date"].fillna(pd.Timestamp.min))
                       .sort_values(["_pkey", "_eff", "_ce"], na_position="first")
                       .groupby("_pkey").tail(1).index)
     _max_active_eff = all_df["_pkey"].map(
-        all_df[all_df["_srank"] == 1].groupby("_pkey")["effective_date"].max())
+        _start[all_df["_srank"] == 1].groupby(all_df.loc[all_df["_srank"] == 1, "_pkey"]).max())
     from tracker.config import get_agent as _get_agent
     _ag = _get_agent()
     _aor = (all_df["policy_aor"].fillna("").astype(str)
@@ -237,7 +246,7 @@ def build_all_clients(months: dict) -> pd.DataFrame:
         & _cov_raw.notna()
         & (_cov_raw <= pd.Timestamp.today().normalize())
         & ~((_cov_raw.dt.month == 12) & (_cov_raw.dt.day == 31))
-        & (all_df["effective_date"].isna() | (_cov_raw >= all_df["effective_date"]))
+        & (_start.isna() | (_cov_raw >= _start))
         & (_max_active_eff.isna() | (_cov_raw >= _max_active_eff))
     )
     all_df["_cov_end"] = _cov_raw.where(_cov_ok)
