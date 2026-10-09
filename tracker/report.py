@@ -1548,6 +1548,11 @@ def run_report(settings: dict) -> None:
         all_clients.loc[_aor_dated, "term_date"] = _sync[_aor_dated]
         if "term_estimated" in all_clients.columns:
             all_clients.loc[_aor_dated, "term_estimated"] = False
+        # Their date is the steal date now, not whatever loss_dating stamped
+        # (commission/sync/coverage). "aor" keeps them on the Re-Engage page, which
+        # hides sync/active-dated losses (19 AOR steals were hidden — Ethan 2026-10-09).
+        if "loss_basis" in all_clients.columns:
+            all_clients.loc[_aor_rows, "loss_basis"] = "aor"
         # Restore preserved upstream reasons.
         all_clients.loc[_keep_existing, "cancel_reason"] = _existing[_keep_existing]
 

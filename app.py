@@ -4127,6 +4127,42 @@ elif page == "Re-Engage":
         if "loss_basis" in lost_df.columns:
             _lb = lost_df["loss_basis"].astype(str).str.strip().str.lower()
             lost_df = lost_df[~_lb.isin(["sync", "active"])]
+        # Every AOR change belongs here too (Ethan 2026-10-09: "include all the AOR
+        # changes"). The roster drops steals where the AOR was never his in any
+        # snapshot (he enrolled them, but another agent already held the AOR when
+        # tracking began) — they're not counted as losses, but they ARE win-back
+        # calls. Pull every "Taken" row from AOR Defense that isn't already listed;
+        # the person-level dedup below drops anyone who is active again.
+        try:
+            _adf_re = _load_aor_defense()
+        except Exception:
+            _adf_re = pd.DataFrame()
+        if not _adf_re.empty and {"Client", "Type"}.issubset(_adf_re.columns):
+            _tk = _adf_re[_adf_re["Type"].astype(str) == "Taken"].copy()
+            import re as _re_aor
+            def _lk(s):
+                return _re_aor.sub(r"[^a-z]", "", str(s).lower())
+            _listed = set((lost_df.get("first_name", pd.Series(dtype=str)).fillna("").astype(str)
+                           + lost_df.get("last_name", pd.Series(dtype=str)).fillna("").astype(str)).map(_lk))
+            _tk = _tk[_tk["Client"].astype(str).str.strip() != ""]
+            _tk = _tk[~_tk["Client"].map(_lk).isin(_listed)]
+            if len(_tk):
+                _nm = _tk["Client"].astype(str).str.strip().str.split(n=1)
+                _add = pd.DataFrame({
+                    "first_name": _nm.str[0],
+                    "last_name": _nm.str[1].fillna(""),
+                    "carrier": _tk.get("Carrier", ""),
+                    "state": _tk.get("State", ""),
+                    "phone": _tk.get("Phone", ""),
+                    "status": "Cancelled",
+                    "cancel_reason": "AOR taken — " + _tk.get("Taken By", pd.Series("", index=_tk.index)).fillna("").astype(str),
+                    "term_date": pd.to_datetime(_tk.get("Detected"), format="%b %d, %Y", errors="coerce"),
+                    "applicant_count": (pd.to_numeric(_tk["Members"], errors="coerce").fillna(1)
+                                        if "Members" in _tk.columns else 1),
+                    "loss_basis": "aor",
+                })
+                _add["name_key"] = (_add["first_name"] + " " + _add["last_name"]).str.lower().str.strip()
+                lost_df = pd.concat([lost_df, _add.reset_index(drop=True)], ignore_index=True)
         # Person-level dedup: a plan switch across subscriber IDs can leave the SAME
         # person with both an old terminated row and a new active row. Drop the
         # terminated row only when a matching ACTIVE row is confidently the SAME
