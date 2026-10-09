@@ -84,6 +84,11 @@ sources:
       created_date:         "application_creation_date"
       date_effectuated:     "date_effectuated"
       term_date:            "date_cancelled"
+      # Coverage END date (the last day the plan was in force). date_cancelled is
+      # only the day HealthSherpa PROCESSED the term — its Oct 7-9 2026 re-sync
+      # stamped 10/08 on plans that ended months earlier. The tracker dates a
+      # Terminated client's loss by this instead (tracker/diff.py build_all_clients).
+      coverage_end:         "expiration_date"
       agent:                "agent"
       email:                "email"
       phone:                "phone"
@@ -118,7 +123,8 @@ sources:
       npn_used_col:         "npn_used"
       submitting_agent_col: "submitting_agent_name"
 
-    date_columns:   ["effective_date", "submission_date", "created_date", "date_effectuated", "term_date"]
+    date_columns:   ["effective_date", "submission_date", "created_date", "date_effectuated", "term_date",
+                     "coverage_end"]
     amount_columns: ["commission", "net_premium", "subsidy", "applicant_count",
                      "dmi_outstanding", "dmi_expired", "svi_outstanding", "svi_expired"]
 

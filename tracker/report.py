@@ -1600,6 +1600,7 @@ def run_report(settings: dict) -> None:
                         if "cancel_reason" in all_clients.columns: all_clients.at[_i, "cancel_reason"] = ""
                         if "cancel_notes" in all_clients.columns: all_clients.at[_i, "cancel_notes"] = "manual: active in HealthSherpa (AOR Ethan)"
                         if "term_date" in all_clients.columns: all_clients.at[_i, "term_date"] = pd.NaT
+                        if "loss_basis" in all_clients.columns: all_clients.at[_i, "loss_basis"] = ""
                         if "last_seen" in all_clients.columns: all_clients.at[_i, "last_seen"] = _latest
                         if "source" in all_clients.columns: all_clients.at[_i, "source"] = "manual"
                         _react += 1
@@ -1841,6 +1842,8 @@ def run_report(settings: dict) -> None:
                         all_clients.at[_i, "cancel_reason"] = ""
                         if "term_date" in all_clients.columns:
                             all_clients.at[_i, "term_date"] = pd.NaT
+                        if "loss_basis" in all_clients.columns:
+                            all_clients.at[_i, "loss_basis"] = ""
                     _rn = sorted({f"{all_clients.at[_i, 'first_name']} {all_clients.at[_i, 'last_name']}".strip()
                                   for _i in all_clients.index[_protect]})
                     print(f"  Book race guard: restored {int(_protect.sum())} 'AOR taken' client(s) the "

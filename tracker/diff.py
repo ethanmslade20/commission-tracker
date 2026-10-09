@@ -187,6 +187,61 @@ def build_all_clients(months: dict) -> pd.DataFrame:
     all_df["term_date"]      = pd.to_datetime(all_df.get("term_date"),      errors="coerce")
     all_df["submission_date"] = pd.to_datetime(all_df.get("submission_date"), errors="coerce")
 
+    # COVERAGE-END loss date (Ethan 2026-10-09). HealthSherpa's date_cancelled
+    # (term_date) is the day HS PROCESSED a termination, not the day coverage
+    # ended — its Oct 7-9 2026 re-sync stamped 10/08 on plans that ended in
+    # April-Sept, and the commission-stop fallback dated some of those 2-3 months
+    # late (Amber Lee: coverage ended 7/31, texted as a fresh loss on 10/09).
+    # expiration_date (coverage_end) is the real last day in force. Trust it ONLY
+    # where it means that, measured across every HS export Feb-Oct 2026:
+    #   - Terminated rows only: active and Cancelled (never in force) rows carry
+    #     the 12/31 plan-year default, which is not a coverage end;
+    #   - the NEWEST snapshot only (older snapshots don't carry the column);
+    #   - not in the future (a scheduled term isn't a loss yet);
+    #   - not before the plan's start (ended before it began = never in force);
+    #   - not a 12/31 plan-year end — that shape stays with the passive-renewal
+    #     rollover guard (is_plan_year_rollover) and the existing dating chain;
+    #   - from the person's NEWEST plan only: if that plan fails a test above, an
+    #     older plan's mid-year end must not stand in for it (Matthew Pen: 2025
+    #     Oscar app ended 8/18 next to a current SelectHealth plan);
+    #   - not before a plan the snapshots already showed ACTIVE: the Oct re-sync
+    #     swapped an older, terminated policy back into some export rows (Byron
+    #     Domi: a 6/01 plan active Jun-Sep, the row now shows a Feb plan ended 4/30);
+    #   - not on another agent's policy: a stolen client's row is the OTHER agent's
+    #     plan, so its end isn't when Ethan lost them (the AOR steal date is).
+    _cov_raw = (pd.to_datetime(all_df["coverage_end"], errors="coerce")
+                if "coverage_end" in all_df.columns
+                else pd.Series(pd.NaT, index=all_df.index, dtype="datetime64[ns]"))
+    _in_latest = (all_df["month"] == max(months.keys())) & all_df["_is_hs"].astype(bool)
+    _lm = all_df[_in_latest]
+    _newest_idx = (_lm.assign(_ce=_cov_raw.loc[_lm.index],
+                              _eff=_lm["effective_date"].fillna(pd.Timestamp.min))
+                      .sort_values(["_pkey", "_eff", "_ce"], na_position="first")
+                      .groupby("_pkey").tail(1).index)
+    _max_active_eff = all_df["_pkey"].map(
+        all_df[all_df["_srank"] == 1].groupby("_pkey")["effective_date"].max())
+    from tracker.config import get_agent as _get_agent
+    _ag = _get_agent()
+    _aor = (all_df["policy_aor"].fillna("").astype(str)
+            if "policy_aor" in all_df.columns else pd.Series("", index=all_df.index))
+    _aor_l = _aor.str.strip().str.lower()
+    _foreign_aor = (~_aor_l.isin(["", "none", "nan"])
+                    & ~_aor.str.contains(str(_ag["npn"]), regex=False)
+                    & ~(_aor_l.str.contains(str(_ag["first_name"]).lower(), regex=False)
+                        & _aor_l.str.contains(str(_ag["last_name"]).lower(), regex=False)))
+    _cov_ok = (
+        _in_latest
+        & all_df.index.isin(_newest_idx)
+        & (all_df["status"] == "Terminated")
+        & ~_foreign_aor
+        & _cov_raw.notna()
+        & (_cov_raw <= pd.Timestamp.today().normalize())
+        & ~((_cov_raw.dt.month == 12) & (_cov_raw.dt.day == 31))
+        & (all_df["effective_date"].isna() | (_cov_raw >= all_df["effective_date"]))
+        & (_max_active_eff.isna() | (_cov_raw >= _max_active_eff))
+    )
+    all_df["_cov_end"] = _cov_raw.where(_cov_ok)
+
     # Sort: oldest month first, within same month inactive before active
     # → "last" in each group = most recent month, most active row
     all_df = all_df.sort_values(["_pkey", "month", "_srank"])
@@ -225,6 +280,8 @@ def build_all_clients(months: dict) -> pd.DataFrame:
             _term_date_last   = ("term_date",      "last"),  # most recent term_date
             _has_active       = ("_srank",         "max"),   # 1 if any active plan exists
             _has_hs           = ("_is_hs",         "max"),   # seen in any HS export?
+            # coverage end of the person's newest plan (NaT unless it passed every test)
+            _cov_end          = ("_cov_end",       "max"),
             **last_fields,
         )
         .reset_index()
@@ -233,9 +290,20 @@ def build_all_clients(months: dict) -> pd.DataFrame:
 
     # term_date: NaT when the person still has an active plan
     agg["term_date"] = agg["_term_date_last"].where(agg["_has_active"] == 0, other=pd.NaT)
+    # A gone person whose newest HS row is Terminated with a trustworthy coverage
+    # end is dated by THAT day — for ever-active clients (whose HS date was blanked
+    # above) and never-active ones (whose date_cancelled may be a late re-sync
+    # stamp) alike. loss_basis="coverage" marks it a CONFIRMED loss date, so the
+    # upload text and the Re-Engage page treat it like a real carrier date, and
+    # assign_loss_months leaves it alone (it never reaches the commission chain).
+    agg["coverage_end"] = agg["_cov_end"]
+    _use_cov = agg["status"].isin(["Cancelled", "Terminated"]) & agg["_cov_end"].notna()
+    agg["term_date"] = agg["term_date"].where(~_use_cov, agg["_cov_end"])
+    agg["loss_basis"] = ""
+    agg.loc[_use_cov, "loss_basis"] = "coverage"
     # source: "healthsherpa" if seen in any FFM export, else "access" (exchange-only)
     agg["source"] = agg["_has_hs"].map(lambda x: "healthsherpa" if x else "access")
-    agg = agg.drop(columns=["_term_date_last", "_has_active", "_has_hs"])
+    agg = agg.drop(columns=["_term_date_last", "_has_active", "_has_hs", "_cov_end"])
 
     # months_on_book: calendar months from effective_date to the latest snapshot month
     latest       = max(months.keys())
@@ -282,7 +350,7 @@ def build_all_clients(months: dict) -> pd.DataFrame:
         "email", "phone", "cancel_notes", "net_premium", "applicant_count", "household_size", "subsidy", "first_seen", "last_seen", "last_active", "months_on_book",
         "dmi_outstanding", "dmi_expired", "svi_outstanding", "svi_expired", "followup_docs",
         "policy_aor", "last_ede_sync", "policy_number", "submission_date", "source",
-        "npn_used", "submitting_agent_name", "hs_terminal",
+        "npn_used", "submitting_agent_name", "hs_terminal", "coverage_end", "loss_basis",
     ]
     return agg[[c for c in cols if c in agg.columns]]
 
@@ -335,6 +403,9 @@ def assign_loss_months(all_clients: pd.DataFrame, last_paid=None, ledger_path=No
     # proxy). Left "" for real-dated losses (they never pass through _freeze).
     if "loss_basis" not in df.columns:
         df["loss_basis"] = ""
+    # Rows appended after build_all_clients (carrier-portal adds, manual adds) carry
+    # NaN; keep the invariant that every row has a string basis.
+    df["loss_basis"] = df["loss_basis"].fillna("").astype(str)
 
     # Loss-date freeze ledger (data/loss_dates.json): remembers each gone client's
     # stamped loss month so drifting inputs can't keep re-dating the same loss.
@@ -386,6 +457,40 @@ def assign_loss_months(all_clients: pd.DataFrame, last_paid=None, ledger_path=No
 
     gone      = df["status"].isin(churned)
     is_switch = reason.str.contains("switch")          # plan switch = retention, skip
+
+    # COVERAGE-END PINS. build_all_clients dates a Terminated client by its HS
+    # coverage-end day (loss_basis="coverage"); below, each such day is pinned in the
+    # ledger. Re-apply a pin to a gone row that THIS run could not date by coverage
+    # end (its HS row dropped out or stopped carrying it), so it keeps that day
+    # instead of falling back to a later commission/sync month or a late
+    # date_cancelled re-sync stamp — but only when the pin belongs to the CURRENT
+    # plan episode (not before the latest plan's start; an older pin is dropped) and
+    # is earlier than the date the row has now. Hand-verified (manual-lost) dates and
+    # AOR steals keep their own dates.
+    _cur_eff = (pd.to_datetime(df["current_effective"], errors="coerce")
+                if "current_effective" in df.columns else pd.Series(pd.NaT, index=df.index))
+    _own_date = reason.str.contains("verified terminated") | reason.str.startswith("aor taken")
+    n_cov_pinned = 0
+    for idx in df.index[gone & ~is_switch & (df["loss_basis"] != "coverage")]:
+        _k = _pk(fn.at[idx], ln.at[idx])
+        _prev = ledger.get(_k) if _k else None
+        if not _prev or _prev.get("basis") != "coverage":
+            continue
+        _d = pd.to_datetime(_prev.get("date"), errors="coerce")
+        if pd.isna(_d) or (pd.notna(_cur_eff.at[idx]) and _d < _cur_eff.at[idx]):
+            ledger.pop(_k, None)               # unreadable, or pin from an earlier plan episode
+            continue
+        if _own_date.at[idx]:
+            continue                           # manual-lost / AOR steal: its own date wins
+        if pd.isna(term.at[idx]) or est.at[idx] or _d < term.at[idx]:
+            df.at[idx, "term_date"] = _d
+            df.at[idx, "term_estimated"] = False
+            df.at[idx, "loss_basis"] = "coverage"
+            n_cov_pinned += 1
+    if n_cov_pinned:
+        term = pd.to_datetime(df.get("term_date"), errors="coerce")
+        est  = df["term_estimated"].apply(_as_bool)
+
     has_real  = gone & term.notna() & ~est             # real carrier cancel date — keep
     need      = gone & ~has_real & ~is_switch          # these need a loss date
 
@@ -404,6 +509,8 @@ def assign_loss_months(all_clients: pd.DataFrame, last_paid=None, ledger_path=No
         key = _pk(fn.at[idx], ln.at[idx])
         cand, auth = mstr[:7], _AUTH[basis]
         prev = ledger.get(key) if key else None
+        if prev and prev.get("basis") == "coverage":
+            prev = None    # a coverage pin is applied (or deliberately not) above; never as a month
         if prev:
             pa, pdt, pb = int(prev.get("auth", 0)), str(prev.get("date", ""))[:7], str(prev.get("basis", ""))
             if auth > pa:
@@ -421,6 +528,18 @@ def assign_loss_months(all_clients: pd.DataFrame, last_paid=None, ledger_path=No
         # sync/active date only marks when we NOTICED the drop (last_ede_sync
         # advances to ~now on every re-sync), so it must not read as fresh.
         df.at[idx, "loss_basis"] = basis
+
+    # COVERAGE-END dates (loss_basis="coverage") are confirmed loss DAYS. Pin each
+    # one in the ledger at the top authority with the full date (re-applied above
+    # if the HS row later stops carrying it). A "coverage" basis left on a row that
+    # is no longer gone (won back / re-activated after build_all_clients) is cleared.
+    _basis  = df["loss_basis"].fillna("").astype(str)
+    has_cov = gone & (_basis == "coverage") & term.notna()
+    df.loc[~gone & (_basis == "coverage"), "loss_basis"] = ""
+    for idx in df.index[has_cov]:
+        key = _pk(fn.at[idx], ln.at[idx])
+        if key:
+            ledger[key] = {"date": term.at[idx].strftime("%Y-%m-%d"), "auth": 4, "basis": "coverage"}
 
     src = {"policy": 0, "name": 0, "fuzzy": 0, "sync": 0, "active": 0, "none": 0}
     for idx in df.index[need]:
@@ -448,7 +567,7 @@ def assign_loss_months(all_clients: pd.DataFrame, last_paid=None, ledger_path=No
     # again, or now carrying a real carrier cancel date that supersedes the
     # estimate — is dropped from the ledger, so if they lapse again later they get
     # a fresh date instead of the stale frozen one.
-    _still = {_pk(fn.at[idx], ln.at[idx]) for idx in df.index[need]}
+    _still = {_pk(fn.at[idx], ln.at[idx]) for idx in df.index[need | has_cov]}
     for _k in [k for k in ledger if k not in _still]:
         del ledger[_k]
     try:
@@ -462,6 +581,10 @@ def assign_loss_months(all_clients: pd.DataFrame, last_paid=None, ledger_path=No
               f"policy-id {src['policy']}, name {src['name']}, fuzzy {src['fuzzy']}, "
               f"exchange-sync {src['sync']}, last-active {src['active']}, no-date {src['none']} "
               f"(frozen; {len(ledger)} in ledger)")
+    if has_cov.any():
+        print(f"  Loss dating: {int(has_cov.sum())} terminated client(s) dated by their HealthSherpa "
+              f"coverage-end day" + (f" ({n_cov_pinned} from the pinned ledger — HS row no longer "
+                                      f"carries it)" if n_cov_pinned else ""))
     return df
 
 

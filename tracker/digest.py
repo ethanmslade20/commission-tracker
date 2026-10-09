@@ -75,7 +75,9 @@ def build_digest(today=None) -> str:
         term = pd.to_datetime(ac.get("term_date"), errors="coerce")
         est = ac.get("term_estimated", pd.Series(False, index=ac.index)).apply(_as_bool)
         cnt = pd.to_numeric(ac.get("applicant_count", 1), errors="coerce").fillna(1)
-        m = term.notna() & (term >= week_ago) & (term <= today) & (~est)
+        # (week_ago, today]: half-open so a loss dated exactly on the boundary (e.g.
+        # a Monday month-end coverage end) isn't counted in two digests in a row.
+        m = term.notna() & (term > week_ago) & (term <= today) & (~est)
         lapse_pol, lapse_mem = int(m.sum()), int(cnt[m].sum())
 
     # At risk now
