@@ -934,6 +934,10 @@ def _filter_by_appointments(df: pd.DataFrame, appointments: dict) -> pd.DataFram
         carrier = str(row.get("carrier", "")).strip().lower()
         if not state or not carrier:
             return True  # no state/carrier info — keep
+        # A taken row shows the TAKER's carrier; the report already judged it by the
+        # carrier he held it on (held-carrier gate), so don't drop it again here.
+        if str(row.get("cancel_reason", "")).startswith("AOR taken"):
+            return True
         keywords = appointments.get(state, [])
         if not keywords:
             return False  # state not in appointments — exclude
@@ -4124,9 +4128,11 @@ elif page == "Re-Engage":
         # count in churn and appear in the full client listing). loss_basis is
         # absent in local/parquet mode, where these are already excluded because
         # their term_date is NaT. (Ethan 2026-08-01 — freeze-basis gap on dashboard)
+        # "roster" (suspected — left the GA/IL Access book) is hidden too: counted
+        # in churn, but not a confirmed loss to call on. (Ethan 2026-10-28)
         if "loss_basis" in lost_df.columns:
             _lb = lost_df["loss_basis"].astype(str).str.strip().str.lower()
-            lost_df = lost_df[~_lb.isin(["sync", "active"])]
+            lost_df = lost_df[~_lb.isin(["sync", "active", "roster"])]
         # Every AOR change belongs here too (Ethan 2026-10-09: "include all the AOR
         # changes"). The roster drops steals where the AOR was never his in any
         # snapshot (he enrolled them, but another agent already held the AOR when

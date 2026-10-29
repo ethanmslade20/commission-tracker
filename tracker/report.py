@@ -135,6 +135,65 @@ def _filter_by_appointments(df: pd.DataFrame, appointments: dict) -> pd.DataFram
     return df[df.apply(_is_appointed, axis=1)].copy()
 
 
+def _appointed_by_held(df: pd.DataFrame, appointments: dict, held_car: dict,
+                       keep_held: bool = False) -> pd.DataFrame:
+    """_filter_by_appointments, but a foreign-AOR row on an application that was ever
+    his (held_car = {ffm_app_id: carrier he held it on}) is judged by the carrier HE
+    held it on; its own (the taker's) carrier is put back afterwards, unless
+    keep_held (the daily sales tabs: the sale was on the carrier he sold)."""
+    if not held_car or df is None or df.empty or not {"policy_aor", "ffm_app_id", "carrier"}.issubset(df.columns):
+        return _filter_by_appointments(df, appointments)
+    from tracker.ingest import clean_app_id
+    df = df.copy()
+    _ax = df["policy_aor"].fillna("").astype(str)
+    _axl = _ax.str.strip().str.lower()
+    _fx = (~_axl.isin(["", "none", "nan"]) & ~_ax.str.contains(str(_NPN), regex=False)
+           & ~(_axl.str.contains(_FN, regex=False) & _axl.str.contains(_LN, regex=False)))
+    _hc = df["ffm_app_id"].map(clean_app_id).map(lambda a: held_car.get(a, ""))
+    _sw = _fx & (_hc != "")
+    if not _sw.any():
+        return _filter_by_appointments(df, appointments)
+    restore = df.loc[_sw, "carrier"].copy()
+    df.loc[_sw, "carrier"] = _hc[_sw]
+    out = _filter_by_appointments(df, appointments)
+    if not keep_held:
+        _ri = restore.index.intersection(out.index)
+        out.loc[_ri, "carrier"] = restore.loc[_ri]
+    return out
+
+
+def _access_app_days(row) -> tuple:
+    """(earliest, latest) application day of a GA/IL book row: its application_day,
+    else its effective_date (the day floored to the 1st) and that month's last day."""
+    if row is None:
+        return None, None
+    d = pd.to_datetime(row.get("application_day") or None, errors="coerce")
+    if pd.notna(d):
+        return d, d
+    e = pd.to_datetime(row.get("effective_date"), errors="coerce")
+    if pd.isna(e):
+        return None, None
+    return e, e + pd.offsets.MonthEnd(0)
+
+
+def _access_row_for(months: dict, client, cache: dict):
+    """The GA/IL book row behind an all_clients row: same person (strict key) in the
+    access rows of the client's last_seen month. None when not found. `cache` is a
+    dict the caller keeps for one run (one keyed index per month)."""
+    from tracker import state_roster as _SR
+    m = str(client.get("last_seen") or "")
+    d = months.get(m)
+    if d is None or "source" not in d.columns:
+        return None
+    if m not in cache:
+        a = _SR.add_keys(d[d["source"].astype(str).str.lower() == "access"])
+        cache[m] = (a, _SR.PersonIndex(a))
+    a, ix = cache[m]
+    k = _SR.add_keys(pd.DataFrame([client]))
+    hit = ix.match(k["_f"].iat[0], k["_l"].iat[0], k["_ph"].iat[0], k["_em"].iat[0])
+    return a.loc[hit[0]] if hit else None
+
+
 def _build_last_paid(settings: dict) -> dict:
     """Money-backed 'last month paid per client' lookups for loss-dating. Returns
     {"by_policy": {policy: 'YYYY-MM'}, "by_name": {name_key: 'YYYY-MM'},
@@ -433,16 +492,18 @@ def _alert_new_lapses(all_clients: pd.DataFrame) -> None:
         print(f"  (lapse text failed: {e})")
 
 
-def _upload_summary(all_clients, pastdue, snapshot_dir, today=None) -> None:
+def _upload_summary(all_clients, pastdue, snapshot_dir, today=None, watch=None, alerts=None) -> None:
     """After a new HealthSherpa upload, text the agent a summary: new policies/
     members signed, and clients newly fallen off since the last upload split into
     Cancelled (→ Re-Engage), Behind on payment, and Taken by another agent.
-    Only fires when the HealthSherpa snapshot actually changed (a real upload)."""
+    Only fires when the HealthSherpa snapshot actually changed (a real upload).
+    watch: run_report's Watch list (tripwire / GA-IL roster rows) — one line each.
+    alerts: run_report's GA/IL book problems (failed load, stale book, possible new
+    sale) — one line each."""
     import glob
     import hashlib
     import json
     import re
-    import unicodedata
 
     today = pd.Timestamp(today) if today else pd.Timestamp.today().normalize()
     _data = Path(__file__).resolve().parent.parent / "data"
@@ -525,9 +586,7 @@ def _upload_summary(all_clients, pastdue, snapshot_dir, today=None) -> None:
         # foreign AOR now + his NPN on the record + the AOR was NEVER his in any snapshot.
         return (_foreign_aor_v(r.get("policy_aor")) and _ever_mine(r)
                 and not _ever_his_aor(r))
-    def _key(f, l):
-        s = unicodedata.normalize("NFKD", f"{f} {l}").encode("ascii", "ignore").decode().lower()
-        return re.sub(r"[^a-z]", "", s)
+    _key = _text_key
     def _disp(f, l):
         return f"{f} {l}".strip().title()
     def _as_bool(v):
@@ -545,6 +604,7 @@ def _upload_summary(all_clients, pastdue, snapshot_dir, today=None) -> None:
         return bool(v)
 
     lost, vexp, aor, pol, polmem, polname = {}, {}, {}, set(), {}, {}
+    rlost = {}      # left the GA/IL Access book, counted lost on suspicion (roster rule)
     rollover = {}   # plan-year-end terms that look like BAR passive renewals, not losses
     lost_term = {}     # name_key -> real loss date (term_date), for freshness trim
     lost_estimated = {}  # name_key -> was the term date estimated/unconfirmed
@@ -552,11 +612,36 @@ def _upload_summary(all_clients, pastdue, snapshot_dir, today=None) -> None:
                        # "" / "commission" = confirmed; "sync" / "active" = inferred-recency
     active_mine = {}   # currently active AND credited to the agent — win-back proof
     taken_pids = set()  # policy ids whose AOR is another agent — never a NEW SALE of his
+    # The buckets are keyed by NAME (that is what known_*.json store), but two
+    # different people can share a name. So each bucket entry also carries the
+    # identity of the row(s) that put it there: the ffm_app_id, or name@state for a
+    # row with no app id. The race guard and the correction marker below test THAT,
+    # never the bare name. (Ethan 2026-10-28: a GA client, taken, was hidden from the
+    # text because a same-name SC client is active.) _row_pk adds a strict same-PERSON
+    # key per row — name + state + (email or phone) — so a plan change onto a NEW app
+    # id (old app lapsed, new one active) is still recognised as the same client.
+    lost_ids, aor_ids, act_ids, _row_pk = {}, {}, {}, {}
+    rlost_ids = {}
+    def _cell(v):
+        return "" if v is None or (isinstance(v, float) and pd.isna(v)) else str(v).strip()
+    def _ident(r, k):
+        _a = re.sub(r"\.0$", "", _cell(r.get("ffm_app_id")))
+        if _a and _a.lower() not in ("nan", "none"):
+            return _a
+        return f"{k}@{_cell(r.get('state')).lower()}"
+    from tracker.state_roster import phone10 as _phone10
+    def _person_keys(r, k):
+        _ns = f"{k}@{_cell(r.get('state')).lower()}"
+        _em = _cell(r.get("email")).lower()
+        _ph = _phone10(r.get("phone"))      # "4045551234.0" (a float-stored phone) too
+        return ({f"{_ns}#e:{_em}"} if "@" in _em else set()) | ({f"{_ns}#p:{_ph}"} if _ph else set())
     for _, r in all_clients.iterrows():
         f, l = r.get("first_name", ""), r.get("last_name", "")
         k = _key(f, l)
         if not k:
             continue
+        _id = _ident(r, k)
+        _row_pk.setdefault(_id, set()).update(_person_keys(r, k))
         _never_mine = False
         st = str(r.get("status") or "")
         _reason = str(r.get("cancel_reason") or "")
@@ -577,6 +662,12 @@ def _upload_summary(all_clients, pastdue, snapshot_dir, today=None) -> None:
                 # taken clients are now reclassified Terminated, but they belong
                 # in the "taken by another agent" bucket, not generic "lost"
                 aor[k] = _disp(f, l)
+                aor_ids.setdefault(k, set()).add(_id)
+            elif _reason.startswith("Suspected — left"):
+                # Left the GA/IL Access book with no other proof yet (roster rule,
+                # count mode): counted lost on its own line, never a fresh Re-Engage lead.
+                rlost[k] = _disp(f, l)
+                rlost_ids.setdefault(k, set()).add(_id)
             elif is_plan_year_rollover(r):
                 # Plan-year-end (12/31) term with no real cancel language. During
                 # OEP this is almost always a BAR passive renewal whose new FFM
@@ -585,6 +676,7 @@ def _upload_summary(all_clients, pastdue, snapshot_dir, today=None) -> None:
                 rollover[k] = _disp(f, l)
             else:
                 lost[k] = _disp(f, l)
+                lost_ids.setdefault(k, set()).add(_id)
                 lost_term[k] = pd.to_datetime(r.get("term_date"), errors="coerce")
                 lost_estimated[k] = _as_bool(r.get("term_estimated"))
                 lost_basis[k] = str(r.get("loss_basis") or "").strip().lower()
@@ -596,6 +688,7 @@ def _upload_summary(all_clients, pastdue, snapshot_dir, today=None) -> None:
             _foreign = a.strip().lower() not in ("", "none", "nan") and NPN not in a and not _is_e(a)
             if _foreign and _ever_mine(r) and not _is_never_mine(r):
                 aor[k] = _disp(f, l)          # taken from me — I enrolled AND held them before
+                aor_ids.setdefault(k, set()).add(_id)
             elif _foreign and _ever_mine(r):
                 _never_mine = True            # claimed someone else's app OR brand-new foreign →
                                               # never his; drop, don't credit as a sale (2026-08-25)
@@ -604,6 +697,7 @@ def _upload_summary(all_clients, pastdue, snapshot_dir, today=None) -> None:
                                               # don't report as a loss (Ethan's rule 2026-08-15)
             else:
                 active_mine[k] = _disp(f, l)
+                act_ids.setdefault(k, set()).add(_id)
         pid = re.sub(r"\.0$", "", str(r.get("ffm_app_id") or "").strip())
         if pid and pid.lower() != "nan":
             pol.add(pid)
@@ -634,7 +728,13 @@ def _upload_summary(all_clients, pastdue, snapshot_dir, today=None) -> None:
     # for one run. Re-read the freshest HealthSherpa snapshot straight from disk —
     # if a person has ANY current row that is active AND credited to us, they can
     # never be reported lost or taken. Ground truth wins over a stale in-memory build.
-    _active_now = set()
+    # KEYED BY POLICY + PERSON (Ethan 2026-10-28): an entry is held back only when
+    # EVERY row behind it is active-and-ours now — by its OWN app id, or by the strict
+    # same-person key (name + state + email or phone) for a plan change onto a new app
+    # (the case this guard was built for), or by name+state for a row with no app id.
+    # A different client who merely shares the name (three same-name pairs across
+    # states on Oct 28) never hides a steal.
+    _active_now, _active_pk = set(), set()
     try:
         _snap = pd.read_parquet(hs[-1])
         for _, r in _snap.iterrows():
@@ -642,20 +742,31 @@ def _upload_summary(all_clients, pastdue, snapshot_dir, today=None) -> None:
                 continue
             _a = str(r.get("policy_aor") or "")
             if NPN in _a or _is_e(_a):
-                _active_now.add(_key(r.get("first_name", ""), r.get("last_name", "")))
+                _k = _key(r.get("first_name", ""), r.get("last_name", ""))
+                _active_now.add(_ident(r, _k))
+                _active_now.add(f"{_k}@{_cell(r.get('state')).lower()}")   # rows with no app id
+                _active_pk.update(_person_keys(r, _k))
     except Exception:
         pass
+
+    def _held(k, ids):
+        _i = ids.get(k) or set()
+        return bool(_i) and all(_x in _active_now or bool(_row_pk.get(_x, set()) & _active_pk)
+                                for _x in _i)
     # Guard ONLY the lost/taken buckets. Verification-expired (vexp) clients are
     # active-and-mine BY DESIGN — active coverage with a term pending for missing
     # docs — and that "⚠️ still active, get docs in" alert must still fire, so vexp
     # is deliberately NOT guarded.
     if _active_now:
-        _guarded = [n for k, n in {**lost, **aor}.items() if k in _active_now]
+        _guarded = ([n for k, n in lost.items() if _held(k, lost_ids)]
+                    + [n for k, n in aor.items() if _held(k, aor_ids)]
+                    + [n for k, n in rlost.items() if _held(k, rlost_ids)])
         if _guarded:
             print(f"  Upload summary: race guard kept {len(_guarded)} active-and-mine "
                   f"client(s) out of lost/taken: {', '.join(sorted(set(_guarded)))}")
-        lost = {k: v for k, v in lost.items() if k not in _active_now}
-        aor = {k: v for k, v in aor.items() if k not in _active_now}
+        lost = {k: v for k, v in lost.items() if not _held(k, lost_ids)}
+        aor = {k: v for k, v in aor.items() if not _held(k, aor_ids)}
+        rlost = {k: v for k, v in rlost.items() if not _held(k, rlost_ids)}
 
     def _load(name):
         p = _data / name
@@ -665,6 +776,39 @@ def _upload_summary(all_clients, pastdue, snapshot_dir, today=None) -> None:
             return None
     base_lost, base_aor, base_pd, base_pol = (_load("known_lapsed.json"), _load("known_aor.json"),
                                               _load("known_pastdue.json"), _load("known_policies.json"))
+    # Suspected GA/IL roster losses (count mode) also live in known_lapsed.json (one
+    # baseline across loss buckets), but are kept apart here too: a client the roster
+    # rule counted lost who reappears in the book is that suspicion undone, not a
+    # win-back.
+    base_rlost = _load("known_roster_lost.json") or {}
+    # The counted-loss ledger (data/roster_lost.json, state_roster) says WHY a suspected
+    # loss was undone: listed again ("back") or a later HealthSherpa / carrier sign
+    # ("kept"). An entry it still counts can't be undone by this text: if this run
+    # failed to apply it, they stay in the suspected-loss bucket, silently. While the
+    # ledger can't be read, nothing can be said about any of them: every suspected
+    # loss of the last text is held the same way (no "back" line now, and no new-loss
+    # line once the file is restored); the report's alert asks for the restore.
+    _rl_live, _rl_why = set(), {}
+    try:
+        from tracker.state_roster import read_roster_lost
+        from tracker.ingest import LedgerUnreadable
+        for _e in read_roster_lost().values():
+            if isinstance(_e, dict):
+                _k = _key(_e.get("first_name", ""), _e.get("last_name", ""))
+                if _e.get("undone"):
+                    _rl_why[_k] = str((_e.get("undone") or {}).get("why") or "")
+                else:
+                    _rl_live.add(_k)
+    except LedgerUnreadable:
+        _rl_live, _rl_why = set(base_rlost), {}
+    except Exception:
+        pass
+    for k in base_rlost:
+        if k not in rlost and k not in lost and k in _rl_live and k in active_mine:
+            rlost[k] = base_rlost[k]
+    # Watch-tab names already texted (see the Watch lines below): {key: first texted}.
+    _wt_prev = _load("watch_texted.json") or {}
+    _wt_now = {}
     first_run = base_pol is None
     # Win-backs already announced, so a recovered client isn't re-celebrated on
     # every future upload (Takeyta Young fired 3x). Same once-only pattern as
@@ -718,7 +862,9 @@ def _upload_summary(all_clients, pastdue, snapshot_dir, today=None) -> None:
         # brand new. These stay baselined and still count in churn by their frozen
         # month; they just never surface as fresh "call today" Re-Engage leads.
         # (Ethan 2026-08-01 — freeze-basis gap; 67 sync-dated losses were leaking.)
-        if lost_basis.get(k) in ("sync", "active"):
+        # "roster" = a SUSPECTED loss (left the GA/IL Access book, no other proof yet):
+        # counted, but never a "call today" lead. (Ethan 2026-10-28)
+        if lost_basis.get(k) in ("sync", "active", "roster"):
             return False
         td = lost_term.get(k)
         if td is None or pd.isna(td):
@@ -728,25 +874,58 @@ def _upload_summary(all_clients, pastdue, snapshot_dir, today=None) -> None:
         _days = (today - td).days
         return 0 <= _days <= _FRESH_LOST_DAYS
     _new_lost_keys = [] if day_lost is None else [k for k in lost if k not in day_lost]
-    new_lost   = [lost[k] for k in _new_lost_keys if _fresh_lost(k)]
-    stale_lost = [lost[k] for k in _new_lost_keys if not _fresh_lost(k)]
+    _new_rlost_keys = [] if day_lost is None else [k for k in rlost if k not in day_lost]
+    _new_aor_keys = [] if day_aor is None else [k for k in aor if k not in day_aor]
     # Expired verifications share the known_lapsed baseline so a client already
     # texted under either label never re-alerts when they move between buckets.
     new_vexp = _new(vexp, day_lost)
-    new_aor = _new(aor, day_aor)
     new_pd = _new(pdue, day_pd)
     # Win-backs: was lost/taken at the last text, now active AND his again.
     # (Ethan 2026-07-08: "if I ever get a person back that was lost or win them
     # back from an AOR I want you to include that in the text".)
     # A client lost/taken AGAIN drops out of the "already announced" set, so if
     # they come back later they can be celebrated afresh.
-    base_wb -= set(lost) | set(aor)
+    base_wb -= set(lost) | set(aor) | set(rlost)
     won_lost_keys = [k for k in (base_lost or {})
-                     if k not in lost and k in active_mine and k not in base_wb]
+                     if k not in lost and k not in rlost and k in active_mine and k not in base_wb
+                     and k not in base_rlost]
+    _undone_rl = [k for k in base_rlost if k not in rlost and k not in lost and k in active_mine]
+    back_in_book = [base_rlost[k] for k in _undone_rl if _rl_why.get(k) != "kept"]
+    still_yours = [base_rlost[k] for k in _undone_rl if _rl_why.get(k) == "kept"]
     won_aor_keys = [k for k in (base_aor or {})
                     if k not in aor and k in active_mine and k not in base_wb]
-    won_lost = [base_lost[k] for k in won_lost_keys]
-    won_aor = [base_aor[k] for k in won_aor_keys]
+
+    # ONE-TIME TRACKER CORRECTION (data/correction_pending.json, see tracker/correction.py).
+    # A fix that re-sorts many clients at once (e.g. 14 stale "active" clients becoming
+    # "AOR taken") is NOT news: pull the approved people out of the new-lost / new-taken
+    # / won-back lines into one "🧹 Tracker correction (not new)" line. They still go
+    # into the baselines, so they never surface as "new" later; the marker is deleted
+    # only once the text carrying that line has actually sent. (Ethan 2026-10-28)
+    _corr = None
+    _corr_lost, _corr_aor, _corr_rlost = [], [], []
+    _corr_won = set()
+    try:
+        from tracker.correction import load_correction, match_sets
+        _corr = load_correction()
+    except Exception as _e:
+        print(f"  (correction marker unreadable — ignored: {_e})")
+    if _corr:
+        _cids, _cnames = match_sets(_corr)
+        def _is_corr(k, ids):
+            return k in _cnames or bool((ids.get(k) or set()) & _cids)
+        _corr_lost = [k for k in _new_lost_keys if _is_corr(k, lost_ids)]
+        _corr_aor = [k for k in _new_aor_keys if _is_corr(k, aor_ids)]
+        _corr_rlost = [k for k in _new_rlost_keys if _is_corr(k, rlost_ids)]
+        _corr_won = {k for k in won_lost_keys + won_aor_keys if _is_corr(k, act_ids)}
+    new_lost   = [lost[k] for k in _new_lost_keys if k not in _corr_lost and _fresh_lost(k)]
+    stale_lost = [lost[k] for k in _new_lost_keys if k not in _corr_lost and not _fresh_lost(k)]
+    # A suspected GA/IL loss (already counted and texted) that HealthSherpa now shows
+    # taken by another agent: the same loss confirmed, not a second one.
+    _conf_aor = [k for k in _new_aor_keys if k in base_rlost and k not in _corr_aor]
+    new_aor = [aor[k] for k in _new_aor_keys if k not in _corr_aor and k not in _conf_aor]
+    new_rlost = [rlost[k] for k in _new_rlost_keys if k not in _corr_rlost]
+    won_lost = [base_lost[k] for k in won_lost_keys if k not in _corr_won]
+    won_aor = [base_aor[k] for k in won_aor_keys if k not in _corr_won]
     # day-total: new since today's opening, EXCLUDING policies taken by another agent
     # (an old app that only just reappeared under a foreign AOR is not a new sale).
     new_pol = [p for p in pol if p not in day_start_pol and p not in taken_pids]
@@ -758,18 +937,25 @@ def _upload_summary(all_clients, pastdue, snapshot_dir, today=None) -> None:
     # send after the marker write "consumed" the upload event, and the next
     # run's gate stayed silent forever.
     def _save_state():
-        (_data / "known_lapsed.json").write_text(json.dumps({**vexp, **lost}, indent=2))
+        (_data / "known_lapsed.json").write_text(json.dumps({**vexp, **lost, **rlost}, indent=2))
+        (_data / "known_roster_lost.json").write_text(json.dumps(rlost, indent=2))
         (_data / "known_aor.json").write_text(json.dumps(aor, indent=2))
         (_data / "known_pastdue.json").write_text(json.dumps(pdue, indent=2))
         (_data / "known_policies.json").write_text(json.dumps(sorted(pol), indent=2))
         # Persist today's opening book so later same-day pulls keep counting from the
         # start of the day (idempotent: same sets re-written on same-day runs).
+        # Correction entries join today's opening too, so a later same-day pull
+        # doesn't count them as the day's new losses.
         _day_file.write_text(json.dumps({
             "date": _today_str, "policies": sorted(day_start_pol),
-            "lost": day_lost or {}, "aor": day_aor or {}, "pastdue": day_pd or {},
+            "lost": {**(day_lost or {}), **{k: lost[k] for k in _corr_lost},
+                     **{k: rlost[k] for k in _corr_rlost}},
+            "aor": {**(day_aor or {}), **{k: aor[k] for k in _corr_aor}},
+            "pastdue": day_pd or {},
         }, indent=1))
         (_data / "winback_alerted.json").write_text(
             json.dumps(sorted(base_wb | set(won_lost_keys) | set(won_aor_keys)), indent=1))
+        (_data / "watch_texted.json").write_text(json.dumps(_wt_now, indent=1, sort_keys=True))
         marker.write_text(h)
 
     if first_run:
@@ -785,7 +971,7 @@ def _upload_summary(all_clients, pastdue, snapshot_dir, today=None) -> None:
     if _new_names:
         _signed += f":\n • {_fmt(_new_names)}"
     lines = [f"HealthSherpa updated · {d}", _signed]
-    total = len(new_lost) + len(new_pd) + len(new_aor)
+    total = len(new_lost) + len(new_pd) + len(new_aor) + len(new_rlost)
     if total == 0:
         if not new_vexp and not stale_lost:
             lines.append("⬇️ Lost 0 clients — all clear.")
@@ -797,6 +983,8 @@ def _upload_summary(all_clients, pastdue, snapshot_dir, today=None) -> None:
             lines.append(f" • Behind on payment: {_fmt(new_pd)}")
         if new_aor:
             lines.append(f" • Taken by another agent: {_fmt(new_aor)}")
+        if new_rlost:
+            lines.append(f" • Left the GA/IL Access book (suspected — verify): {_fmt(new_rlost)}")
     if stale_lost:
         lines.append(f"🗂️ +{len(stale_lost)} older lapse(s) fell off the book, dated to "
                      f"their real month (counted in churn, not fresh Re-Engage leads).")
@@ -807,6 +995,73 @@ def _upload_summary(all_clients, pastdue, snapshot_dir, today=None) -> None:
         lines.append(f"🎉 Won back (were cancelled): {_fmt(won_lost)}")
     if won_aor:
         lines.append(f"🏆 Won back from another agent: {_fmt(won_aor)}")
+    if back_in_book:
+        lines.append(f"↩️ Back in the GA/IL Access book (suspected loss undone): {_fmt(back_in_book)}")
+    if still_yours:
+        lines.append(f"↩️ Still yours per HealthSherpa or your carrier book (suspected GA/IL loss undone): "
+                     f"{_fmt(still_yours)}")
+    if _conf_aor:
+        lines.append(f"☑️ Suspected GA/IL loss confirmed — taken by another agent (already counted): "
+                     f"{_fmt([aor[k] for k in _conf_aor])}")
+    if _corr:
+        from tracker.correction import labels as _corr_labels
+        _c_out, _c_in = _corr_labels(_corr, "out", polname), _corr_labels(_corr, "in", polname)
+        _cl = []
+        if _c_out:
+            _cl.append(f"{len(_c_out)} now counted lost/taken: {_fmt(_c_out)}")
+        if _c_in:
+            _cl.append(f"{len(_c_in)} now counted active: {_fmt(_c_in)}")
+        _note = str(_corr.get("note") or "").strip()
+        lines.append("🧹 Tracker correction (not new): " + " / ".join(_cl) + (f" — {_note}" if _note else ""))
+        print(f"  Upload summary: correction marker moved {len(_corr_lost) + len(_corr_aor) + len(_corr_rlost)} lost/taken and "
+              f"{len(_corr_won)} won-back entr(ies) into the correction line")
+    # Watch-tab flags (never counted). Each name is texted ONCE: a line lists only the
+    # names not texted before (data/watch_texted.json, saved when the text sends), and
+    # the rest fold into one "👀 Watch tab" line, so the same standing flags don't
+    # repeat on every upload. A name that leaves the Watch tab and comes back is new
+    # again. The 🔎 line lists only roster clients flagged for a check (or held back by
+    # a gate); one the rule already judged (counted lost, or still his per HealthSherpa
+    # or a carrier book) is on the Watch tab only. None of them repeats on the ⚠️ line.
+    _watch_old = 0
+    _WATCH_LINES = [
+        ("Counted active but missing", "⚠️ {n} client(s) counted active but missing from the latest "
+                                       "export — check in HealthSherpa: {names}"),
+        ("Left the", "🔎 {n} client(s) left the GA/IL Access book — flagged, not counted (Watch tab): {names}"),
+        ("Possible new GA/IL sale", "🆕 Possible new GA/IL sale(s) — confirm the carrier: {names}"),
+        ("Counted lost, but listed in the GA/IL book", "❓ Counted lost but still in the GA/IL book — "
+                                                       "check the carrier: {names}"),
+    ]
+    if watch is not None and len(watch) and "Client" in watch.columns:
+        _wf = watch.get("Flag", pd.Series("", index=watch.index)).astype(str)
+        _wc = watch["Client"].fillna("").astype(str)
+        _rf_names = set(_wc[_wf.str.startswith("Left the")])
+        for _prefix, _tmpl in _WATCH_LINES:
+            _m = _wf.str.startswith(_prefix) & (_wc != "")
+            if _prefix == "Left the":
+                _m &= _wf.str.contains("flagged", regex=False)
+            elif _prefix == "Counted active but missing":
+                _m &= ~_wc.isin(_rf_names)
+            _names = list(dict.fromkeys(_wc[_m]))
+            _keys = {f"{_prefix}|{n}": n for n in _names}
+            _wt_now.update({k: _wt_prev.get(k, _today_str) for k in _keys})
+            _fresh = [n for k, n in _keys.items() if k not in _wt_prev]
+            _watch_old += len(_names) - len(_fresh)
+            if _fresh:
+                lines.append(_tmpl.format(n=len(_fresh), names=_fmt(_fresh)))
+    if _watch_old:
+        lines.append(f"👀 +{_watch_old} older Watch-tab flag(s) already texted — still open")
+    # GA/IL book problems (failed load, failed check, stale book). A stale-book line
+    # repeats at most once a week (it is a reminder, not news).
+    for _a in alerts or []:
+        _a = str(_a)
+        if " days old — " in _a:
+            _k = "stale|" + _a.split(" is ", 1)[0]
+            _last = pd.to_datetime(_wt_prev.get(_k), errors="coerce")
+            if pd.notna(_last) and (today - _last).days < 7:
+                _wt_now[_k] = _wt_prev[_k]
+                continue
+            _wt_now[_k] = _today_str
+        lines.append(_a)
     msg = "\n".join(lines)
     print("  Upload summary:\n    " + msg.replace("\n", "\n    "))
 
@@ -841,8 +1096,30 @@ def _upload_summary(all_clients, pastdue, snapshot_dir, today=None) -> None:
     if sent:
         _save_state()
         print(f"  Upload summary texted to {phone}")
+        if _corr:
+            try:
+                from tracker.correction import CORRECTION_PATH
+                CORRECTION_PATH.unlink()
+                print("  Tracker correction sent — data/correction_pending.json cleared")
+            except FileNotFoundError:
+                pass
+            except Exception as _e:
+                print(f"  !! could not clear data/correction_pending.json: {_e}")
     else:
         print("  !! TEXT NOT SENT — baselines/marker left unchanged, next report run will retry.")
+
+
+def _text_key(first, last) -> str:
+    """The upload text's name key (the known_*.json baselines): "first last" as
+    lowercase ascii letters only."""
+    s = unicodedata.normalize("NFKD", f"{first} {last}").encode("ascii", "ignore").decode().lower()
+    return re.sub(r"[^a-z]", "", s)
+
+
+def _members(v) -> int:
+    """applicant_count as a whole number of members, 1 when blank."""
+    n = pd.to_numeric(v, errors="coerce")
+    return 1 if pd.isna(n) else max(int(n), 1)
 
 
 def _person_key_series(df):
@@ -865,6 +1142,245 @@ def _person_key_series(df):
     _n = _c[_c["act"] & (_c["sid"] != "")].groupby("nm")["sid"].nunique()
     colliding = set(_n[_n > 1].index)
     return nm.where(~(nm.isin(colliding) & (sid != "")), nm + "|" + sid)
+
+
+def _apply_roster_rule(all_clients, months, sorted_months, settings, snapshot_dir,
+                       acc_alerts, watch_extra) -> None:
+    """The GA/IL roster rule on run_report's book, in place: counts (count mode) or
+    flags clients who left the GA/IL Access book, keeps earlier counted losses
+    (data/roster_lost.json), and adds their Watch rows and upload-text alerts."""
+    _acc_alerts, _watch_extra = acc_alerts, watch_extra
+    # GA/IL ROSTER RULE (Ethan 2026-10-28). The Georgia Access book is the earliest
+    # sign a client moved to another agent: of the 24 Georgia steals HealthSherpa showed
+    # on Oct 28 it had dropped 20 first (median 72 days early). Replayed on the Oct 12
+    # sheet, 23 of 27 dropouts were real losses; of the 20 this rule would count, 18
+    # were taken and 2 are unresolved, none still his. But a client also drops out
+    # around a plan change (two such clients were carrier-confirmed his), so a
+    # dropout COUNTS only when every outside check agrees (state_roster.evaluate_roster)
+    # and the setting allows it: settings.yaml ga_roster_mode "flag" (default) lists
+    # them on the Watch tab only; "count" marks them Cancelled "Suspected — left GA
+    # Access book" (loss_basis "roster": counted lost, never a "call today" lead),
+    # dated by the first pull that left them out. A counted loss is STICKY (count mode
+    # only): data/roster_lost.json keeps it counted, with the same date and reason, on
+    # every later run, even once a gate (stale or partial pull, open enrollment) would
+    # only flag it. It is undone only when they are listed again in a newer pull or a
+    # HealthSherpa / carrier-book sign dated after the pull that first left them out
+    # shows them his (state_roster.review_roster_lost). If HealthSherpa later shows
+    # another agent as AOR, the AOR rule owns the row ("AOR taken") and keeps the
+    # earlier of the two dates, so the loss stays in its churn month. IL runs the same
+    # code and stays flag-only unless il_roster_mode says otherwise (no HealthSherpa or
+    # BCBS-IL portal evidence can protect an IL client). Skips another agent's AOR (the
+    # AOR rule handles those) and manual adds.
+    try:
+        from tracker import state_roster as _SR
+        from tracker.ingest import clean_app_id as _cid_r, LedgerUnreadable as _LU_r
+        _ACT_R = {"Effectuated", "PendingEffectuation", "PendingFollowups"}
+        _today_r = pd.Timestamp.today().normalize()
+        _hs_ms_r = [m for m in sorted_months if "source" in months[m].columns
+                    and (months[m]["source"].astype(str).str.lower() != "access").any()]
+        _hs_r = (months[_hs_ms_r[-1]][months[_hs_ms_r[-1]]["source"].astype(str).str.lower() != "access"]
+                 if _hs_ms_r else None)
+        _ev_r = None
+        _modes_r = {}
+        for _st in _SR.ROSTER_STATES:
+            _m = str(settings.get(f"{_st.lower()}_roster_mode") or "flag").strip().lower()
+            _modes_r[_st] = _m if _m in ("flag", "count") else "flag"
+        _rl, _rl_ok, _rl_dirty = {}, True, False
+        # Suspected losses the last SENT upload text counted (data/known_roster_lost.json,
+        # its baseline). A departure counted there that the ledger doesn't hold — the
+        # ledger is unreadable, or was restored from an older backup — is held counted
+        # rather than judged afresh: under a gate it would flip active, and the text
+        # would say they came back (then text them as a new loss once the file is back).
+        _texted = set()
+        if "count" in _modes_r.values():
+            try:
+                _rl = _SR.read_roster_lost()
+            except _LU_r as _e:
+                _rl_ok = False
+                print(f"  !! {_e}")
+                _acc_alerts.append("⚠️ data/roster_lost.json is unreadable — restore it from a backup "
+                                   "(until then, GA/IL clients already texted as lost are held from that text)")
+            try:
+                _texted = set(json.loads((Path(__file__).resolve().parent.parent / "data"
+                                          / "known_roster_lost.json").read_text()))
+            except Exception:
+                _texted = set()
+
+        def _watch_row(_i, _st, _flag, _det):
+            _r0 = all_clients.loc[_i]
+            _watch_extra.append({
+                "Flag": _flag,
+                "Client": f"{_r0.get('first_name', '')} {_r0.get('last_name', '')}".strip(),
+                "State": _st, "Carrier": str(_r0.get("carrier") or ""),
+                "Members": _members(_r0.get("applicant_count")),
+                "Status": str(all_clients.at[_i, "status"]), "Detail": _det,
+                "Exchange ID": _cid_r(_r0.get("ffm_app_id"))})
+
+        def _count_lost(_i, _reason, _term):
+            all_clients.at[_i, "status"] = "Cancelled"
+            all_clients.at[_i, "cancel_reason"] = _reason
+            all_clients.at[_i, "term_date"] = _term
+            if "term_estimated" in all_clients.columns:
+                all_clients.at[_i, "term_estimated"] = False
+            if "loss_basis" in all_clients.columns:
+                all_clients.at[_i, "loss_basis"] = "roster"
+
+        for _st in _SR.ROSTER_STATES:
+            if all_clients.empty or "state" not in all_clients.columns:
+                continue
+            _ros = _SR.load_roster(snapshot_dir, _st)
+            _mode = _modes_r[_st]
+            _held_rl = _mode == "count" and any(isinstance(_e, dict) and _e.get("state") == _st
+                                                and not _e.get("undone") for _e in _rl.values())
+            if not len(_ros) and not _held_rl:
+                continue
+            if _ev_r is None:
+                _ev_r = _SR.carrier_evidence()
+            _lbl = _SR.BOOK_LABELS.get(_st, f"{_st} book")
+            _aor_r = all_clients.get("policy_aor", pd.Series("", index=all_clients.index)).fillna("").astype(str)
+            _foreign_r = (~_aor_r.str.strip().str.lower().isin(["", "none", "nan"])
+                          & ~_aor_r.str.contains(str(_NPN), regex=False)
+                          & ~(_aor_r.str.lower().str.contains(_FN, regex=False)
+                              & _aor_r.str.lower().str.contains(_LN, regex=False)))
+            _src_r = all_clients.get("source", pd.Series("", index=all_clients.index)).fillna("").astype(str)
+            _cl = all_clients[all_clients["status"].isin(_ACT_R)
+                              & (all_clients["state"].fillna("").astype(str).str.upper() == _st)
+                              & ~_foreign_r & (_src_r != "manual")]
+
+            # 1. Losses counted on an earlier run (the ledger): kept, or undone.
+            _handled, _n_held, _undone = set(), 0, []
+            if _held_rl:
+                for _key, _verdict, _detail, _rows in _SR.review_roster_lost(_rl, all_clients, _st, _ros,
+                                                                            _hs_r, _ev_r):
+                    _e = _rl[_key]
+                    _nm = f"{_e.get('first_name', '')} {_e.get('last_name', '')}".strip()
+                    if _verdict != "lost":
+                        _e["undone"] = {"on": f"{_today_r:%Y-%m-%d}", "why": _verdict, "detail": _detail}
+                        _rl_dirty = True
+                        _undone.append(f"{_nm} ({_detail})")
+                        continue
+                    _ll, _fm = pd.Timestamp(_e["last_listed"]), pd.Timestamp(_e["first_missing"])
+                    _td = pd.Timestamp(_e.get("term_date") or _e["first_missing"])
+                    for _i in _rows:
+                        if _i in _cl.index:
+                            _count_lost(_i, _e.get("reason") or f"Suspected — left {_lbl} (last listed {_ll:%b %d})",
+                                        _td)
+                            _handled.add(_i)
+                            _n_held += 1
+                            _watch_row(_i, _st, f"Left the {_lbl} — counted lost",
+                                       f"last listed {_ll:%b %d}, missing since the {_fm:%b %d} pull; counted "
+                                       f"{pd.Timestamp(_e.get('counted_on') or _today_r):%b %d}, held until they "
+                                       f"are listed again or a later HealthSherpa or carrier sign shows them yours")
+                        elif (str(all_clients.at[_i, "status"]) in ("Cancelled", "Terminated")
+                              and str(all_clients.at[_i, "cancel_reason"] or "").startswith("AOR taken")):
+                            # HealthSherpa now names another agent: an AOR loss, dated by the
+                            # earlier of the steal and the pull that first left them out.
+                            _cur = pd.to_datetime(all_clients.at[_i, "term_date"], errors="coerce")
+                            if pd.isna(_cur) or _td < _cur:
+                                all_clients.at[_i, "term_date"] = _td
+                                if "term_estimated" in all_clients.columns:
+                                    all_clients.at[_i, "term_estimated"] = False
+                                print(f"  {_lbl} roster: {_nm} is now AOR taken — dated {_td:%b %d}, when the "
+                                      f"book first left them out (counted lost since then)")
+
+            # 2. Everyone else who left the book this run.
+            _res = _SR.evaluate_roster(_cl.drop(index=list(_handled)), _st, _ros, _hs_r, _ev_r)
+            # Already counted lost by the last text, but not in the ledger for THIS
+            # departure (see _texted): held, whatever the gates say.
+            _adopt = set()
+            if _mode == "count" and _texted:
+                for _i, _rr in _res.iterrows():
+                    _e0 = _rl.get(_SR.roster_lost_key(all_clients.loc[_i], _st))
+                    _e0 = _e0 if isinstance(_e0, dict) else {}
+                    if (_text_key(all_clients.at[_i, "first_name"], all_clients.at[_i, "last_name"]) in _texted
+                            and _e0.get("last_listed") != f"{pd.Timestamp(_rr['last_listed']):%Y-%m-%d}"):
+                        _adopt.add(_i)
+            _partial = _res.attrs.get("partial", "")
+            if _partial and len(_res):
+                # A partial pull reads like a mass exodus: ONE line, no per-client rows
+                # (nothing new is counted from it; the ledger above still applies).
+                print(f"  !! {_lbl} roster: {_partial} — {len(_res)} client(s) not listed; roster check "
+                      f"skipped until a full pull")
+                _acc_alerts.append(f"⚠️ {_lbl}: {_partial} — roster check skipped; re-pull the {_st} book")
+                _watch_extra.append({
+                    "Flag": f"{_lbl} pull looks partial — roster check skipped", "Client": "", "State": _st,
+                    "Carrier": "", "Members": 0, "Status": "",
+                    "Detail": f"{_partial}; {len(_res)} active client(s) not in it", "Exchange ID": ""})
+                _res = _res.loc[[i for i in _res.index if i in _adopt]]
+            _n_count = _n_flag = _n_kept = _n_adopt = 0
+            _m_kept = pd.Series(False, index=_res.index)
+            _m_flag = pd.Series(False, index=_res.index)
+            for _i, _rr in _res.iterrows():
+                _ll, _fm = pd.Timestamp(_rr["last_listed"]), pd.Timestamp(_rr["first_missing"])
+                _det = (f"last listed {_ll:%b %d} ({_rr['listed_status'] or 'no status'}), "
+                        f"missing since the {_fm:%b %d} pull")
+                _evid = _rr["evidence"] if _rr["kept"] else ""
+                _rkey = _SR.roster_lost_key(all_clients.loc[_i], _st)
+                if not _evid and _mode == "count":
+                    # Undone earlier by a later sign: that same departure stays quiet (a
+                    # Watch row, never counted or flagged again) once the sign ages out of
+                    # the newest HealthSherpa snapshot, until they are listed again or leave
+                    # again (a new last listing).
+                    _e0 = _rl.get(_rkey) if isinstance(_rl.get(_rkey), dict) else {}
+                    _u0 = _e0.get("undone") or {}
+                    if _u0.get("why") == "kept" and _e0.get("last_listed") == f"{_ll:%Y-%m-%d}":
+                        _evid = f"{_u0.get('detail')} (as of {pd.Timestamp(_u0.get('on')):%b %d})"
+                if _evid:
+                    _n_kept += 1
+                    _m_kept[_i] = True
+                    _watch_row(_i, _st, f"Left the {_lbl} — still yours: {_evid}", _det + "; not counted")
+                    if _i in _adopt and _rl_ok:
+                        # Texted as lost, now his: recorded as undone so the text says why.
+                        _rl[_rkey] = {**_SR.roster_lost_entry(all_clients.loc[_i], _st, _ll, _fm,
+                                                              f"Suspected — left {_lbl} (last listed {_ll:%b %d})",
+                                                              _today_r),
+                                      "undone": {"on": f"{_today_r:%Y-%m-%d}", "why": "kept", "detail": _evid}}
+                        _rl_dirty = True
+                elif (_rr["decision"] == "count" or _i in _adopt) and _mode == "count":
+                    _reason = f"Suspected — left {_lbl} (last listed {_ll:%b %d})"
+                    _count_lost(_i, _reason, _fm)
+                    if _rl_ok:
+                        _rl[_rkey] = _SR.roster_lost_entry(all_clients.loc[_i], _st, _ll, _fm, _reason, _today_r)
+                        _rl_dirty = True
+                    if _i in _adopt:
+                        _n_adopt += 1
+                        _watch_row(_i, _st, f"Left the {_lbl} — counted lost",
+                                   _det + "; counted lost in an earlier text, held until they are listed again or "
+                                          "a later HealthSherpa or carrier sign shows them yours")
+                    else:
+                        _n_count += 1
+                        _watch_row(_i, _st, f"Left the {_lbl} — counted lost",
+                                   _det + "; no fresher HealthSherpa or carrier sign they are yours")
+                else:
+                    _n_flag += 1
+                    _m_flag[_i] = True
+                    _watch_row(_i, _st, f"Left the {_lbl} — flagged, not counted",
+                               _det + ("; would count in count mode (no fresher HealthSherpa or carrier sign "
+                                       "they are yours)" if _rr["decision"] == "count"
+                                       else f"; not counted: {_rr['reasons']}"))
+            if len(_res) or _n_held or _undone:
+                _names = lambda m: ", ".join(
+                    f"{all_clients.at[i, 'first_name']} {all_clients.at[i, 'last_name']}" for i in _res.index[m][:8])
+                print(f"  {_lbl} roster ({_mode} mode): {len(_res) + _n_held} client(s) left the book — "
+                      f"{_n_count + _n_held + _n_adopt} counted lost ({_n_held + _n_adopt} held from earlier runs"
+                      + (f", {_n_adopt} of them by the last text" if _n_adopt else "")
+                      + f"), {_n_kept} still yours, {_n_flag} flagged"
+                      + (f" | would count: {_names(_res['decision'] == 'count')}"
+                         if (_res['decision'] == 'count').any() else "")
+                      + (f" | still yours: {_names(_m_kept)}" if _m_kept.any() else "")
+                      + (f" | flag only: {_names(_m_flag)}" if _m_flag.any() else "")
+                      + (f" | undone: {'; '.join(_undone)}" if _undone else ""))
+        if _rl_dirty and _rl_ok:
+            try:
+                _SR.write_roster_lost(_rl)
+            except Exception as _e:
+                print(f"  !! could not save data/roster_lost.json: {type(_e).__name__}: {_e}")
+                _acc_alerts.append("⚠️ Could not save data/roster_lost.json — a GA/IL loss counted this run "
+                                   "may not stay counted")
+    except Exception as _e:
+        print(f"  !! GA/IL roster check skipped: {type(_e).__name__}: {_e}")
+        _acc_alerts.append("⚠️ GA/IL roster check failed this run — clients who left the GA/IL "
+                           "book are not flagged")
 
 
 def run_report(settings: dict) -> None:
@@ -907,6 +1423,72 @@ def run_report(settings: dict) -> None:
 
     print(f"Building report. Latest month: {latest_month}")
 
+    # GA/IL (state-exchange) book problems that must reach the upload text, not just
+    # this log (Ethan 2026-10-28), and their Watch-tab rows (flag only, never counted).
+    _acc_alerts, _watch_extra = [], []
+
+    # One carrier-book "ended" checker per run (state_roster.CarrierEnded): the
+    # carrier portal books + the newest HealthSherpa snapshot (a newer plan there
+    # overrides an ended one).
+    _ce_cache = {}
+    def _carrier_ended():
+        if "ce" not in _ce_cache:
+            from tracker import state_roster as _SRc
+            _hm = [m for m in sorted_months if "source" not in months[m].columns
+                   or (months[m]["source"].astype(str).str.lower() != "access").any()]
+            _hsn = None
+            if _hm:
+                _d = months[_hm[-1]]
+                _hsn = _d[_d["source"].astype(str).str.lower() != "access"] if "source" in _d.columns else _d
+            _ce_cache["ce"] = _SRc.CarrierEnded(_SRc.carrier_evidence(), _hsn)
+        return _ce_cache["ce"]
+
+    # GA/IL BOOK vs a FRESHER HealthSherpa "ENDED" (Ethan 2026-10-28). The Georgia
+    # Access book keeps showing "Report a Change" after a plan ends (3 GA clients on
+    # Oct 28), and build_all_clients lets an ACTIVE row beat an inactive one within the
+    # same month — so a stale book row kept clients HealthSherpa and the carrier both
+    # show ended. Drop such book rows from the newest book month when the
+    # strict-key-matched HealthSherpa rows have no active plan and the newest one is
+    # THIS plan year's, Cancelled or ended (not a 12/31 rollover), and the book row is
+    # that same application (its real application day is within 3 days of
+    # HealthSherpa's submission). Their older months' book rows then lose to the newer HealthSherpa
+    # row. A book application filed on another day is another plan (a client who
+    # moved to Georgia Access): kept, flagged on Watch. Book-only clients are untouched.
+    _acc_month = None
+    try:
+        from tracker import state_roster as _SR
+        def _is_acc(_d):
+            return (_d["source"].astype(str).str.lower() == "access") if "source" in _d.columns \
+                else pd.Series(False, index=_d.index)
+        _acc_ms = [m for m in sorted_months if _is_acc(months[m]).any()]
+        _hs_ms = [m for m in sorted_months if (~_is_acc(months[m])).any()]
+        if _acc_ms and _hs_ms:
+            _acc_month = _acc_ms[-1]
+            _hs_new = months[_hs_ms[-1]][~_is_acc(months[_hs_ms[-1]])]
+            _md = months[_acc_month]
+            _ended = _SR.hs_ended(_md[_is_acc(_md)], _hs_new, plan_year=int(latest_month[:4]))
+            if _ended:
+                months[_acc_month] = _md.drop(index=[i for i, _, _drop in _ended if _drop])
+                for _i, _how, _drop in _ended:
+                    _r = _md.loc[_i]
+                    _watch_extra.append({
+                        "Flag": ("GA/IL book says active, HealthSherpa says ended — counted ended" if _drop
+                                 else "GA/IL book says active, HealthSherpa says ended — kept (another application)"),
+                        "Client": f"{_r.get('first_name', '')} {_r.get('last_name', '')}".strip(),
+                        "State": str(_r.get("state") or ""), "Carrier": str(_r.get("carrier") or ""),
+                        "Members": _members(_r.get("applicant_count")),
+                        "Status": str(_r.get("status") or ""), "Detail": _how, "Exchange ID": ""})
+                _en = sorted({f"{_md.at[i, 'first_name']} {_md.at[i, 'last_name']}" for i, _, d in _ended if d})
+                _ek = sorted({f"{_md.at[i, 'first_name']} {_md.at[i, 'last_name']}" for i, _, d in _ended if not d})
+                print(f"  GA/IL book vs HealthSherpa: {len(_en)} book row(s) HealthSherpa shows ended "
+                      f"this plan year no longer count ({', '.join(_en[:8])}{'…' if len(_en) > 8 else ''})"
+                      + (f"; {len(_ek)} kept, the book's application is another one ({', '.join(_ek[:8])})"
+                         if _ek else ""))
+    except Exception as _e:
+        print(f"  !! GA/IL book vs HealthSherpa check skipped: {type(_e).__name__}: {_e}")
+        _acc_alerts.append("⚠️ GA/IL book vs HealthSherpa check failed this run — a GA/IL client "
+                           "HealthSherpa shows ended may still be counted active")
+
     appointments = _load_appointments()
     all_clients  = build_all_clients(months)
 
@@ -922,6 +1504,46 @@ def run_report(settings: dict) -> None:
             print(f"  Excluded {int(_drop.sum())} clients on non-counted carriers "
                   f"({', '.join(_excl_carriers)})")
         all_clients = all_clients[~_drop].copy()
+
+    # ONE POLICY = ONE ROW (Ethan 2026-10-28). build_all_clients groups by NAME, so one
+    # ffm_app_id can surface as two rows: a name correction leaves the old spelling as
+    # a ghost frozen on its last (active) row (a misspelt surname kept counting a
+    # client another agent took), and the same-name sid split keys a policy by plain
+    # name in some months and name|sid in others (two same-name pairs). Keep
+    # the row with the newest Marketplace sync (tie: newest month seen) and give it the
+    # earliest first_seen / effective_date / submission_date of its twins, so tenure is
+    # kept. Two different people never share an app id, so they are never merged.
+    # A failure here must not kill the report (no sheet push, no text): skip it loudly
+    # and say so in the upload text.
+    try:
+        if "ffm_app_id" in all_clients.columns and len(all_clients):
+            from tracker.ingest import clean_app_id as _cid
+            _app1 = all_clients["ffm_app_id"].map(_cid)
+            _sync1 = pd.to_datetime(all_clients.get("last_ede_sync", pd.Series(pd.NaT, index=all_clients.index)),
+                                    format="%m/%d/%Y %H:%M:%S", errors="coerce")
+            _rank1 = pd.DataFrame({"app": _app1, "sync": _sync1.fillna(pd.Timestamp.min),
+                                   "seen": all_clients.get("last_seen", pd.Series("", index=all_clients.index)).astype(str)},
+                                  index=all_clients.index)[_app1 != ""]
+            _dupe1 = _rank1["app"].duplicated(keep=False)
+            if _dupe1.any():
+                _r1 = _rank1[_dupe1].sort_values(["app", "sync", "seen"])
+                _keep1 = _r1.groupby("app").tail(1).index
+                _drop1 = _r1.index.difference(_keep1)
+                for _k in _keep1:   # fold the twins' tenure into the kept row
+                    _tw = _r1.index[_r1["app"] == _r1.at[_k, "app"]]
+                    for _c in ("first_seen", "effective_date", "submission_date"):
+                        if _c in all_clients.columns:
+                            _v = all_clients.loc[_tw, _c].dropna()
+                            if len(_v):
+                                all_clients.at[_k, _c] = _v.min()
+                _dn = sorted({f"{all_clients.at[_i, 'first_name']} {all_clients.at[_i, 'last_name']}".strip()
+                              for _i in _drop1})
+                print(f"  Same-policy collapse: dropped {len(_drop1)} stale twin row(s) of an app id "
+                      f"kept once ({', '.join(_dn[:8])}{'…' if len(_dn) > 8 else ''})")
+                all_clients = all_clients.drop(index=_drop1).reset_index(drop=True)
+    except Exception as _e:
+        print(f"  !! same-policy collapse skipped: {type(_e).__name__}: {_e}")
+        _acc_alerts.append("⚠️ Same-policy check failed this run — a policy may be counted twice")
 
     # Mark confirmed-AOR-changed clients whose HealthSherpa policy_aor field still
     # lags the exchange (e.g. Tammy Bennett -> Albert Rincon). Stamping policy_aor
@@ -1108,8 +1730,29 @@ def run_report(settings: dict) -> None:
         except Exception as _e:
             print(f"  (AOR-taken rule skipped: {_e})")
 
+    # HELD-CARRIER GATE (Ethan 2026-10-28): a taken client's row now carries the TAKER's
+    # plan, so the appointment gate below would judge the steal by a carrier Ethan may
+    # not even sell (two Oct 28 steals moved to BCBS-SC and Kaiser) and silently drop
+    # it from loss history. For a foreign-AOR row on an application that was ever his,
+    # judge it by the carrier HE held it on (ever-his ledger + snapshots), then put the
+    # taker's carrier back. A client he only ever held on a carrier he isn't appointed
+    # with still drops. The daily sales tabs use the same gate (_appointed_by_held).
+    _held_car = {}
+    try:
+        from tracker.ingest import load_ever_his_app_ids, _read_ledger, LedgerUnreadable, _EVER_HIS_PATH
+        try:
+            _read_ledger(_EVER_HIS_PATH, strict=True)
+        except LedgerUnreadable:
+            _acc_alerts.append("⚠️ data/ever_his_app_ids.json is unreadable — restore it from a backup "
+                               "(steals inside one month can be missed until then)")
+        _held_car = load_ever_his_app_ids(snapshot_dir, _NPN, f"{_FN} {_LN}")
+    except Exception as _e:
+        print(f"  !! held-carrier gate skipped: {type(_e).__name__}: {_e}")
+        _acc_alerts.append("⚠️ Held-carrier check failed this run — a steal onto a carrier you "
+                           "don't sell may be missing from your losses")
+
     before_ct    = len(all_clients)
-    all_clients  = _filter_by_appointments(all_clients, appointments)
+    all_clients  = _appointed_by_held(all_clients, appointments, _held_car)
     filtered_ct  = before_ct - len(all_clients)
     if filtered_ct:
         print(f"  Appointment filter: removed {filtered_ct} non-appointed carrier/state rows")
@@ -1321,25 +1964,49 @@ def run_report(settings: dict) -> None:
     # anyone the access book still lists ACTIVE — but ONLY carrier-truth lapses
     # (Cancelled with a still-blank cancel_reason at this point). AOR-taken,
     # verification-expired, manual-lost and plan-switch all stamp a cancel_reason
-    # above, so they're excluded and never restored. Read the RAW input books
-    # (dry_run, no write) so the ingest HS-dedup can't hide the evidence. Runs after
-    # every cancel rule and before loss-dating, so it's the final word on status and
-    # restored clients get no loss date. Only flips existing rows (never adds), so it
-    # cannot double-count.
+    # above, so they're excluded and never restored. Runs after every cancel rule and
+    # before loss-dating, so it's the final word on status and restored clients get no
+    # loss date. Only flips existing rows (never adds), so it cannot double-count.
+    # Since Ethan 2026-10-28 it reads the newest book month's rows AFTER the
+    # HealthSherpa-ended guard above (it used to re-read the raw input file, which a
+    # carrier-less export turned into an exception that skipped GA and IL alike), and
+    # a row is restored only on the STRICT person key (name + phone or email, or phone
+    # + email) — never on the name alone, which revived another agent's same-name
+    # client (two same-name pairs in GA/SC).
+    # NOT when the carrier's own book shows that plan ended (state_roster.CarrierEnded,
+    # Ethan 2026-10-28): the premise above that GA/IL plans never appear in a carrier
+    # book is wrong — 164 of 187 Sep 13 GA book clients are active in the Ambetter /
+    # Oscar / Anthem / Cigna books — so a carrier-truth lapse on the client's own
+    # carrier, with nothing of theirs active in any book, is a real lapse the GA/IL
+    # book's stale "Report a Change" must not undo (3 GA/IL clients the carrier and
+    # the payments both show ended were revived). Unless HealthSherpa shows a new plan
+    # starting after that end, or the book's application was filed after it.
     try:
-        from tracker.config import load_carrier_configs, load_full_carrier_config
-        from tracker.ingest import ingest_file as _ingest_acc, detect_source as _detect_acc
-        _acc_sc = load_carrier_configs(settings["carrier_config_path"])
-        _acc_fc = load_full_carrier_config(settings["carrier_config_path"])
+        from tracker import state_roster as _SR
         _ACC_ACTIVE = {"Effectuated", "PendingEffectuation", "PendingFollowups"}
-        _acc_keys = set()
-        for _bp in sorted(Path(settings["input_dir"]).glob("*.csv")):
-            if _detect_acc(_bp.name, _acc_sc) != "access":
-                continue
-            _, _adf = _ingest_acc(_bp, _acc_sc, snapshot_dir, dry_run=True, full_config=_acc_fc)
-            if _adf is not None and {"name_key", "status"}.issubset(_adf.columns):
-                _acc_keys |= set(_adf.loc[_adf["status"].isin(_ACC_ACTIVE), "name_key"].dropna())
-        if _acc_keys and not all_clients.empty and "name_key" in all_clients.columns:
+        _acc_src = months[_acc_month] if _acc_month else pd.DataFrame()
+        if len(_acc_src) and "source" in _acc_src.columns:
+            _acc_src = _acc_src[_acc_src["source"].astype(str).str.lower() == "access"]
+        _acc_act = (_acc_src[_acc_src["status"].isin(_ACC_ACTIVE)] if len(_acc_src) and "status" in _acc_src.columns
+                    else pd.DataFrame())
+        if len(_acc_act) and not all_clients.empty and "name_key" in all_clients.columns:
+            _ce = _carrier_ended()
+            _acc_k = _SR.add_keys(_acc_act)
+            _acc_end = {}                      # access row -> carrier-book "ended" detail
+            for _j in _acc_k.index:
+                _how, _ = _ce.check(_acc_k.at[_j, "_f"], _acc_k.at[_j, "_l"], _acc_k.at[_j, "_ph"],
+                                    _acc_k.at[_j, "_em"], _acc_k.at[_j, "state"], _acc_k.at[_j, "carrier"],
+                                    *_access_app_days(_acc_k.loc[_j]))
+                if _how:
+                    _acc_end[_j] = _how
+            _acc_ix = _SR.PersonIndex(_acc_k)
+            _ak = _SR.add_keys(all_clients)
+            _acc_hits = [_acc_ix.match(f, l, ph, em) for f, l, ph, em
+                         in zip(_ak["_f"], _ak["_l"], _ak["_ph"], _ak["_em"])]
+            _acc_listed = pd.Series([any(j not in _acc_end for j in h) for h in _acc_hits],
+                                    index=all_clients.index)
+            _acc_ended = pd.Series([bool(h) and all(j in _acc_end for j in h) for h in _acc_hits],
+                                   index=all_clients.index)
             _acc_blank = (all_clients.get("cancel_reason", pd.Series("", index=all_clients.index))
                           .fillna("").astype(str).str.strip() == "")
             # The book is PER-POLICY, so a plan-switcher can hold an active plan AND
@@ -1351,8 +2018,22 @@ def run_report(settings: dict) -> None:
                 all_clients["status"].isin(list(_ACC_ACTIVE)), "name_key"].dropna())
             _acc_cand = (all_clients["status"].isin(["Cancelled", "Terminated"])
                          & _acc_blank
-                         & all_clients["name_key"].isin(_acc_keys)
+                         & _acc_listed
                          & ~all_clients["name_key"].isin(_acc_active_now))
+            _acc_veto = (all_clients["status"].isin(["Cancelled", "Terminated"]) & _acc_blank
+                         & _acc_ended & ~_acc_listed & ~all_clients["name_key"].isin(_acc_active_now))
+            for _i in all_clients.index[_acc_veto]:
+                _r = all_clients.loc[_i]
+                _watch_extra.append({
+                    "Flag": "GA/IL book says active, carrier book says ended — not restored",
+                    "Client": f"{_r.get('first_name', '')} {_r.get('last_name', '')}".strip(),
+                    "State": str(_r.get("state") or ""), "Carrier": str(_r.get("carrier") or ""),
+                    "Members": _members(_r.get("applicant_count")), "Status": str(_r.get("status") or ""),
+                    "Detail": "; ".join(sorted({_acc_end[j] for j in _acc_hits[all_clients.index.get_loc(_i)]})),
+                    "Exchange ID": re.sub(r"\.0$", "", str(_r.get("ffm_app_id") or "")).replace("nan", "")})
+            if _acc_veto.any():
+                print(f"  State-exchange re-activation: {int(_acc_veto.sum())} GA/IL-listed client(s) NOT "
+                      f"restored — their carrier book shows the plan ended")
             _acc_idx = all_clients.index[_acc_cand]
             if len(_acc_idx):
                 _acc_first = all_clients.loc[_acc_idx].drop_duplicates("name_key").index
@@ -1363,7 +2044,58 @@ def run_report(settings: dict) -> None:
                 print(f"  State-exchange re-activation: restored {len(_acc_first)} "
                       f"GA/IL-enrolled client(s) wrongly lapsed by carrier-truth")
     except Exception as _e:
-        print(f"  (state-exchange re-activation skipped: {_e})")
+        print(f"  !! state-exchange re-activation skipped: {type(_e).__name__}: {_e}")
+        _acc_alerts.append("⚠️ GA/IL re-activation failed this run — GA/IL clients a carrier book "
+                           "wrongly lapsed may show as lost")
+
+    # STALE GA/IL BOOK ROWS (Ethan 2026-10-28). A client known only from the GA/IL book
+    # (source "access") keeps their last book row's status forever once the book stops
+    # listing them with a plan, so a plan that ended months ago still counted active
+    # (four GA/IL clients whose carrier book and payments end Mar–Aug; the tripwire
+    # flagged them). Carrier-truth skips book-only clients, so the same CarrierEnded
+    # test as the re-activation decides: the client's own carrier's book shows the
+    # policy with Ethan ended and nothing of theirs active anywhere → Cancelled, dated
+    # by the carrier's end date, with a Watch line. Clients on a carrier with no book
+    # (BCBS-IL) are untouched and stay on the tripwire.
+    try:
+        from tracker import state_roster as _SR
+        _src_st = all_clients.get("source", pd.Series("", index=all_clients.index)).fillna("").astype(str)
+        _st_mask = ((_src_st.str.lower() == "access")
+                    & all_clients["status"].isin(["Effectuated", "PendingEffectuation", "PendingFollowups"]))
+        if _st_mask.any():
+            _ce = _carrier_ended()
+            _sk = _SR.add_keys(all_clients[_st_mask])
+            _n_st, _rc = [], {}
+            for _i in _sk.index:
+                _ad = _access_app_days(_access_row_for(months, all_clients.loc[_i], _rc))
+                _how, _end = _ce.check(_sk.at[_i, "_f"], _sk.at[_i, "_l"], _sk.at[_i, "_ph"], _sk.at[_i, "_em"],
+                                       _sk.at[_i, "state"], _sk.at[_i, "carrier"], *_ad)
+                if not _how:
+                    continue
+                if "cancel_reason" not in all_clients.columns:
+                    all_clients["cancel_reason"] = ""
+                all_clients.at[_i, "status"] = "Cancelled"
+                all_clients.at[_i, "cancel_reason"] = f"Lapsed — {all_clients.at[_i, 'carrier']} (carrier book)"
+                all_clients.at[_i, "term_date"] = _end
+                if "term_estimated" in all_clients.columns:
+                    all_clients.at[_i, "term_estimated"] = False
+                if "loss_basis" in all_clients.columns:
+                    all_clients.at[_i, "loss_basis"] = ""
+                _r = all_clients.loc[_i]
+                _n_st.append(f"{_r.get('first_name', '')} {_r.get('last_name', '')}".strip())
+                _watch_extra.append({
+                    "Flag": "GA/IL book row still active, carrier book says ended — counted ended",
+                    "Client": _n_st[-1], "State": str(_r.get("state") or ""),
+                    "Carrier": str(_r.get("carrier") or ""), "Members": _members(_r.get("applicant_count")),
+                    "Status": "Cancelled", "Detail": f"last in the {_r.get('last_seen', '')} GA/IL book; {_how}",
+                    "Exchange ID": ""})
+            if _n_st:
+                print(f"  Stale GA/IL book rows: {len(_n_st)} client(s) whose carrier book shows the plan "
+                      f"ended now count as lapsed ({', '.join(_n_st[:8])}{'…' if len(_n_st) > 8 else ''})")
+    except Exception as _e:
+        print(f"  !! stale GA/IL book-row check skipped: {type(_e).__name__}: {_e}")
+        _acc_alerts.append("⚠️ GA/IL carrier-book check failed this run — a GA/IL plan that ended may "
+                           "still count as active")
 
     # Loss dating: every gone client (AOR-taken, verification-expired, undated
     # HealthSherpa cancellation) that carries no cancel date gets one. We date it to
@@ -1638,6 +2370,215 @@ def run_report(settings: dict) -> None:
     except Exception as _e:
         print(f"  (manual-add injection skipped: {_e})")
 
+    # BOOK-LEVEL RACE GUARD (#1, Ethan 2026-07-24): the fresh HealthSherpa snapshot
+    # is ground truth for who is active-and-ours RIGHT NOW. A client that snapshot
+    # shows Effectuated/Pending with policy_aor = us CANNOT be an "AOR taken" loss —
+    # that flag came from a stale/lagging signal (a won-back client whose export row
+    # still names the old agent, an aor_changed.json entry not yet cleared, a
+    # transient build race). Revert those to active in the BOOK itself, before it is
+    # pushed — the old race guard only scrubbed the text alert, after the push.
+    # SCOPED to "AOR taken" only: carrier-truth lapses and verification-expired are
+    # authoritative real losses and are left alone; hand-confirmed steals
+    # (data/aor_changed.json) are also left alone (the agent verified those).
+    # Runs BEFORE the All Active / All Missing split (Ethan 2026-10-28) so a restored
+    # client lands in All Active too — it used to run after, so the two tabs disagreed
+    # (two restored clients were active in All Clients, missing from All Active and
+    # listed as cancelled).
+    # KEYED BY POLICY (Ethan 2026-10-28): a row is restored only when ITS OWN
+    # ffm_app_id is active-and-ours in the fresh snapshot; name+state is the key only
+    # for rows with no app id. Keying on the name let a different, still-active client
+    # with the same name un-cancel a real steal (twice on Oct 28: an SC client revived
+    # a same-name GA client who was taken, and one GA client revived a same-name GA
+    # client in another town who was taken).
+    try:
+        import glob as _glob_rg
+        import re as _re_rg
+        from tracker.ingest import clean_app_id as _cid_rg
+        _hs_snaps = sorted(_glob_rg.glob(str(Path(settings["snapshot_dir"]) / "*healthsherpa*.parquet")))
+        if _hs_snaps and "cancel_reason" in all_clients.columns and not all_clients.empty:
+            def _lf_rg(f, l):
+                return _re_rg.sub(r"[^a-z]", "", str(l).lower()) + _re_rg.sub(r"[^a-z]", "", str(f).lower())
+            def _st_rg(v):
+                return "" if v is None or (isinstance(v, float) and pd.isna(v)) else str(v).strip().lower()
+            _snap_rg = pd.read_parquet(_hs_snaps[-1])
+            _mine_now, _status_now = set(), {}     # name@state (rows with no app id)
+            _mine_app, _status_app = set(), {}     # ffm_app_id
+            for _, _r in _snap_rg.iterrows():
+                if str(_r.get("status") or "") not in ("Effectuated", "PendingEffectuation", "PendingFollowups"):
+                    continue
+                _aor = str(_r.get("policy_aor") or "")
+                if _NPN in _aor or (_LN in _aor.lower() and _FN in _aor.lower()):
+                    _k = _lf_rg(_r.get("first_name", ""), _r.get("last_name", "")) + "@" + _st_rg(_r.get("state"))
+                    _mine_now.add(_k)
+                    _status_now.setdefault(_k, str(_r.get("status")))
+                    _ap = _cid_rg(_r.get("ffm_app_id"))
+                    if _ap:
+                        _mine_app.add(_ap)
+                        _status_app.setdefault(_ap, str(_r.get("status")))
+            try:
+                from tracker.commissions import aor_changed_keys
+                _confirmed = set(aor_changed_keys())
+            except Exception:
+                _confirmed = set()
+            if _mine_now:
+                _rk_name = all_clients.apply(lambda r: _lf_rg(r.get("first_name", ""), r.get("last_name", "")), axis=1)
+                _rk = _rk_name + "@" + all_clients.get("state", pd.Series("", index=all_clients.index)).map(_st_rg)
+                _rapp = all_clients.get("ffm_app_id", pd.Series("", index=all_clients.index)).map(_cid_rg)
+                _has_app = _rapp != ""
+                _ours_now = (_has_app & _rapp.isin(_mine_app)) | (~_has_app & _rk.isin(_mine_now))
+                _reason = all_clients["cancel_reason"].fillna("").astype(str)
+                _protect = (all_clients["status"].isin(["Cancelled", "Terminated"])
+                            & _reason.str.startswith("AOR taken")
+                            & _ours_now & ~_rk_name.isin(_confirmed))
+                if _protect.any():
+                    for _i in all_clients.index[_protect]:
+                        all_clients.at[_i, "status"] = ((_status_app.get(_rapp.at[_i]) if _has_app.at[_i]
+                                                         else _status_now.get(_rk.at[_i])) or "Effectuated")
+                        all_clients.at[_i, "cancel_reason"] = ""
+                        if "term_date" in all_clients.columns:
+                            all_clients.at[_i, "term_date"] = pd.NaT
+                        if "loss_basis" in all_clients.columns:
+                            all_clients.at[_i, "loss_basis"] = ""
+                    _rn = sorted({f"{all_clients.at[_i, 'first_name']} {all_clients.at[_i, 'last_name']}".strip()
+                                  for _i in all_clients.index[_protect]})
+                    print(f"  Book race guard: restored {int(_protect.sum())} 'AOR taken' client(s) the "
+                          f"fresh HealthSherpa snapshot shows active-and-ours "
+                          f"({', '.join(_rn[:8])}{'…' if len(_rn) > 8 else ''})")
+    except Exception as _e:
+        print(f"  !! book race guard skipped: {type(_e).__name__}: {_e}")
+        _acc_alerts.append("⚠️ Book race guard failed this run — a client HealthSherpa shows active "
+                           "and yours may be listed as taken")
+
+    # GA/IL ROSTER RULE (_apply_roster_rule). Runs after the race guard so nothing
+    # re-stamps its reason.
+    _apply_roster_rule(all_clients, months, sorted_months, settings, snapshot_dir, _acc_alerts, _watch_extra)
+
+    # GA/IL book health for the upload text (C9): a failed load that kept the last good
+    # copy, possible new sales the export can't give a carrier for, and a book older
+    # than 14 days (a stale book hides who left it — the Sep 13 GA book ran for 45 days).
+    # A carrier-less book row nobody else knows about is only a POSSIBLE new sale when
+    # the tracker doesn't already have the person or their household (same last name
+    # + phone or email, same state) and the application was submitted: an in-progress
+    # one ("Complete and Submit", "Finish Enrolling") is not a sale yet, an already
+    # counted household member must not be added again by hand (double count), and a
+    # person the tracker counts LOST but the book still lists may be a wrong lapse.
+    try:
+        from tracker import state_roster as _SR
+        _stp = Path(__file__).resolve().parent.parent / "data" / "access_book_status.json"
+        _abs = json.loads(_stp.read_text()) if _stp.exists() else {}
+        _ack = _SR.add_keys(all_clients) if len(all_clients) else None
+        if _ack is not None:
+            _ack["_S"] = _ack.get("state", pd.Series("", index=_ack.index)).fillna("").astype(str).str.upper()
+            _ack_ix = _SR.PersonIndex(_ack)
+        _IN_PROGRESS = {"Complete and Submit Application", "Finish Enrolling Household"}
+        for _stem, _info in sorted(_abs.items()):
+            _st = _stem.rsplit("_", 1)[-1].upper()
+            _lbl = _SR.BOOK_LABELS.get(_st, _stem)
+            if _info.get("kept_prior") and _info.get("partial"):
+                # One line per pull: the roster rule's own partial-pull line, if it has one.
+                if not any(_a.startswith(f"⚠️ {_lbl}: ") and "looks partial" in _a for _a in _acc_alerts):
+                    _acc_alerts.append(f"⚠️ {_lbl}: {_info.get('message') or 'the newest pull looks partial'} — "
+                                       f"kept the {_info.get('kept_copy') or 'previous'} copy; re-pull the {_st} book")
+            elif _info.get("kept_prior"):
+                _acc_alerts.append(f"⚠️ {_lbl} failed to load — using the {_info.get('kept_copy') or 'previous'} "
+                                   f"copy ({_info.get('message') or 'see the log'})")
+            elif _info.get("message"):
+                _acc_alerts.append(f"⚠️ {_lbl} loaded WITHOUT the carrier fill ({_info['message']}) — "
+                                   f"its carrier-less rows were left out")
+            for _u in _info.get("unfilled") or []:
+                _f, _l = _SR.name_tokens(_u.get("first_name") or _u.get("name", ""), _u.get("last_name") or "")
+                if not _u.get("last_name"):                 # older status file: name only
+                    _f, _l = _SR.name_tokens(*(str(_u.get("name", "")).split(" ", 1) + [""])[:2])
+                _ph, _em = _SR.phone10(_u.get("phone")), _SR.email_l(_u.get("email"))
+                _hits = pd.DataFrame()
+                if _ack is not None and _l:
+                    _same = set(_ack_ix.match(_f, _l, _ph, _em)) | set(
+                        _ack.index[(_ack["_f"] == _f) & (_ack["_l"] == _l) & (_ack["_S"] == _st)])
+                    _hh = _ack.index[(_ack["_l"] == _l) & (_ack["_S"] == _st)
+                                     & (((_ack["_ph"] == _ph) & (_ph != "")) | ((_ack["_em"] == _em) & (_em != "")))]
+                    _hits = all_clients.loc[sorted(_same | set(_hh))]
+                _hact = _hits[_hits["status"].isin(["Effectuated", "PendingEffectuation", "PendingFollowups"])] \
+                    if len(_hits) else _hits
+                _app = f"{_u.get('year', '')} application ({_u.get('application_date', '')})"
+                if len(_hact):
+                    _who = ", ".join(sorted({f"{r['first_name']} {r['last_name']}" for _, r in _hact.iterrows()}))
+                    _flag = "GA/IL book row with no carrier — already counted"
+                    _det = f"{_lbl} lists a {_app} with no carrier; the tracker already counts {_who} — don't add by hand"
+                elif len(_hits):
+                    _flag = "Counted lost, but listed in the GA/IL book — wrong lapse?"
+                    _det = (f"{_lbl} lists a {_app} ({_u.get('status', '')}) with no carrier; the tracker counts "
+                            f"them {_hits['status'].iloc[0]} ({_hits['cancel_reason'].fillna('').iloc[0] if 'cancel_reason' in _hits.columns else ''}) — check the carrier")
+                elif _u.get("status", "") in _IN_PROGRESS:
+                    _flag = "GA/IL application in progress — not a sale yet"
+                    _det = f"{_lbl} lists a {_app} still at '{_u.get('status', '')}'"
+                else:
+                    _flag = "Possible new GA/IL sale — confirm carrier"
+                    _det = (f"{_lbl} lists a {_app} with no carrier, and no earlier pull or HealthSherpa plan "
+                            f"gives one — not counted until the carrier is known")
+                _watch_extra.append({
+                    "Flag": _flag, "Client": _u.get("name", ""), "State": _st, "Carrier": "", "Members": 1,
+                    "Status": _u.get("status", ""), "Detail": _det, "Exchange ID": ""})
+        for _st in _SR.ROSTER_STATES:
+            _ts, _age = _SR.book_age(snapshot_dir, settings["input_dir"], _st)
+            if _age is not None and _age > _SR.STALE_DAYS:
+                _acc_alerts.append(f"⚠️ {_SR.BOOK_LABELS[_st]} is {int(_age)} days old — {_st} losses can hide "
+                                   f"until you pull a fresh one")
+    except Exception as _e:
+        print(f"  (GA/IL book health check skipped: {type(_e).__name__}: {_e})")
+    for _a in _acc_alerts:
+        print(f"  {_a}")
+
+    # TRIPWIRE — "counted active but missing from the latest export" (Ethan 2026-10-28).
+    # A row with an ACTIVE status whose last_seen is older than the newest snapshot
+    # month for its source (HealthSherpa or the GA/IL book) is a contradiction: the
+    # client fell out of the newest export, yet an older month's active row is still
+    # being counted. That is exactly how Leak A hid 11 steals, and how 9 policies
+    # that vanished from HealthSherpa on Oct 21 stayed active. FLAG ONLY — never
+    # changes a status. Rows on the Watch tab + one upload-text line. Portal-added
+    # and manual rows have no export month of their own and are skipped.
+    watch = pd.DataFrame(columns=["Flag", "Client", "State", "Carrier", "Members", "Status",
+                                  "Detail", "Exchange ID"])
+    try:
+        _newest_src = {}
+        for _m, _mdf in months.items():
+            _srcs = (_mdf["source"].fillna("").astype(str).str.lower()
+                     if "source" in _mdf.columns else pd.Series("", index=_mdf.index))
+            for _s in set(_srcs.where(_srcs == "access", "healthsherpa")):
+                _newest_src[_s] = max(_newest_src.get(_s, ""), _m)
+        if {"status", "last_seen", "source"}.issubset(all_clients.columns) and _newest_src:
+            _src_tw = all_clients["source"].fillna("").astype(str).str.lower()
+            _ls_tw = all_clients["last_seen"].fillna("").astype(str)
+            _new_tw = _src_tw.map(_newest_src).fillna("")
+            _trip = (all_clients["status"].isin(["Effectuated", "PendingEffectuation", "PendingFollowups"])
+                     & (_ls_tw != "") & (_new_tw != "") & (_ls_tw < _new_tw))
+            if _trip.any():
+                _tw = all_clients[_trip]
+                _mem_tw = pd.to_numeric(_tw.get("applicant_count"), errors="coerce").fillna(1).clip(lower=1)
+                watch = pd.DataFrame({
+                    "Flag": "Counted active but missing from the latest export",
+                    "Client": (_tw["first_name"].fillna("").astype(str) + " "
+                               + _tw["last_name"].fillna("").astype(str)).str.strip(),
+                    "State": _tw.get("state", pd.Series("", index=_tw.index)).fillna("").astype(str),
+                    "Carrier": _tw.get("carrier", pd.Series("", index=_tw.index)).fillna("").astype(str),
+                    "Members": _mem_tw.astype(int),
+                    "Status": _tw["status"].astype(str),
+                    "Detail": ("last in the " + _ls_tw[_trip] + " "
+                               + _src_tw[_trip].map({"access": "GA/IL book", "healthsherpa": "HealthSherpa"})
+                               + " export, newest is " + _new_tw[_trip] + " — verify it is still active"),
+                    "Exchange ID": _tw.get("ffm_app_id", pd.Series("", index=_tw.index)).map(
+                        lambda v: re.sub(r"\.0$", "", str(v).strip()) if pd.notna(v) else ""),
+                }).sort_values(["State", "Client"]).reset_index(drop=True)
+                print(f"  !! Tripwire: {len(watch)} client(s) / {int(watch['Members'].sum())} member(s) counted "
+                      f"active but missing from the latest export (flagged on Watch, not changed): "
+                      f"{', '.join(watch['Client'].head(8))}{'…' if len(watch) > 8 else ''}")
+    except Exception as _e:
+        print(f"  !! tripwire skipped: {type(_e).__name__}: {_e}")
+        _acc_alerts.append("⚠️ Tripwire check failed this run — clients counted active but missing "
+                           "from the latest export are not flagged")
+    if _watch_extra:
+        watch = pd.concat([watch, pd.DataFrame(_watch_extra).reindex(columns=watch.columns)],
+                          ignore_index=True)
+
     # All Active: Effectuated, PendingEffectuation, or PendingFollowups
     # Must match _ACTIVE_STATUSES in dashboard.py so member counts agree.
     active_pending = all_clients[
@@ -1678,8 +2619,10 @@ def run_report(settings: dict) -> None:
     # Daily tracker should only count carriers/states the agent is appointed
     # with (cancellations still count for the day they were submitted, but
     # non-appointed business is excluded entirely).
+    # A taken client's row carries the TAKER's carrier, so it is judged by — and the
+    # sale is shown with — the carrier Ethan held it on (same gate as the book above).
     months_appointed = {
-        m: _filter_by_appointments(df, appointments) for m, df in months.items()
+        m: _appointed_by_held(df, appointments, _held_car, keep_held=True) for m, df in months.items()
     }
 
     # Supplemental / ancillary book (dental, vision, STM, accident, …) across
@@ -1803,60 +2746,6 @@ def run_report(settings: dict) -> None:
               f"({(follow_ups['Status'] == 'Open').sum()} open, "
               f"{(follow_ups['Status'] == 'Expired').sum()} expired)")
 
-    # BOOK-LEVEL RACE GUARD (#1, Ethan 2026-07-24): the fresh HealthSherpa snapshot
-    # is ground truth for who is active-and-ours RIGHT NOW. A client that snapshot
-    # shows Effectuated/Pending with policy_aor = us CANNOT be an "AOR taken" loss —
-    # that flag came from a stale/lagging signal (a won-back client whose export row
-    # still names the old agent, an aor_changed.json entry not yet cleared, a
-    # transient build race). Revert those to active in the BOOK itself, before it is
-    # pushed — the old race guard only scrubbed the text alert, after the push.
-    # SCOPED to "AOR taken" only: carrier-truth lapses and verification-expired are
-    # authoritative real losses and are left alone; hand-confirmed steals
-    # (data/aor_changed.json) are also left alone (the agent verified those).
-    try:
-        import glob as _glob_rg
-        import re as _re_rg
-        _hs_snaps = sorted(_glob_rg.glob(str(Path(settings["snapshot_dir"]) / "*healthsherpa*.parquet")))
-        if _hs_snaps and "cancel_reason" in all_clients.columns and not all_clients.empty:
-            def _lf_rg(f, l):
-                return _re_rg.sub(r"[^a-z]", "", str(l).lower()) + _re_rg.sub(r"[^a-z]", "", str(f).lower())
-            _snap_rg = pd.read_parquet(_hs_snaps[-1])
-            _mine_now, _status_now = set(), {}
-            for _, _r in _snap_rg.iterrows():
-                if str(_r.get("status") or "") not in ("Effectuated", "PendingEffectuation", "PendingFollowups"):
-                    continue
-                _aor = str(_r.get("policy_aor") or "")
-                if _NPN in _aor or (_LN in _aor.lower() and _FN in _aor.lower()):
-                    _k = _lf_rg(_r.get("first_name", ""), _r.get("last_name", ""))
-                    _mine_now.add(_k)
-                    _status_now.setdefault(_k, str(_r.get("status")))
-            try:
-                from tracker.commissions import aor_changed_keys
-                _confirmed = set(aor_changed_keys())
-            except Exception:
-                _confirmed = set()
-            if _mine_now:
-                _rk = all_clients.apply(lambda r: _lf_rg(r.get("first_name", ""), r.get("last_name", "")), axis=1)
-                _reason = all_clients["cancel_reason"].fillna("").astype(str)
-                _protect = (all_clients["status"].isin(["Cancelled", "Terminated"])
-                            & _reason.str.startswith("AOR taken")
-                            & _rk.isin(_mine_now) & ~_rk.isin(_confirmed))
-                if _protect.any():
-                    for _i in all_clients.index[_protect]:
-                        all_clients.at[_i, "status"] = _status_now.get(_rk.at[_i], "Effectuated")
-                        all_clients.at[_i, "cancel_reason"] = ""
-                        if "term_date" in all_clients.columns:
-                            all_clients.at[_i, "term_date"] = pd.NaT
-                        if "loss_basis" in all_clients.columns:
-                            all_clients.at[_i, "loss_basis"] = ""
-                    _rn = sorted({f"{all_clients.at[_i, 'first_name']} {all_clients.at[_i, 'last_name']}".strip()
-                                  for _i in all_clients.index[_protect]})
-                    print(f"  Book race guard: restored {int(_protect.sum())} 'AOR taken' client(s) the "
-                          f"fresh HealthSherpa snapshot shows active-and-ours "
-                          f"({', '.join(_rn[:8])}{'…' if len(_rn) > 8 else ''})")
-    except Exception as _e:
-        print(f"  (book race guard skipped: {_e})")
-
     # AOR Defense: the scraped at-risk list merged with the book — split into
     # Taken (another agent filed an AOR change — fight these) vs Disconnected
     # (usually still ours; just needs a Reconnect). Texts on NEWLY-taken only.
@@ -1927,12 +2816,13 @@ def run_report(settings: dict) -> None:
         follow_ups_df=follow_ups,
         aor_defense_df=aor_defense,
         freshness_df=freshness,
+        watch_df=watch,
     )
 
     # On a new HealthSherpa upload, text the agent the summary: new sales + who
     # newly fell off (cancelled / behind on payment / taken by another agent).
     try:
-        _upload_summary(all_clients, pastdue, settings["snapshot_dir"])
+        _upload_summary(all_clients, pastdue, settings["snapshot_dir"], watch=watch, alerts=_acc_alerts)
     except Exception as e:
         print(f"  (upload summary step skipped: {e})")
 

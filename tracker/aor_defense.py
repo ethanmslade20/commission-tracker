@@ -427,10 +427,26 @@ def alert_new_aor_changes(df, send=None) -> list:
     taken = all_taken[all_taken.apply(_confirmed, axis=1)]
 
     cur = {}  # name-key -> display name (first occurrence wins)
-    for _nm in taken["Client"]:
+    cur_ids = {}  # name-key -> Exchange ID of that row ("" when blank)
+    for _nm, _x in zip(taken["Client"], taken.get("Exchange ID", pd.Series("", index=taken.index))):
         _nk = re.sub(r"[^a-z]", "", str(_nm).lower())
         if _nk:
             cur.setdefault(_nk, _nm)
+            cur_ids.setdefault(_nk, re.sub(r"\.0$", "", str(_x or "").strip()).replace("nan", ""))
+    # The Exchange IDs behind each alerted name (data/aor_alerted_ids.json,
+    # {name_key: [ids]}, Ethan 2026-10-28). The name-keyed set alone silences a later
+    # steal of a DIFFERENT client with the same name (two same-name clients in GA/SC
+    # are both his); with the ids, a known name on an id not seen before alerts.
+    # Names alerted before the ids were kept have no entry: they stay silent and
+    # their current id is recorded.
+    ids_path = _ROOT / "data" / "aor_alerted_ids.json"
+    ids_map = {k: set(v or []) for k, v in (_load_json(ids_path, {}) or {}).items()}
+
+    def _already(k) -> bool:
+        if k not in alerted:
+            return False
+        x = cur_ids.get(k, "")
+        return not (x and ids_map.get(k) and x not in ids_map[k])
 
     alerted_path = _ROOT / "data" / "aor_alerted.json"
     first_run = not alerted_path.exists()
@@ -442,11 +458,38 @@ def alert_new_aor_changes(df, send=None) -> list:
     _warned = {re.sub(r"[^a-z]", "", str(n).lower()) for n in all_taken["Client"]}
     alerted -= {k for k in (alerted - set(cur)) if k in _warned}
 
-    new = [(k, n) for k, n in cur.items() if k not in alerted]
+    # TRACKER CORRECTION (data/correction_pending.json, Ethan 2026-10-28): a backlog
+    # the tracker only just re-sorted as taken is not a "call them today" steal. Never
+    # text those; record them as alerted so they stay quiet after the marker clears.
+    try:
+        from tracker.correction import load_correction, match_sets, name_key
+        _corr_ids, _corr_names = match_sets(load_correction())
+    except Exception:
+        _corr_ids, _corr_names = set(), set()
+    if _corr_ids or _corr_names:
+        _xid = {re.sub(r"[^a-z]", "", str(c).lower()): re.sub(r"\.0$", "", str(x or "").strip())
+                for c, x in zip(taken["Client"], taken.get("Exchange ID", pd.Series("", index=taken.index)))}
+        _skip = {k for k, n in cur.items()
+                 if _xid.get(k, "") in _corr_ids or name_key(n) in _corr_names}
+        if _skip:
+            _new_skip = {k for k in _skip if not _already(k)}
+            alerted |= _skip
+            for k in _skip:
+                if cur_ids.get(k):
+                    ids_map.setdefault(k, set()).add(cur_ids[k])
+            if _new_skip:
+                print(f"  AOR Defense: {len(_new_skip)} tracker-correction client(s) recorded, not alerted "
+                      f"(not new): {', '.join(sorted(cur[k] for k in _new_skip)[:8])}")
+
+    new = [(k, n) for k, n in cur.items() if not _already(k)]
 
     alerted |= set(cur.keys())  # append-only: once CONFIRMED taken, never alert again
+    for k in cur:
+        if cur_ids.get(k):
+            ids_map.setdefault(k, set()).add(cur_ids[k])
     alerted_path.parent.mkdir(parents=True, exist_ok=True)
     alerted_path.write_text(json.dumps(sorted(alerted), indent=1))
+    ids_path.write_text(json.dumps({k: sorted(v) for k, v in sorted(ids_map.items())}, indent=1))
     if first_run:
         print(f"  AOR Defense: alerted-set initialized ({len(cur)} already taken — no text).")
         return []

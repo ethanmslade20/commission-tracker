@@ -14,9 +14,16 @@ Recognized files:
   Oscar_INDIVIDUAL_Book_*.csv           Oscar book    -> carrier_books/oscar.csv
   Producer ToolBox*Clients report.csv   Anthem book   -> carrier_books/anthem.csv
   Jarvis*BookOfBusiness*.xlsx           UHC book      -> carrier_books/uhc_source.xlsx
+  book_of_business*.csv                 GA Access / Get Covered IL agent book: EVERY new pull
+                                        -> snapshots/roster/<st>_<date>.parquet (dated history),
+                                        the newest whole one per state (not partial)
+                                        -> input/book_of_business_<st>.csv
 
 State: data/.staged_downloads.json remembers what's been staged so each file
 is processed exactly once. Files must be >15s old (download finished).
+
+The folder is ~/Downloads unless $TRACKER_DOWNLOADS_DIR or settings.yaml
+`downloads_dir` points elsewhere (tests use a scratch folder).
 """
 import json
 import shutil
@@ -26,7 +33,23 @@ import zipfile
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parent.parent
-_DL = Path.home() / "Downloads"
+
+
+def _downloads_dir() -> Path:
+    import os
+    if os.environ.get("TRACKER_DOWNLOADS_DIR"):
+        return Path(os.environ["TRACKER_DOWNLOADS_DIR"]).expanduser()
+    try:
+        from tracker.config import load_settings
+        _s = load_settings().get("downloads_dir")
+        if _s:
+            return Path(_s).expanduser()
+    except Exception:
+        pass
+    return Path.home() / "Downloads"
+
+
+_DL = _downloads_dir()
 _STATE = _ROOT / "data" / ".staged_downloads.json"
 _LOG = Path.home() / "Library" / "Logs" / "commission-tracker-downloads.log"
 _MIN_AGE_S = 15          # let the browser finish writing
@@ -89,6 +112,129 @@ def _archived_yes(src, is_text=False):
         return sum(1 for row in r if len(row) > i and row[i].strip().lower() == "yes")
     except Exception:
         return -1
+
+
+def _stage_access_books(fresh, mark) -> list:
+    """GA Access / Get Covered IL agent books (book_of_business*.csv). Ethan 2026-10-28.
+
+    EVERY unstaged pull is written to the dated roster history (the Oct 11 GA and IL
+    pulls sat in Downloads unused because nothing picked them up, and the tracker ran
+    a 45-day-old GA book labelled as this month). Then the newest pull per state is
+    staged into input/book_of_business_<st>.csv, the old copy backed up as .bak_<ts>
+    (his manual convention), with the export's own mtime kept so the tracker knows its
+    age. A pull that looks PARTIAL next to the pull before it (state_roster.pull_partial,
+    the roster rule's own test) is recorded but never staged: GA-book-only clients
+    missing from it would lapse and be texted as fresh losses. The newest whole pull
+    of the sweep is staged instead (or nothing, keeping the last full book), with one
+    text asking for a re-pull. Header-only or unreadable downloads are skipped, with a
+    text (a failed export would otherwise go unnoticed until the 14-day stale-book
+    alarm). Another agent's book (its rows name a different agent) is never recorded
+    or staged: the access ingest has no agent filter, so every client in it would
+    count as his (the same rule as the HealthSherpa branch: Phase-B audit files must
+    never auto-stage). The state comes from the address majority. A carrier-less
+    renewal-season pull is fine to stage: the ingest
+    (tracker/state_roster.resolve_access_rows) resolves it person by person."""
+    from tracker import state_roster as SR
+    try:
+        from tracker.config import load_settings
+        snap = Path(load_settings()["snapshot_dir"])
+    except Exception:
+        snap = _ROOT / "snapshots"
+
+    def _m(p):
+        try:
+            return p.stat().st_mtime
+        except OSError:
+            return None
+    files = [p for p in _DL.glob("book_of_business*.csv")
+             if _m(p) is not None and time.time() - _m(p) > _MIN_AGE_S and fresh(p)]
+
+    def _recent(m):
+        # Text only about a download from the last 2 days: the first sweep also
+        # walks every old pull in Downloads (a July failed export is not news).
+        return time.time() - m < 2 * 86400
+    pulls = {}
+    for p in sorted(files, key=lambda q: _m(q) or 0):     # oldest → newest
+        m = _m(p)
+        try:
+            raw = SR.read_book(p)
+        except Exception as e:
+            _log(f"SKIPPED state-exchange book {p.name}: unreadable ({type(e).__name__}: {e})")
+            if _recent(m):
+                _text(f"⚠️ GA/IL book download {p.name} can't be read — nothing was staged. "
+                      f"Re-export the book.")
+            mark(p, m)
+            continue
+        if raw.empty:
+            _log(f"SKIPPED header-only state-exchange book {p.name} (failed export)")
+            if _recent(m):
+                _text(f"⚠️ GA/IL book download {p.name} is empty (headers only — a failed export). "
+                      f"Nothing was staged; re-export the book.")
+            mark(p, m)
+            continue
+        ok, who = SR.book_agent(raw)
+        if not ok:
+            _log(f"REJECTED state-exchange book {p.name}: another agent's book ({who}) — NOT recorded or staged")
+            if _recent(m):
+                _text(f"⚠️ {p.name} is another agent's GA/IL book ({who}) — NOT staged, your book is unchanged.")
+            mark(p, m)
+            continue
+        st = SR.majority_state(raw)
+        if st not in SR.ROSTER_STATES:
+            _log(f"SKIPPED state-exchange book {p.name}: no GA/IL address majority ({st or 'none'})")
+            mark(p, m)
+            continue
+        md5 = SR.file_md5(p)
+        try:
+            SR.write_roster(raw, st, SR.export_time(p), p.name, md5, snap)
+        except Exception as e:
+            _log(f"!! roster history not written for {p.name}: {type(e).__name__}: {e}")
+        pulls.setdefault(st, []).append((m, p, md5, raw))
+        mark(p, m)
+
+    staged = []
+    for st, lst in sorted(pulls.items()):
+        # The newest pull of the sweep that looks whole. A partial one is left in the
+        # roster history (where the roster rule sees it as partial too) and texted once.
+        try:
+            roster = SR.load_roster(snap, st)
+        except Exception as e:
+            roster = None
+            _log(f"!! {st} roster history unreadable, partial-pull check skipped: {type(e).__name__}: {e}")
+        pick, bad = None, None
+        for m, p, md5, raw in reversed(lst):
+            try:
+                why = SR.pull_partial(roster, SR.keyed_pull(raw, SR.export_time(p), p.name, md5), SR.export_time(p))
+            except Exception as e:
+                why = ""
+                _log(f"!! partial-pull check failed for {p.name}: {type(e).__name__}: {e}")
+            if not why:
+                pick = (m, p, md5)
+                break
+            _log(f"NOT staged {p.name}: looks partial ({why}) — the last full {st} book stays")
+            bad = bad or (m, p, why)
+        if bad and _recent(bad[0]):
+            _text(f"⚠️ {SR.BOOK_LABELS.get(st, st + ' book')} download {bad[1].name} looks partial ({bad[2]}) — "
+                  f"not used, the tracker keeps your last full pull. Re-pull the {st} book; if it really "
+                  f"shrank, a matching pull on a later day is used.")
+        if pick is None:
+            continue
+        m, p, md5 = pick
+        dest = _ROOT / "input" / f"book_of_business_{st.lower()}.csv"
+        if dest.exists():
+            try:
+                if SR.file_md5(dest) == md5:
+                    continue                                 # this pull is already staged
+                if dest.stat().st_mtime >= m:
+                    _log(f"NOT staged {p.name}: input/{dest.name} is newer (staged by hand?)")
+                    continue
+                shutil.copy2(dest, dest.with_name(dest.name + time.strftime(".bak_%Y%m%d_%H%M%S")))
+            except Exception as e:
+                _log(f"!! could not back up input/{dest.name}, {p.name} NOT staged: {e}")
+                continue
+        shutil.copy2(p, dest)
+        staged.append(f"{st} book ({p.name})")
+    return staged
 
 
 def main():
@@ -204,6 +350,10 @@ def main():
             staged.append(f"HealthSherpa ({rows} rows)")
         mark(hs, _hs_mtime)
 
+    # Carrier books keep their DOWNLOAD's mtime (copy2 / utime): the GA/IL roster rule
+    # dates a book by its file (state_roster.carrier_evidence), and a book staged after
+    # midnight would otherwise count as the next day's evidence. Data Freshness then
+    # shows when the book was pulled, not when the watcher copied it.
     # Ambetter zip → newest policies_*.csv inside
     zp = _newest("policies*.zip")
     if fresh(zp):
@@ -211,9 +361,13 @@ def main():
             with zipfile.ZipFile(zp) as z:
                 names = [n for n in z.namelist() if n.startswith("policies_") and n.endswith(".csv")]
                 if names:
-                    with z.open(sorted(names)[-1]) as src, \
-                         open(_ROOT / "carrier_books" / "ambetter.csv", "wb") as dst:
+                    _amb = _ROOT / "carrier_books" / "ambetter.csv"
+                    with z.open(sorted(names)[-1]) as src, open(_amb, "wb") as dst:
                         shutil.copyfileobj(src, dst)
+                    _zm = _mtime(zp)
+                    if _zm is not None:
+                        import os as _os_u
+                        _os_u.utime(_amb, (_zm, _zm))
                     staged.append("Ambetter book")
         except Exception as e:
             _log(f"ambetter zip failed: {e}")
@@ -246,9 +400,14 @@ def main():
                     _log(f"SKIPPED {label}: {p.name} has no {marker!r} column — not this carrier's export")
                     mark(p)
                     continue
-            shutil.copy(p, _ROOT / dest)
+            shutil.copy2(p, _ROOT / dest)
             staged.append(label)
             mark(p)
+
+    try:
+        staged += _stage_access_books(fresh, mark)
+    except Exception as e:
+        _log(f"!! GA/IL book staging failed: {type(e).__name__}: {e}")
 
     # Forget paths that are gone. Without this the state grows without bound and keeps
     # mtimes for files the ingest deleted months ago.

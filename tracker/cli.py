@@ -95,7 +95,12 @@ def ingest(month: Optional[str], dry_run: bool):
     else:
         month_date = date.today().replace(day=1)
 
-    csv_files = sorted(input_dir.glob("*.csv"))
+    # HealthSherpa first: the GA/IL book ingest reads the newest HealthSherpa snapshot
+    # (carrier fill for state-exchange rows no earlier pull covers), so it must see
+    # this run's export, not the last one.
+    from tracker.ingest import detect_source as _detect
+    csv_files = sorted(input_dir.glob("*.csv"),
+                       key=lambda p: (_detect(p.name, source_configs) != "healthsherpa", p.name))
     if not csv_files:
         click.echo(f"No CSV files found in {input_dir}/")
         return
@@ -125,6 +130,14 @@ def ingest(month: Optional[str], dry_run: bool):
         except Exception as e:
             click.echo(f"  ✗ {csv_path.name}: {e}", err=True)
             errors.append(csv_path.name)
+            # A GA/IL book that fails to load must reach the upload text, not just
+            # this log: the report keeps using the last good snapshot (Ethan 2026-10-28).
+            if not dry_run and _detect(csv_path.name, source_configs) == "access":
+                from tracker.ingest import _record_access_status
+                import re as _re
+                _record_access_status(_re.sub(r"\s+", "", csv_path.stem.strip().lower()), {
+                    "file": csv_path.name, "ok": False, "kept_prior": True, "kept_copy": "previous",
+                    "message": f"{type(e).__name__}: {e}", "unfilled": []})
 
     if errors:
         click.echo(f"\n{len(errors)} file(s) failed. Check filenames match source patterns.")

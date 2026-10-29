@@ -22,6 +22,26 @@ excluded_carriers:
   - "Florida Blue"
   - "Alliant"
 
+# GA Access / Get Covered IL roster rule (tracker/state_roster.py evaluate_roster): what
+# happens to a client who was in an earlier GA book pull and is missing from the newest.
+#   flag  (default) — listed on the Watch tab and in the upload text only; nothing changes.
+#   count — ALSO counted lost ("Suspected — left GA Access book", never a "call today"
+#           lead), but only when every outside check agrees: fresh pull (<=14 days), not
+#           a partial pull, the pull that first left them out not from Nov 1 – Jan 15,
+#           no HealthSherpa or carrier-book sign dated AFTER that pull's day that they
+#           are still yours, and a carrier book pulled since they went missing. A sign
+#           from that same day or earlier only flags them ("check"). Once counted, a
+#           loss stays counted (data/roster_lost.json) until they are listed again or
+#           a later HealthSherpa / carrier sign shows them yours.
+ga_roster_mode: count
+# IL uses the same rule but stays flag-only unless set here (no HealthSherpa 2026 IL
+# plans and no BCBS-IL portal, so nothing outside the book can protect an IL client).
+# il_roster_mode: flag
+
+# Where the Downloads watcher (tracker/stage_downloads.py) looks for exports. Default
+# ~/Downloads; the TRACKER_DOWNLOADS_DIR environment variable overrides both.
+# downloads_dir: "~/Downloads"
+
 # Sheet tab names
 tabs:
   dashboard:         "Dashboard"

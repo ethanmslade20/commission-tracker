@@ -857,6 +857,7 @@ def update_sheet(
     follow_ups_df: Optional[pd.DataFrame] = None,
     aor_defense_df: Optional[pd.DataFrame] = None,
     freshness_df: Optional[pd.DataFrame] = None,
+    watch_df: Optional[pd.DataFrame] = None,
 ) -> None:
     spreadsheet = _open_sheet(sheet_url, impersonation_target)
 
@@ -875,6 +876,7 @@ def update_sheet(
     follow_ups_title = tab_names.get("follow_ups", "Follow-ups")
     aor_defense_title = tab_names.get("aor_defense", "AOR Defense")
     freshness_title = tab_names.get("freshness", "Data Freshness")
+    watch_title = tab_names.get("watch", "Watch")
     daily_detail_title = tab_names.get("daily_detail", "Daily Detail")
 
     # Daily tracker tabs — one per ingested month, all history included.
@@ -906,6 +908,9 @@ def update_sheet(
     _has_fresh = freshness_df is not None and not freshness_df.empty
     if _has_fresh:
         all_titles |= {freshness_title}
+    _has_watch = watch_df is not None and not watch_df.empty
+    if _has_watch:
+        all_titles |= {watch_title}
     _daily_detail = _build_daily_detail(months) if months else pd.DataFrame()
     _has_detail = not _daily_detail.empty
     if _has_detail:
@@ -1003,6 +1008,16 @@ def update_sheet(
             print(f"  Updated tab: {freshness_title}")
         except Exception as e:
             print(f"  Warning: freshness write failed: {e}")
+
+    # ── Watch tab (flag-only contradictions — counted active but gone from the
+    #    newest export; never changes a status) ──────────────────────────────────
+    if _has_watch:
+        try:
+            watch_ws = _ensure_tab(spreadsheet, watch_title)
+            _write_tab(watch_ws, watch_df)
+            print(f"  Updated tab: {watch_title} ({len(watch_df)} rows)")
+        except Exception as e:
+            print(f"  Warning: Watch write failed: {e}")
 
     # ── Daily Detail tab (per-policy submissions, for the chart drill-down) ───
     if _has_detail:

@@ -49,6 +49,22 @@ def build_freshness(now=None) -> pd.DataFrame:
                          "_days": round(age, 1)})
         else:
             rows.append({"Source": label, "Last Updated": "never", "Age": "—", "_days": None})
+    # GA Access / Get Covered IL agent books: aged by the newest pull's OWN export date
+    # (snapshots/roster), not by when it was staged, so a book re-ingested every run
+    # still reads its true age (the Sep 13 GA book ran unnoticed for 45 days).
+    # Falls back to the staged input file's mtime.
+    try:
+        from tracker import state_roster as _SR
+        from tracker.config import load_settings
+        _s = load_settings()
+        for _st in _SR.ROSTER_STATES:
+            ts, age = _SR.book_age(_s["snapshot_dir"], _s["input_dir"], _st, now=now)
+            rows.append({"Source": _SR.BOOK_LABELS[_st],
+                         "Last Updated": ts.strftime("%b %d, %Y · %I:%M %p") if ts is not None else "never",
+                         "Age": _fmt_age(age) if age is not None else "—",
+                         "_days": round(age, 1) if age is not None else None})
+    except Exception as e:
+        print(f"  (GA/IL book freshness skipped: {e})")
     # Stamped at report time — on the cloud site this reads as "site data as of".
     rows.append({"Source": "Website push (last report run)",
                  "Last Updated": now.strftime("%b %d, %Y · %I:%M %p"),
