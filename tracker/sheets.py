@@ -820,10 +820,11 @@ def _write_daily_tracker_tab(
 
 
 # Tabs the app manages on its own (AEP Tracker per-year, Goals/Settings
-# persistence) — never auto-deleted by the CLI's report cleanup, since they
-# aren't rebuilt by `track report` and would otherwise be wiped every run.
+# persistence, the $0 Plan Review checkmarks) — never auto-deleted by the CLI's
+# report cleanup, since they aren't rebuilt by `track report` and would otherwise
+# be wiped every run (Zero-Dollar Review was, Aug 26 and Sep 1 2026).
 _PROTECTED_TAB_PREFIXES = ("AEP ",)
-_PROTECTED_TAB_NAMES    = {"App Settings"}
+_PROTECTED_TAB_NAMES    = {"App Settings", "Zero-Dollar Review"}
 
 
 def _is_protected_tab(title: str) -> bool:

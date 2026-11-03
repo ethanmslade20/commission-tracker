@@ -2,8 +2,9 @@
 Downloads → tracker auto-stager (the hands-free half of the daily pull).
 
 launchd watches ~/Downloads; whenever a recognized export lands, this script
-validates it, stages it into the tracker, and kicks auto_update.sh (which runs
-ingest + report, which in turn texts the upload summary). The human part of
+validates it, stages it into the tracker, and starts the report watcher job
+(auto_update.sh: ingest + report, which in turn texts the upload summary), so a
+carrier book alone gets a report too. The human part of
 the pull shrinks to: click Export on the website. Everything after the
 download is automatic.
 
@@ -24,11 +25,17 @@ Recognized files:
 
 State: data/.staged_downloads.json remembers what's been staged so each file
 is processed exactly once. Files must be >15s old (download finished).
+data/.report_owed is set when something is staged and cleared by auto_update.sh
+once a run starts (or finds nothing changed); until then every sweep starts the
+watcher again, so a start that lands in its 180s cooldown is retried, not lost.
+Nothing is staged while a report runs (auto_update.sh's lock dir), so a run's
+inputs never change under it.
 
 The folder is ~/Downloads unless $TRACKER_DOWNLOADS_DIR or settings.yaml
 `downloads_dir` points elsewhere (tests use a scratch folder).
 """
 import json
+import os
 import shutil
 import subprocess
 import time
@@ -77,6 +84,51 @@ def _log(msg):
     _LOG.parent.mkdir(parents=True, exist_ok=True)
     with open(_LOG, "a") as f:
         f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')}  {msg}\n")
+
+
+_REPORT_OWED = _ROOT / "data" / ".report_owed"
+_KICK_FAILED = _ROOT / "data" / ".report_owed.kickfail"    # last logged start failure
+_WATCHER = "com.ethanslade.commissiontracker"              # launchd job: auto_update.sh
+_SWEEPER = "com.ethanslade.commissiontracker.downloads"    # launchd job: this script
+_RUN_LOCK = Path("/tmp/commission-tracker-auto.lock")      # auto_update.sh's lock dir
+
+
+def _report_running() -> bool:
+    """auto_update.sh holds its lock dir for a whole run: ingest at the start, the
+    upload text ~8 min later. It treats a lock older than 10 min as stale."""
+    try:
+        return _RUN_LOCK.is_dir() and time.time() - _RUN_LOCK.stat().st_mtime < 900
+    except OSError:
+        return False
+
+
+def _start_report():
+    """Have launchd start the report watcher job. A plain child of this job was killed
+    the moment this job exited, so before Nov 3 2026 a carrier book staged on its own
+    never got a report. A job launchd starts runs one at a time, under its own log and
+    permissions; starting it while it runs is a no-op.
+    Only the real sweeper does this. A sandbox, test or terminal run just leaves the
+    flag in its own data/; on the live checkout the sweeper acts on it within 2 min."""
+    if os.environ.get("XPC_SERVICE_NAME") != _SWEEPER:
+        return
+    try:
+        r = subprocess.run(["/bin/launchctl", "kickstart", f"gui/{os.getuid()}/{_WATCHER}"],
+                           capture_output=True, text=True, timeout=30)
+        err = "" if r.returncode == 0 else (f"launchctl rc={r.returncode}: "
+                                            f"{(r.stderr or r.stdout).strip()[:200]}")
+    except Exception as e:
+        err = f"{type(e).__name__}: {e}"
+    try:
+        if not err:
+            _KICK_FAILED.unlink(missing_ok=True)
+            return
+        # Every sweep retries; log the failure once an hour, not every 2 minutes.
+        if _KICK_FAILED.exists() and time.time() - _KICK_FAILED.stat().st_mtime < 3600:
+            return
+        _KICK_FAILED.touch()
+    except OSError:
+        pass
+    _log(f"!! could not start the report watcher ({err}) — a report is owed")
 
 
 def _text(msg):
@@ -241,6 +293,28 @@ def _stage_access_books(fresh, mark) -> list:
 
 
 def main():
+    # Never swap inputs under a running report. Ingest reads them at the start and the
+    # upload text hashes input/healthsherpa.csv ~8 min later, so a HealthSherpa export
+    # staged mid-run got stamped as texted without ever being texted. The files stay
+    # unstaged; the first sweep after the run (every 2 min) takes them.
+    if _report_running():
+        return
+    staged = []
+    try:
+        _sweep(staged)
+    finally:
+        # Even if the sweep failed partway: whatever it staged is owed a report.
+        try:
+            if staged:
+                _log(f"staged: {', '.join(staged)} — starting the report")
+                _REPORT_OWED.touch()
+            if _REPORT_OWED.exists():
+                _start_report()
+        except OSError as e:
+            _log(f"!! report flag: {type(e).__name__}: {e}")
+
+
+def _sweep(staged):
     # macOS TCC: launchd jobs need Full Disk Access (System Settings) to read
     # ~/Downloads. Without it, log the denial loudly instead of silently seeing
     # an empty folder (root cause of the 2026-07-06 sweeper mystery).
@@ -256,8 +330,6 @@ def main():
             state = json.loads(_STATE.read_text())
         except Exception:
             state = {}
-
-    staged = []
 
     # Both of these used to call stat() unguarded, and mark() runs AFTER the file has
     # been handed to the ingest — which moves it. The window is small but real, and a
@@ -463,13 +535,6 @@ def main():
 
     _STATE.parent.mkdir(parents=True, exist_ok=True)
     _STATE.write_text(json.dumps(state, indent=1))
-
-    if staged:
-        _log(f"staged: {', '.join(staged)} — kicking auto_update.sh")
-        # auto_update.sh has its own lock + cooldown; run_report has a global
-        # flock — so this can never race a manual run.
-        subprocess.Popen(["/bin/bash", str(_ROOT / "auto_update.sh")],
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 if __name__ == "__main__":

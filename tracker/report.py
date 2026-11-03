@@ -656,6 +656,11 @@ def _upload_summary(all_clients, pastdue, snapshot_dir, today=None, watch=None, 
                 # reason, which upstream re-stamps to "AOR taken — {agent}"). (Ethan
                 # 2026-08-25 — John MacDonald/Cynthia Crowe.)
                 _never_mine = True
+            elif _reason == "Plan switch":
+                # An older copy of a policy the person still holds (see the plan-switch
+                # and duplicate-person passes): retained, not a loss. Not left to the
+                # race guard below, which can't link a mover's old state to the new one.
+                pass
             elif "Verification expired" in _reason:
                 vexp[k] = _disp(f, l)
             elif "AOR taken" in _reason:
@@ -1899,47 +1904,72 @@ def run_report(settings: dict) -> None:
     # wrong for ONE person who switched carriers (old brand lingers, or carrier-truth
     # re-added a stale portal policy whose plan-year term date hasn't caught up) or has
     # a duplicate same-carrier enrollment (two app_ids/sids, same plan). A person holds
-    # only ONE active major-medical marketplace plan, so within a single name+state keep
+    # only ONE active major-medical marketplace plan, so within a single name keep
     # the current row (latest current_effective) and term the rest "Plan switch".
     # SAFETY: two SAME-carrier rows with DIFFERENT eff dates and NO shared id
     # (app_id/sid/email/phone) are left alone — preserves the same-name-collision guard.
+    # Rows in DIFFERENT states are one person only on a shared id: a client who moved
+    # (Nov 3 2026: TN plan from 3/1, FL plan from 11/1, same email + phone, both still
+    # active in HealthSherpa) is counted once, same-name strangers in two states stay two.
     if not all_clients.empty and "status" in all_clients.columns:
+        from tracker.ingest import clean_app_id as _cid_dc
+        from tracker.state_roster import phone10 as _ph10_dc
         _ACT_DC = {"Effectuated", "PendingEffectuation", "PendingFollowups"}
-        _nm_dc = all_clients.apply(
-            lambda r: re.sub(r"[^a-z]", "", f"{r.get('first_name','')}{r.get('last_name','')}".lower()), axis=1)
-        _st_dc = all_clients.get("state", pd.Series("", index=all_clients.index)).fillna("").astype(str).str.lower().str.strip()
-        _key_dc = _nm_dc + "@" + _st_dc
+        _blank_dc = pd.Series("", index=all_clients.index)
+        _nm_dc = (all_clients.get("first_name", _blank_dc).fillna("").astype(str)
+                  + all_clients.get("last_name", _blank_dc).fillna("").astype(str)
+                  ).str.lower().str.replace(r"[^a-z]", "", regex=True)
+        _st_dc = all_clients.get("state", _blank_dc).fillna("").astype(str).str.lower().str.strip()
+        _key_dc = _nm_dc
         _am_dc = all_clients["status"].isin(_ACT_DC)
         _eff_dc = pd.to_datetime(all_clients.get("effective_date"), errors="coerce")
         _cur_dc = pd.to_datetime(all_clients.get("current_effective"), errors="coerce")
         _cur_dc = _cur_dc.where(_cur_dc.notna(), _eff_dc)
-        _car_dc = all_clients.get("carrier", pd.Series("", index=all_clients.index)).astype(str).str.lower()
-        _sid_dc = all_clients.get("ffm_subscriber_id", pd.Series("", index=all_clients.index)).astype(str).str.replace(r"[^0-9]", "", regex=True)
-        _app_dc = all_clients.get("ffm_app_id", pd.Series("", index=all_clients.index)).astype(str).str.replace(r"[^0-9]", "", regex=True)
-        _em_dc = all_clients.get("email", pd.Series("", index=all_clients.index)).fillna("").astype(str).str.lower().str.strip()
-        _ph_dc = all_clients.get("phone", pd.Series("", index=all_clients.index)).astype(str).str.replace(r"[^0-9]", "", regex=True).str[-10:]
+        _car_dc = all_clients.get("carrier", _blank_dc).astype(str).str.lower()
+        # clean_app_id first: a float-stored id ("1234567890.0") kept its 0 as a digit.
+        _sid_dc = all_clients.get("ffm_subscriber_id", _blank_dc).map(_cid_dc).str.replace(r"[^0-9]", "", regex=True)
+        _app_dc = all_clients.get("ffm_app_id", _blank_dc).map(_cid_dc).str.replace(r"[^0-9]", "", regex=True)
+        _em_dc = all_clients.get("email", _blank_dc).fillna("").astype(str).str.lower().str.strip()
+        _em_dc = _em_dc.where(_em_dc.str.contains("@", regex=False), "")
+        _ph_dc = all_clients.get("phone", _blank_dc).map(_ph10_dc)
+        # An email or phone on 3+ different names is a placeholder or a family's: it
+        # can't make rows in two states one person.
+        def _wide_dc(s):
+            _n = pd.DataFrame({"v": s, "n": _nm_dc})[s != ""].groupby("v")["n"].nunique()
+            return s.map(_n).fillna(0) > 2
+        _em_wide, _ph_wide = _wide_dc(_em_dc), _wide_dc(_ph_dc)
 
         def _same_person_dc(i, j):
+            _moved = _st_dc[i] != _st_dc[j]
             if _app_dc[i] and _app_dc[i] == _app_dc[j]: return True    # same FFM application
             if _sid_dc[i] and _sid_dc[i] == _sid_dc[j]: return True    # same subscriber id
-            if _em_dc[i] and _em_dc[i] == _em_dc[j]:    return True
-            if _ph_dc[i] and _ph_dc[i] == _ph_dc[j]:    return True
+            if _em_dc[i] and _em_dc[i] == _em_dc[j] and not (_moved and _em_wide[i]): return True
+            if _ph_dc[i] and _ph_dc[i] == _ph_dc[j] and not (_moved and _ph_wide[i]): return True
+            if _moved:                                  return False   # other state: only a shared id
             if _car_dc[i] != _car_dc[j]:                return True    # cross-carrier switch
             return bool(_eff_dc[i] == _eff_dc[j])                      # same carrier: dup only if identical eff
 
         _n_dc = 0
         for _kv, _cnt in _key_dc[_am_dc].value_counts().items():
-            if _cnt < 2 or _kv.startswith("@"):
+            if _cnt < 2 or not _kv:
                 continue
             _idxs = list(all_clients.index[_am_dc & (_key_dc == _kv)])
-            _clusters = []
+            # Connected components over every pair, so the grouping doesn't depend on
+            # row order (a row matching two groups joins both).
+            _root = {i: i for i in _idxs}
+            def _find(i):
+                while _root[i] != i:
+                    _root[i] = _root[_root[i]]
+                    i = _root[i]
+                return i
+            for _a, _i in enumerate(_idxs):
+                for _j in _idxs[_a + 1:]:
+                    if _same_person_dc(_i, _j):
+                        _root[_find(_i)] = _find(_j)
+            _groups = {}
             for _i in _idxs:
-                for _cl in _clusters:
-                    if any(_same_person_dc(_i, _j) for _j in _cl):
-                        _cl.append(_i); break
-                else:
-                    _clusters.append([_i])
-            for _cl in _clusters:
+                _groups.setdefault(_find(_i), []).append(_i)
+            for _cl in _groups.values():
                 if len(_cl) < 2:
                     continue
                 _newest = max(_cl, key=lambda k: (pd.notna(_cur_dc[k]),
@@ -1956,7 +1986,7 @@ def run_report(settings: dict) -> None:
                     _n_dc += 1
         if _n_dc:
             print(f"  Duplicate-person collapse: termed {_n_dc} redundant active policy(ies) "
-                  f"(cross-carrier switch / same-carrier duplicate the sid-split pass missed)")
+                  f"(cross-carrier switch / moved state / same-carrier duplicate the sid-split pass missed)")
 
     # STATE-EXCHANGE RE-ACTIVATION (Ethan 2026-08-01). A client currently enrolled
     # in a state-based-marketplace book (Georgia Access / Get Covered IL — source=
@@ -2270,7 +2300,11 @@ def run_report(settings: dict) -> None:
         # AOR Defense, which also falls back to last_ede_sync for those.
         _sync = all_clients.apply(_steal_date, axis=1).fillna(_ede)
 
-        _keep_existing = _existing.str.contains("Verification expired", na=False)
+        # "Plan switch" too: the plan-switch and duplicate-person passes term an older
+        # copy of a policy the person still holds. Relabelled "Lapsed — <carrier>" it
+        # read as a loss (app.py's Re-Engage filter on "Plan switch" never matched).
+        _keep_existing = (_existing.str.contains("Verification expired", na=False)
+                          | (_existing == "Plan switch"))
         all_clients["cancel_reason"] = ""
         all_clients.loc[_churn, "cancel_reason"] = _notes.where(_notes != "", _derived)[_churn]
         # AOR-taken takes precedence (most actionable), except where a verification

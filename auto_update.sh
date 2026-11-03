@@ -12,6 +12,7 @@ COOLDOWN_SECONDS=180
 FP_FILE="/tmp/commission-tracker-auto.inputs_fp"
 HS_CSV="input/healthsherpa.csv"
 MARKER="data/last_upload_hash.txt"
+RUN_START=$(date +%s)
 
 # Skip if another run is already in progress (stale locks older than 10 min are cleared)
 if [ -d "$LOCKDIR" ]; then
@@ -58,12 +59,18 @@ text_done() {
 }
 
 if [ "$NFILES" -gt 0 ] && [ -f "$FP_FILE" ] && [ "$(cat "$FP_FILE")" = "$INPUTS_FP" ] && text_done; then
+    # Nothing new: the downloads stager can stop restarting us. Unless it set the flag
+    # again after this started — for a file the fingerprint above may have missed.
+    [ "$(stat -f %m data/.report_owed 2>/dev/null || echo 0)" -lt "$RUN_START" ] && rm -f data/.report_owed
     echo "--- $(date) --- Skipped: inputs+code unchanged and no upload text pending (delete $FP_FILE to force)." >> "$LOGFILE"
     exit 0
 fi
 
 mkdir "$LOCKDIR" 2>/dev/null || { echo "--- $(date) --- Skipped: could not acquire lock." >> "$LOGFILE"; exit 0; }
 trap 'rmdir "$LOCKDIR" 2>/dev/null' EXIT
+# This run reads everything staged so far; the stager sets the flag again for
+# anything it stages from here on (tracker/stage_downloads.py).
+rm -f data/.report_owed
 
 echo "--- $(date) --- New file detected, running update..." >> "$LOGFILE"
 
