@@ -380,8 +380,10 @@ def main():
     # Policies.csv in a new layout whose term dates hide lapses, so it is never staged as
     # is. ambetter_export rebuilds the old layout; the raw file is kept beside the older
     # raw pulls in data/carrier_reports/ambetter/. "Policies.csv" is a name any portal
-    # could use, so it must carry Ambetter's columns and his NPN.
-    cp = _newest("[Pp]olicies*.csv")
+    # could use, so it must carry Ambetter's columns and his NPN. Capital P only: the
+    # lowercase policies_2026*.csv files in Downloads are old zips' contents, months old.
+    # And never older than the book already staged, whatever the file is called.
+    cp = _newest("Policies*.csv")
     if fresh(cp):
         _cm = _mtime(cp)
         try:
@@ -390,7 +392,11 @@ def main():
             from tracker.config import get_agent
             raw = pd.read_csv(cp, dtype=str, keep_default_na=False)
             _zm = _mtime(zp) if zp is not None else None
-            if not all(c in raw.columns for c in SIGNATURE):
+            _amb_now = _ROOT / "carrier_books" / "ambetter.csv"
+            _bm = _mtime(_amb_now) if _amb_now.exists() else None
+            if _cm is not None and _bm is not None and _cm <= _bm:
+                _log(f"SKIPPED {cp.name}: not newer than the Ambetter book already staged")
+            elif not all(c in raw.columns for c in SIGNATURE):
                 _log(f"SKIPPED {cp.name}: not an Ambetter book (missing Ambetter columns)")
             elif not raw["Broker NPN"].astype(str).str.contains(get_agent()["npn"], regex=False).any():
                 _log(f"SKIPPED {cp.name}: no row under his NPN — not his Ambetter book")
@@ -403,7 +409,9 @@ def main():
                 _raw_dir.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(cp, _raw_dir / time.strftime("Policies_%Y%m%d%H%M%S.csv", _when))
                 _amb = _ROOT / "carrier_books" / "ambetter.csv"
-                normalize(raw, pulled).to_csv(_amb, index=False)
+                _prior = (pd.read_csv(_amb, dtype=str, keep_default_na=False)
+                          if _amb.exists() else None)
+                normalize(raw, pulled, _prior).to_csv(_amb, index=False)
                 if _cm is not None:
                     import os as _os_u
                     _os_u.utime(_amb, (_cm, _cm))

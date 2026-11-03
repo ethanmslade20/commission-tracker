@@ -114,9 +114,12 @@ def apply_ambetter_truth(all_clients: pd.DataFrame,
     # TRUE "how long I've had this client" date — the policy can predate the
     # relationship by years (inherited / agent-of-record transfers).
     amb["bed"] = pd.to_datetime(amb["Broker Effective Date"], errors="coerce")
-    # Earliest broker date per client (a renewal can produce multiple rows).
-    bed_by_sid = amb[amb["sid"] != ""].groupby("sid")["bed"].min().to_dict()
-    bed_by_nm = amb.groupby("nm")["bed"].min().to_dict()
+    # Earliest broker date per client (a renewal can produce multiple rows). Not one after
+    # today: the book lists policies he only becomes broker of on 1/1, and a future date
+    # would make a client he has now read as "his since 2027", 0 months on book.
+    _bed_now = amb["bed"].where(~(amb["bed"] > today))
+    bed_by_sid = _bed_now[amb["sid"] != ""].groupby(amb["sid"]).min().to_dict()
+    bed_by_nm = _bed_now.groupby(amb["nm"]).min().to_dict()
     amb["termed"] = amb["term"] < today
     amb_active, amb_termed = amb[~amb["termed"]], amb[amb["termed"]]
 
@@ -129,6 +132,10 @@ def apply_ambetter_truth(all_clients: pd.DataFrame,
     ac["_sid"] = ac["ffm_subscriber_id"].apply(_clean_id) if "ffm_subscriber_id" in ac.columns else ""
     ac["_nm"] = ac.apply(lambda r: _name_key(r.get("first_name", ""), r.get("last_name", "")), axis=1)
     ac["_eff"] = pd.to_datetime(ac.get("effective_date"), errors="coerce")
+    # The report passes one row per person, whose effective_date is the EARLIEST of their
+    # plans; current_effective is the plan they are on now.
+    ac["_ceff"] = (pd.to_datetime(ac["current_effective"], errors="coerce")
+                   if "current_effective" in ac.columns else ac["_eff"]).fillna(ac["_eff"])
     is_amb = ac["carrier"].astype(str).str.contains("ambetter", case=False, na=False)
     is_active = ac["status"].isin(_ACTIVE)
     is_ffm = _ffm_mask(ac)
@@ -142,11 +149,20 @@ def apply_ambetter_truth(all_clients: pd.DataFrame,
         if (sid and sid in aa_sid) or nm in aa_nm:
             continue  # confirmed active in portal
         eff = ac.at[idx, "_eff"]
-        if (sid and sid in at_sid) or nm in at_nm:
+        tmatch = amb_termed[((amb_termed["sid"] == sid) & bool(sid)) | (amb_termed["nm"] == nm)]
+        # A plan that hasn't started can only be ended by a term on or after its start
+        # (Ambetter cancelling it before it begins). One that ended earlier is an older
+        # policy of the same person: a 2026 plan that lapsed in May says nothing about the
+        # 1/1/2027 enrollment HealthSherpa now has (Nov 2 2026, a TN client the fresh book
+        # would have false-cancelled). Plans already running keep the old rule: a 2026
+        # client whose only Ambetter policy ended 12/31/2025 is not his on the books.
+        ceff = ac.at[idx, "_ceff"]
+        if pd.notna(ceff) and ceff > today:
+            tmatch = tmatch[~(tmatch["term"] < ceff)]
+        if not tmatch.empty:
             ac.at[idx, "status"] = "Cancelled"          # portal says termed
-            tmatch = amb_termed[(amb_termed["sid"] == sid) | (amb_termed["nm"] == nm)]
-            if not tmatch.empty and "term_date" in ac.columns and pd.notna(tmatch.iloc[0]["term"]):
-                ac.at[idx, "term_date"] = tmatch.iloc[0]["term"]
+            if "term_date" in ac.columns and pd.notna(tmatch["term"].min()):
+                ac.at[idx, "term_date"] = tmatch["term"].min()
             n_cancel_termed += 1
         elif pd.notna(eff) and eff > today:
             n_protected += 1                            # safety net: new sale, not yet in portal
@@ -204,7 +220,7 @@ def apply_ambetter_truth(all_clients: pd.DataFrame,
     _bed = _bed.where(_bed.notna(), ac["_nm"].map(bed_by_nm))
     ac.loc[is_amb, "broker_effective_date"] = pd.to_datetime(_bed[is_amb], errors="coerce")
 
-    ac = ac.drop(columns=["_sid", "_nm", "_eff"])
+    ac = ac.drop(columns=["_sid", "_nm", "_eff", "_ceff"])
     if new_rows:
         ac = pd.concat([ac, pd.DataFrame(new_rows)], ignore_index=True)
 

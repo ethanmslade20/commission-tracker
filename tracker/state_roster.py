@@ -484,8 +484,13 @@ def carrier_evidence(books_dir=None, today=None) -> pd.DataFrame:
             a = pd.read_csv(p, dtype=str)
             pterm = _d(a["Policy Term Date"])
             bterm = _d(a["Broker Term Date"])          # 12/31/9999 → NaT = open-ended
+            # Not his yet when he only becomes the broker later: the new export lists
+            # policies he wins back for next year with a 1/1 Broker Effective Date and no
+            # trace of the agent who has them now (ambetter_export).
+            bstart = _d(a["Broker Effective Date"])
             his = (a["Broker NPN"].fillna("").str.contains(npn, regex=False)
-                   | a["Broker Name"].map(lambda v: _his(v, npn, fn, ln))) & (bterm.isna() | (bterm >= today))
+                   | a["Broker Name"].map(lambda v: _his(v, npn, fn, ln))) \
+                & (bterm.isna() | (bterm >= today)) & ~(bstart > today)
             _add("Ambetter", p, a["Insured First Name"], a["Insured Last Name"], a["Member Phone Number"],
                  a["Member Email"], a["State"], pterm.isna() | (pterm >= today), his, pterm)
         except Exception as e:
