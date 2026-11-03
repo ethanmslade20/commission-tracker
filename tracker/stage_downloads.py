@@ -11,6 +11,9 @@ Recognized files:
   on_ex_applications-export-*.csv       HealthSherpa client export -> input/healthsherpa.csv
                                         (rejected + texted if it's a partial "Last 30 days" file)
   policies*.zip                         Ambetter book -> carrier_books/ambetter.csv
+  Policies*.csv                         Ambetter book, layout used since Oct 2026: converted
+                                        back to the old layout (ambetter_export) ->
+                                        carrier_books/ambetter.csv; raw -> data/carrier_reports/ambetter/
   Oscar_INDIVIDUAL_Book_*.csv           Oscar book    -> carrier_books/oscar.csv
   Producer ToolBox*Clients report.csv   Anthem book   -> carrier_books/anthem.csv
   Jarvis*BookOfBusiness*.xlsx           UHC book      -> carrier_books/uhc_source.xlsx
@@ -372,6 +375,42 @@ def main():
         except Exception as e:
             _log(f"ambetter zip failed: {e}")
         mark(zp)
+
+    # Ambetter's portal stopped sending the zip in Oct 2026: the book now comes as a plain
+    # Policies.csv in a new layout whose term dates hide lapses, so it is never staged as
+    # is. ambetter_export rebuilds the old layout; the raw file is kept beside the older
+    # raw pulls in data/carrier_reports/ambetter/. "Policies.csv" is a name any portal
+    # could use, so it must carry Ambetter's columns and his NPN.
+    cp = _newest("[Pp]olicies*.csv")
+    if fresh(cp):
+        _cm = _mtime(cp)
+        try:
+            import pandas as pd
+            from tracker.ambetter_export import SIGNATURE, normalize
+            from tracker.config import get_agent
+            raw = pd.read_csv(cp, dtype=str, keep_default_na=False)
+            _zm = _mtime(zp) if zp is not None else None
+            if not all(c in raw.columns for c in SIGNATURE):
+                _log(f"SKIPPED {cp.name}: not an Ambetter book (missing Ambetter columns)")
+            elif not raw["Broker NPN"].astype(str).str.contains(get_agent()["npn"], regex=False).any():
+                _log(f"SKIPPED {cp.name}: no row under his NPN — not his Ambetter book")
+            elif _zm is not None and _cm is not None and _zm > _cm:
+                _log(f"SKIPPED {cp.name}: an Ambetter zip pulled later is already staged")
+            else:
+                _when = time.localtime(_cm or time.time())
+                pulled = pd.Timestamp(time.strftime("%Y-%m-%d", _when))
+                _raw_dir = _ROOT / "data" / "carrier_reports" / "ambetter"
+                _raw_dir.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(cp, _raw_dir / time.strftime("Policies_%Y%m%d%H%M%S.csv", _when))
+                _amb = _ROOT / "carrier_books" / "ambetter.csv"
+                normalize(raw, pulled).to_csv(_amb, index=False)
+                if _cm is not None:
+                    import os as _os_u
+                    _os_u.utime(_amb, (_cm, _cm))
+                staged.append("Ambetter book")
+        except Exception as e:
+            _log(f"ambetter csv failed: {type(e).__name__}: {e}")
+        mark(cp, _cm)
 
     # The 4th element is a header column the file MUST contain, or None to accept it on
     # the filename alone. Only the NatGen export needs one: see its entry below.

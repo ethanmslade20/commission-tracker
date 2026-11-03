@@ -167,6 +167,11 @@ def apply_ambetter_truth(all_clients: pd.DataFrame,
     t_sid = set(ac.loc[is_amb, "_sid"]) - {""}
     t_nm = set(ac.loc[is_amb, "_nm"])
     missing = amb_active[~amb_active["sid"].isin(t_sid) & ~amb_active["nm"].isin(t_nm)]
+    # Not before the plan, or his part in it, has started: from November the book lists
+    # next year's renewals (Nov 2 2026: 16 rows starting 1/1/2027, 9 of them people
+    # active on Cigna/Molina today), which would count as active Ambetter clients now.
+    # The first book pulled after the start date adds them, if HealthSherpa still lacks them.
+    missing = missing[~(missing["eff"] > today) & ~(missing["bed"] > today)]
     new_rows = []
     for _, r in missing.iterrows():
         eff = r["eff"]

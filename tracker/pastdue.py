@@ -24,6 +24,48 @@ _DEFAULT_BOOKS = str(_ROOT / "carrier_books")
 _COLS = ["first_name", "last_name", "carrier", "state", "product", "status", "premium",
          "members", "paid_through", "balance", "days_overdue", "reason", "phone", "email"]
 
+# A carrier book older than this many days is called out as out of date (log + upload
+# text). He pulls them weekly, so 10 days means a pull was missed.
+STALE_DAYS = 10
+
+# The books his weekly portal routine pulls (see carrier_truth): label → file.
+_WEEKLY_BOOKS = {
+    "Ambetter": "ambetter.csv",
+    "Oscar": "oscar.csv",
+    "Anthem": "anthem.csv",
+    "UHC": "uhc_source.xlsx",
+}
+
+
+def book_as_of(path: Path, today: pd.Timestamp) -> pd.Timestamp:
+    """The day a carrier book was pulled, never later than today. Staging keeps the
+    download's own mtime (stage_downloads), so the file's mtime is the pull date."""
+    from datetime import datetime
+    try:
+        pulled = pd.Timestamp(datetime.fromtimestamp(Path(path).stat().st_mtime)).normalize()
+    except OSError:
+        return today
+    return min(pulled, today)
+
+
+def stale_books(carrier_books_dir: str = _DEFAULT_BOOKS, today=None,
+                max_age: int = STALE_DAYS) -> dict:
+    """{carrier: pull date} for each weekly carrier book older than max_age days.
+    Past-due and carrier-truth both read these, so an old one makes "behind on
+    payment" and portal cancels unreliable (Nov 2 2026: an Oct 11 Ambetter book
+    flagged 16 clients the day November started)."""
+    today = pd.Timestamp(today).normalize() if today else pd.Timestamp.today().normalize()
+    base = Path(carrier_books_dir)
+    out = {}
+    for label, name in _WEEKLY_BOOKS.items():
+        p = base / name
+        if not p.exists():
+            continue
+        as_of = book_as_of(p, today)
+        if (today - as_of).days > max_age:
+            out[label] = as_of
+    return out
+
 
 def _money(series) -> pd.Series:
     return pd.to_numeric(
@@ -59,10 +101,13 @@ def _ambetter_pastdue(path: Path, today: pd.Timestamp) -> pd.DataFrame:
     a["resp"] = _money(a.get("Member Responsibility"))
     in_force = a["term"].isna() | (a["term"] > today)
     # Months behind = how many month-boundaries between the paid-through month and
-    # the current month. "Paid through end of LAST month" (=1) just means this
-    # month's premium is still expected (autopay posts mid-cycle) — NOT a missed
+    # the month the BOOK WAS PULLED. "Paid through end of LAST month" (=1) just means
+    # this month's premium is still expected (autopay posts mid-cycle) — NOT a missed
     # payment. Only flag 2+ months behind (a fully-elapsed month went unpaid).
-    months_behind = (today.year - a["ptd"].dt.year) * 12 + (today.month - a["ptd"].dt.month)
+    # Counting to today instead flagged everyone "paid through last month" the day a
+    # new month started, even though the book couldn't show payments made since.
+    as_of = book_as_of(path, today)
+    months_behind = (as_of.year - a["ptd"].dt.year) * 12 + (as_of.month - a["ptd"].dt.month)
     # Only the agent's CURRENT-term lapses:
     #  - agent must already BE the broker (broker-effective in the past) — a future
     #    linkage (e.g. 7/1) isn't his client yet, so don't chase.
@@ -104,7 +149,10 @@ def _oscar_pastdue(path: Path, today: pd.Timestamp) -> pd.DataFrame:
     o["bal"] = _money(o.get("Balance"))
     o["prem"] = _money(o.get("Premium amount"))
     o["start"] = pd.to_datetime(o.get("Coverage start date"), errors="coerce")
-    cur = pd.Timestamp(today.year, today.month, 1)
+    # "New" is judged against the month the book was pulled (see _ambetter_pastdue):
+    # its balances are from that day, not today.
+    as_of = book_as_of(path, today)
+    cur = pd.Timestamp(as_of.year, as_of.month, 1)
     _status = o.get("Policy status", pd.Series("", index=o.index)).astype(str)
     in_force = ~_status.str.contains("Inactive", case=False, na=False)
     # Exclude brand-new business: coverage starting this month or later, and unpaid

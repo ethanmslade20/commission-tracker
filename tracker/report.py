@@ -985,6 +985,11 @@ def _upload_summary(all_clients, pastdue, snapshot_dir, today=None, watch=None, 
             lines.append(f" • Taken by another agent: {_fmt(new_aor)}")
         if new_rlost:
             lines.append(f" • Left the GA/IL Access book (suspected — verify): {_fmt(new_rlost)}")
+    from tracker.pastdue import stale_books
+    _old_books = stale_books(today=today)
+    if _old_books:
+        lines.append("📅 Old carrier files, so payment and cancel info may be out of date. "
+                     "Pull fresh: " + ", ".join(f"{k} ({v:%b %d})" for k, v in _old_books.items()))
     if stale_lost:
         lines.append(f"🗂️ +{len(stale_lost)} older lapse(s) fell off the book, dated to "
                      f"their real month (counted in churn, not fresh Re-Engage leads).")
@@ -2636,11 +2641,17 @@ def run_report(settings: dict) -> None:
 
     # Health-plan policies behind on payment (Ambetter paid-through passed /
     # Oscar balance owed) — active but in grace, savable with a payment call.
-    from tracker.pastdue import load_health_pastdue
+    from tracker.pastdue import load_health_pastdue, stale_books, STALE_DAYS
     pastdue = load_health_pastdue()
     pastdue_display = _build_pastdue_display(pastdue)
     if not pastdue_display.empty:
         print(f"  Health past-due: {len(pastdue_display)} active policies behind on payment")
+    for _lbl, _asof in stale_books().items():
+        # Behind-on-payment only comes from the Ambetter and Oscar books (pastdue).
+        _what = ("behind-on-payment and portal cancels" if _lbl in ("Ambetter", "Oscar")
+                 else "portal cancels")
+        print(f"  ⚠️ {_lbl} book is from {_asof:%b %d} (over {STALE_DAYS} days old) — "
+              f"{_what} may be out of date")
 
     # Commission gaps: active clients with no / stopped commission payments,
     # by reading the actual payments sheet and reconciling against the book.
