@@ -727,7 +727,10 @@ def resolve_access_rows(raw: pd.DataFrame, export_ts, history: pd.DataFrame, hs:
         shows a carrier on an in-progress application). Those go to
         HealthSherpa first, with the old pull's plan as the fallback."""
         hh = _hist(f, l, ph, em)
-        hn = hh[hh["_normal"]] if len(hh) else hh
+        # Only this plan year's rows can describe the application. During open enrollment a
+        # pull may list someone only by their NEXT-year renewal row; its status ("Report a
+        # Change") matched theirs and read as "no plan", blanking ~125 GA rows (Nov 24 2026).
+        hn = hh[hh["_normal"] & (hh["_yr"].isna() | (hh["_yr"] == plan_year))] if len(hh) else hh
         book, day = None, ""
         if len(hn):
             newest = hn[hn["export_date"] == hn["export_date"].max()]
