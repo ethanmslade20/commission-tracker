@@ -1408,6 +1408,64 @@ def _load_payments() -> pd.DataFrame:
         return pd.DataFrame()
 
 
+def _member_churn_t12(mom: pd.DataFrame, skip_renewal: bool = False):
+    """Monthly MEMBER churn over the trailing 12 COMPLETED months, exposure-
+    weighted: Σ members lost ÷ Σ start-of-month members. 12 months so the window
+    always spans exactly one OEP renewal cliff; the current (partial) month is
+    left out because its losses haven't all been dated yet. Shared by the
+    Dashboard and Goals pages so both show the same rate. Returns a fraction
+    (0.0613 = 6.13%/mo), or None when there isn't enough history.
+    skip_renewal=True drops the Dec/Jan months (the renewal cliff) to give the
+    normal in-year drop-off rate — used for "expected to lose" on the Goals page,
+    which flags the Dec 31 cliff separately instead of smearing it over every month."""
+    try:
+        if mom is None or mom.empty or not {"Month", "Members Lost", "Total Members"}.issubset(mom.columns):
+            return None
+        _cur_m = f"{dt.date.today().year}-{dt.date.today().month:02d}"
+        _cmp = mom[mom["Month"].astype(str) < _cur_m].copy()
+        _cmp["_start"] = _cmp["Total Members"].shift(1)
+        _w12 = _cmp.tail(12)
+        if skip_renewal:   # _start was computed before the filter, so exposure stays right
+            _w12 = _w12[~_w12["Month"].astype(str).str[-2:].isin(["12", "01"])]
+        _exposure = float(_w12["_start"].sum())
+        if _w12.empty or _exposure <= 0:
+            return None
+        return float(_w12["Members Lost"].sum()) / _exposure
+    except Exception:
+        return None
+
+
+def _real_pay_per_member(mom: pd.DataFrame):
+    """REAL recurring commission per member per month, from actual pay: the
+    latest COMPLETE month's recurring pay (bonuses / one-offs stripped) ÷ the
+    members it covers. About half the carriers (Ambetter, Anthem, BCBS, UofU)
+    pay a month in arrears and the rest pay same-month, so that month's pay
+    covers the average of that month's and the prior month's members.
+    Returns (rate, pay_month_timestamp) or (None, None) if pay data is missing."""
+    try:
+        from tracker.commissions import recurring_monthly_summary
+        cm = recurring_monthly_summary(_load_payments())
+        if cm is None or cm.empty or "Net" not in cm.columns:
+            return None, None
+        cm = cm.copy()
+        cm["_m"] = pd.to_datetime(cm["Month"], errors="coerce")
+        cur_p = pd.Timestamp(dt.date.today()).to_period("M")
+        cc = cm[cm["_m"].dt.to_period("M") < cur_p].dropna(subset=["_m"]).sort_values("_m")
+        if cc.empty or mom is None or mom.empty or "Total Members" not in mom.columns:
+            return None, None
+        last = cc.iloc[-1]
+        pay, pm = float(last["Net"]), last["_m"]
+        tm = mom.set_index(mom["Month"].astype(str))["Total Members"]
+        k_this = pm.strftime("%Y-%m")
+        k_prev = (pm - pd.DateOffset(months=1)).strftime("%Y-%m")
+        mems = [float(tm[k]) for k in (k_this, k_prev) if k in tm.index and float(tm[k]) > 0]
+        if pay <= 0 or not mems:
+            return None, None
+        return pay / (sum(mems) / len(mems)), pm
+    except Exception:
+        return None, None
+
+
 @st.cache_data(ttl=3600)
 def _load_ambetter_disputes() -> pd.DataFrame:
     """Ambetter policies the carrier's own export confirms you're owed on
@@ -2263,12 +2321,9 @@ if page == "Dashboard":
     # small month count in proportion. This is the validated real rate (~8.5%).
     _churn_pct = None
     try:
-        _cur_m = f"{dt.date.today().year}-{dt.date.today().month:02d}"
-        _cmp = mom_df[mom_df["Month"] < _cur_m].copy() if "Month" in mom_df.columns else mom_df.copy()
-        _cmp["_start"] = _cmp["Total Members"].shift(1)
-        _w12 = _cmp.tail(12)
-        if not _w12.empty and "Members Lost" in _w12.columns and _w12["_start"].sum() > 0:
-            _churn_pct = round(_w12["Members Lost"].sum() / _w12["_start"].sum() * 100, 2)
+        _t12 = _member_churn_t12(mom_df)   # same helper the Goals page uses
+        if _t12 is not None:
+            _churn_pct = round(_t12 * 100, 2)
         else:
             _churn_pct = round(float(kpis["Avg Policies Lost/Month"]) / max(kpis["Total Active Policies"], 1) * 100, 2)
         _churn_sub = f"Trailing 12 mo • {_churn_pct}% monthly churn"
@@ -3676,7 +3731,7 @@ elif page == "AOR Defense":
 # ══════════════════════════════════════════════════════════════════════════════
 elif page == "Goals":
     TODAY            = dt.date.today()
-    COMMISSION_PMPM  = 23
+    EST_PMPM         = 23     # fallback ONLY when the payments sheet can't be read
     MAX_TENURE_MONTHS = 60
     _ACTIVE_STS      = {"Effectuated", "PendingEffectuation", "PendingFollowups"}
     _CHURN_STS       = {"Cancelled", "Terminated"}
@@ -3801,14 +3856,26 @@ elif page == "Goals":
     gap          = max(GOAL - current, 0)
     pct_done     = min(current / GOAL * 100, 100)
 
-    # ── LTV — all-time churn across your entire tracked history ──
-    # Aggregate monthly churn = total members lost / total active member-months
-    # over every tracked month (standard churn calc). More stable and
-    # representative than the trailing few months.
-    if not mom_df.empty and "Members Lost" in mom_df.columns and "Total Members" in mom_df.columns:
-        _total_lost   = mom_df["Members Lost"].sum()
-        _member_months = mom_df["Total Members"].sum()
-        monthly_churn_rate = _total_lost / max(_member_months, 1)
+    # Members whose coverage has STARTED (effective today or earlier). The rest
+    # are signed for a Dec/Jan start: they count toward the member goal (they're
+    # on the books) but don't earn anything yet, so income uses this number.
+    if "effective_date" in all_clients.columns:
+        _eff_g = pd.to_datetime(all_clients["effective_date"], errors="coerce")
+        _started = _active_mask & ~(_eff_g > pd.Timestamp(TODAY))   # unknown date → treat as started
+    else:
+        _started = _active_mask
+    paying_mem   = int(all_clients.loc[_started, "applicant_count"].sum()) if "applicant_count" in all_clients.columns else current
+    future_mem   = max(current - paying_mem, 0)
+
+    # ── Churn — SAME trailing-12-completed-month member churn as the Dashboard ──
+    # (Σ members lost ÷ Σ start-of-month members). The old "all-time avg" divided
+    # by every member-month back to mid-2025 AND counted the current month,
+    # whose losses aren't dated yet — it read ~4.9% when the real rate is ~6%.
+    monthly_churn_rate = _member_churn_t12(mom_df)
+    if monthly_churn_rate is not None:
+        _churn_label = "12-month"
+    elif not mom_df.empty and "Members Lost" in mom_df.columns and "Total Members" in mom_df.columns:
+        monthly_churn_rate = float(mom_df["Members Lost"].sum()) / max(float(mom_df["Total Members"].sum()), 1)
         _churn_label = "all-time avg"
     else:
         _total_ever  = int(_active_mask.sum()) + int(_churn_mask.sum())
@@ -3816,34 +3883,102 @@ elif page == "Goals":
         monthly_churn_rate = (_total_churned / max(_total_ever, 1)) / max(len(months), 1)
         _churn_label = "all-time avg"
     implied_tenure_mo  = min(1 / monthly_churn_rate if monthly_churn_rate > 0 else MAX_TENURE_MONTHS, MAX_TENURE_MONTHS)
-    ltv_per_member     = round(COMMISSION_PMPM * implied_tenure_mo)
+    # Drop-offs along the way to the goal use the IN-YEAR rate (Dec/Jan renewal
+    # months left out). The Dec 31 cliff is flagged separately on the page, so
+    # it must not also be smeared into every month here. LTV keeps the full
+    # 12-month rate above, which does include one renewal season.
+    drop_rate = _member_churn_t12(mom_df, skip_renewal=True) or monthly_churn_rate
+
+    # ── Real pay per member (actual payments sheet, not the $23 guess) ───────
+    _rate, _rate_month = _real_pay_per_member(mom_df)
+    if _rate:
+        PMPM = _rate
+        _rate_src = f"real {_rate_month.strftime('%b')} pay"
+    else:
+        PMPM = float(EST_PMPM)
+        _rate_src = "estimate — pay sheet unavailable"
+    ltv_per_member     = round(PMPM * implied_tenure_mo)
 
     # ── Revenue figures ───────────────────────────────────────────────────────
-    current_mrr       = current * COMMISSION_PMPM
+    current_mrr       = paying_mem * PMPM            # only members whose coverage started
     current_arr       = current_mrr * 12
-    current_book_ltv  = current * ltv_per_member
-    goal_mrr          = GOAL * COMMISSION_PMPM
+    current_book_ltv  = current * ltv_per_member     # every member on the books (churn already in LTV)
+    goal_mrr          = GOAL * PMPM
     goal_arr          = goal_mrr * 12
     goal_book_ltv     = GOAL * ltv_per_member
     revenue_gap_ltv   = goal_book_ltv - current_book_ltv
     revenue_gap_arr   = goal_arr - current_arr
 
     # ── Pace numbers ─────────────────────────────────────────────────────────
+    # Everything below is in NEW MEMBERS SIGNED (gross), because members also
+    # leave along the way: to finish at the goal you must cover the gap PLUS the
+    # members expected to drop off before the goal date at your churn rate.
     days_left       = (GOAL_DATE - TODAY).days
-    months_left     = max(round(days_left / 30.44, 1), 0.1)
-    weeks_left      = max(round(days_left / 7, 1), 0.1)
-    needed_per_day  = round(gap / days_left, 2) if days_left > 0 else 0
-    needed_per_week = round(gap / weeks_left, 1) if weeks_left > 0 else 0
-    needed_per_mo   = round(gap / months_left, 1) if months_left > 0 else 0
-
-    # Net new members per month from MoM history (last 3 months)
-    if not mom_df.empty and "New Members" in mom_df.columns and "Members Lost" in mom_df.columns:
-        recent_mo_growth = (mom_df["New Members"] - mom_df["Members Lost"]).tail(3).mean()
+    _days           = max(days_left, 1)
+    months_exact    = _days / 30.44
+    weeks_exact     = _days / 7
+    # Churn hits the GROWING book day by day (not a flat % of today's book), so
+    # the book compounds: after d days at signing pace s/day it is
+    #   current·r + s·(1−r)/c   with c = daily churn, r = (1−c)^d.
+    # Solving that for "end at GOAL" gives the pace needed; plugging in today's
+    # pace gives the projection. The monthly table below uses the same formula.
+    _cd = drop_rate / 30.44
+    _r  = (1 - _cd) ** _days
+    if days_left > 0 and _cd > 0:
+        needed_per_day = max(_cd * (GOAL - current * _r) / (1 - _r), 0.0)
     else:
-        recent_mo_growth = 0.0
-    projected_at_goal_date   = round(current + recent_mo_growth * months_left)
-    projected_arr_at_goal    = projected_at_goal_date * COMMISSION_PMPM * 12
+        needed_per_day = max(GOAL - current, 0) / _days
+    needed_total    = round(needed_per_day * _days) if days_left > 0 else 0
+    # Members expected to drop off before the goal date (on the path the tiles describe)
+    if days_left <= 0:
+        expected_losses = 0
+    elif needed_total > 0:
+        expected_losses = max(needed_total + current - GOAL, 0)
+    else:   # already far enough over the goal — losses if you sign nobody
+        expected_losses = round(current * (1 - _r))
+    needed_per_week = needed_per_day * 7
+    needed_per_mo   = needed_per_day * 30.44
+
+    # Current pace = members actually SIGNED in the last 30 days, every status —
+    # a sale is a sale even if it later cancels; cancellations are already in
+    # the churn rate. Counting by sign-up date (not start month) matters in open
+    # enrollment, when almost everything sold starts Dec 1 / Jan 1.
+    # Sign-up date = the EARLIER of client_since and the first HealthSherpa
+    # submission: for Ambetter, client_since is the carrier's broker date, which
+    # usually equals the coverage START (Nov 1 / Jan 1), not the day they signed.
+    # (Not "submission if present": a 2027 re-enrollment's submission is recent,
+    # but the person signed long ago — the min keeps their old date.)
+    _PACE_DAYS = 30
+    cur_per_day = None
+    if "client_since" in all_clients.columns and "applicant_count" in all_clients.columns:
+        _cs = pd.to_datetime(all_clients["client_since"], errors="coerce")
+        if "submission_date" in all_clients.columns:
+            _sub = pd.to_datetime(all_clients["submission_date"], errors="coerce").dt.normalize()
+            _cs = pd.concat([_cs, _sub], axis=1).min(axis=1)
+        _t  = pd.Timestamp(TODAY)
+        _win = (_cs > _t - pd.Timedelta(days=_PACE_DAYS)) & (_cs <= _t)
+        cur_per_day = float(all_clients.loc[_win, "applicant_count"].sum()) / _PACE_DAYS
+    if cur_per_day is None:   # fallback: avg monthly new members (last 3 months)
+        _nm = mom_df["New Members"].tail(3).mean() if (not mom_df.empty and "New Members" in mom_df.columns) else 0.0
+        cur_per_day = float(_nm) / 30.44
+    cur_per_week  = cur_per_day * 7
+    cur_per_month = cur_per_day * 30.44
+    lost_per_month = drop_rate * current          # this month, on today's book
+    net_per_month  = cur_per_month - lost_per_month
+
+    if days_left > 0 and _cd > 0:
+        projected_at_goal_date = round(current * _r + cur_per_day * (1 - _r) / _cd)
+    elif days_left > 0:
+        projected_at_goal_date = round(current + cur_per_day * days_left)
+    else:
+        projected_at_goal_date = current
+    projected_arr_at_goal  = projected_at_goal_date * PMPM * 12
     on_track = projected_at_goal_date >= GOAL
+    _crosses_renewal = days_left > 0 and any(
+        dt.date(y, 12, 31) >= TODAY and dt.date(y, 12, 31) < GOAL_DATE for y in range(TODAY.year, GOAL_DATE.year + 1))
+
+    def _n_left(x: float, unit: str) -> str:
+        return f"{x:.1f} {unit}{'' if round(x, 1) == 1 else 's'} left"
 
     # ── Helper ────────────────────────────────────────────────────────────────
     def _goal_kpi(label: str, value, sub: str, color: str = ""):
@@ -3858,14 +3993,16 @@ elif page == "Goals":
     # ══ PAGE ══════════════════════════════════════════════════════════════════
     st.markdown(
         f'<p style="color:#8aacd6;font-size:0.95rem;">'
-        f'LTV: {_churn_label} churn ({monthly_churn_rate*100:.2f}%/mo → '
-        f'{implied_tenure_mo:.0f}-mo tenure → <b style="color:#2ecc71">'
-        f'${ltv_per_member:,}/member</b>)</p>',
+        f'LTV: {_churn_label} churn {monthly_churn_rate*100:.2f}%/mo → '
+        f'{implied_tenure_mo:.1f}-mo avg stay × ${PMPM:.2f}/member/mo ({_rate_src}) → '
+        f'<b style="color:#2ecc71">${ltv_per_member:,}/member</b></p>',
         unsafe_allow_html=True,
     )
 
-    # ── Dual progress bars: Members + Revenue ────────────────────────────────
-    rev_pct   = min(current_arr / goal_arr * 100, 100)
+    # ── Dual progress bars: Members on the books + members already paying ────
+    # The second bar used to be members × $23 ÷ goal × $23 — always identical to
+    # the first. Now it tracks income from members whose coverage has started.
+    rev_pct   = min(current_arr / goal_arr * 100, 100) if goal_arr else 0
     bar_color = "#2ecc71" if pct_done >= 75 else ("#f39c12" if pct_done >= 40 else "#4285F4")
     rev_color = "#2ecc71" if rev_pct >= 75 else ("#f39c12" if rev_pct >= 40 else "#4285F4")
 
@@ -3873,18 +4010,19 @@ elif page == "Goals":
         f"""
         <div style="margin-bottom:4px;display:flex;justify-content:space-between;
                     font-size:0.85rem;color:#8aacd6;">
-          <span>Members &nbsp;<b style="color:#fff">{current:,}</b></span>
+          <span>Members on the books &nbsp;<b style="color:#fff">{current:,}</b>
+                <span style="font-size:0.78rem;">({future_mem:,} start later)</span></span>
           <span><b style="color:#fff">{pct_done:.1f}%</b> of {GOAL:,}</span>
-          <span><b style="color:#8aacd6">{gap:,} to go &nbsp;·&nbsp; {days_left:,} days left</b></span>
+          <span><b style="color:#8aacd6">{gap:,} to go &nbsp;·&nbsp; {max(days_left, 0):,} days left</b></span>
         </div>
         <div class="progress-wrap" style="margin-bottom:14px;">
           <div class="progress-bar" style="width:{pct_done:.1f}%;background:{bar_color};"></div>
         </div>
         <div style="margin-bottom:4px;display:flex;justify-content:space-between;
                     font-size:0.85rem;color:#8aacd6;">
-          <span>Annual Revenue &nbsp;<b style="color:#fff">${current_arr:,.0f}</b></span>
+          <span>Annual Revenue (coverage started) &nbsp;<b style="color:#fff">${current_arr:,.0f}</b></span>
           <span><b style="color:#fff">{rev_pct:.1f}%</b> of ${goal_arr:,.0f}</span>
-          <span><b style="color:#8aacd6">${revenue_gap_arr:,.0f} ARR to go</b></span>
+          <span><b style="color:#8aacd6">${max(revenue_gap_arr, 0):,.0f} ARR to go</b></span>
         </div>
         <div class="progress-wrap" style="margin-bottom:28px;">
           <div class="progress-bar" style="width:{rev_pct:.1f}%;background:{rev_color};"></div>
@@ -3897,11 +4035,12 @@ elif page == "Goals":
     st.markdown(section_header("Revenue — where you are now", "dollar"), unsafe_allow_html=True)
     r1, r2, r3, r4 = st.columns(4)
     with r1:
-        st.markdown(_goal_kpi("Monthly Recurring Revenue", f"${current_mrr:,.0f}", f"{current:,} members × ${COMMISSION_PMPM}/mo"), unsafe_allow_html=True)
+        st.markdown(_goal_kpi("Monthly Recurring Revenue", f"${current_mrr:,.0f}",
+                              f"{paying_mem:,} members with coverage started × ${PMPM:.2f}/mo"), unsafe_allow_html=True)
     with r2:
         st.markdown(_goal_kpi("Annual Run Rate", f"${current_arr:,.0f}", "MRR × 12 months"), unsafe_allow_html=True)
     with r3:
-        st.markdown(_goal_kpi("LTV per Member", f"${ltv_per_member:,}", f"${COMMISSION_PMPM}/mo × {implied_tenure_mo:.0f}-mo tenure"), unsafe_allow_html=True)
+        st.markdown(_goal_kpi("LTV per Member", f"${ltv_per_member:,}", f"${PMPM:.2f}/mo × {implied_tenure_mo:.1f}-mo avg stay"), unsafe_allow_html=True)
     with r4:
         st.markdown(_goal_kpi("Total Book LTV", f"${current_book_ltv:,.0f}", f"{current:,} members × ${ltv_per_member:,}", "green"), unsafe_allow_html=True)
 
@@ -3909,35 +4048,55 @@ elif page == "Goals":
 
     # ── Pace needed ───────────────────────────────────────────────────────────
     st.markdown(section_header("Pace needed to hit goal", "target"), unsafe_allow_html=True)
+    _live = days_left > 0
+    if not _live:
+        st.info("Your target date has passed — pick a new date above to see the pace you need.")
     k1, k2, k3 = st.columns(3)
     with k1:
-        st.markdown(_goal_kpi("New members / day", f"+{needed_per_day}", f"{days_left:,} days remaining"), unsafe_allow_html=True)
+        st.markdown(_goal_kpi("New members / day", f"+{needed_per_day:.1f}" if _live else "—",
+                              f"{max(days_left, 0):,} days left"), unsafe_allow_html=True)
     with k2:
-        st.markdown(_goal_kpi("New members / week", f"+{needed_per_week:.0f}", f"{weeks_left:.0f} weeks remaining"), unsafe_allow_html=True)
+        st.markdown(_goal_kpi("New members / week", f"+{needed_per_week:.0f}" if _live else "—",
+                              _n_left(weeks_exact if _live else 0, "week")), unsafe_allow_html=True)
     with k3:
-        st.markdown(_goal_kpi("New members / month", f"+{needed_per_mo:.0f}", f"{months_left:.0f} months remaining"), unsafe_allow_html=True)
+        st.markdown(_goal_kpi("New members / month", f"+{needed_per_mo:.0f}" if _live else "—",
+                              _n_left(months_exact if _live else 0, "month")), unsafe_allow_html=True)
+    if _live:
+        _cliff_note = (" This is before the Dec 31 renewal drop-off (not modeled) — clients who don't renew "
+                       "leave on top of this, so the real pace you need is higher. The Renewal Countdown "
+                       "shows who hasn't renewed yet." if _crosses_renewal else "")
+        if current >= GOAL:
+            st.caption(f"You're {current - GOAL:,} over the goal. About {expected_losses:,} are expected to drop off "
+                       f"by then ({drop_rate*100:.1f}%/mo normal churn), so you need to sign {needed_total:,} "
+                       f"to stay at {GOAL:,}." + _cliff_note)
+        else:
+            st.caption(f"New members you need to sign: {gap:,} to reach the goal + about {expected_losses:,} "
+                       f"expected to drop off by then ({drop_rate*100:.1f}%/mo normal churn) = {needed_total:,}."
+                       + _cliff_note)
 
     st.markdown("<br>", unsafe_allow_html=True)
 
     # ── At your current pace ──────────────────────────────────────────────────
     st.markdown(section_header("At your current pace", "trend"), unsafe_allow_html=True)
-    # Same cadence as "pace needed" so you can compare directly.
-    cur_per_month = recent_mo_growth
-    cur_per_week  = recent_mo_growth * 12 / 52
-    cur_per_day   = recent_mo_growth * 12 / 365
+    # Same cadence and same meaning (members signed) as "pace needed" so you can
+    # compare directly. Measured over the last 30 days by sign-up date.
+    def _vs(cur: float, need: float, fmt: str):
+        if not _live:
+            return f"signed in the last {_PACE_DAYS} days", ""
+        ok = cur >= need
+        _ok_txt = "ahead of pace ✓" + (" (before renewal drop-off)" if _crosses_renewal else "")
+        return (f"vs +{need:{fmt}} needed · " + (_ok_txt if ok else "below pace"),
+                "green" if ok else "red")
     c1, c2, c3 = st.columns(3)
     with c1:
-        _d_lbl = "ahead of pace ✓" if cur_per_day >= needed_per_day else "below pace"
-        st.markdown(_goal_kpi("New members / day", f"+{cur_per_day:.2f}", f"vs +{needed_per_day} needed · {_d_lbl}",
-                              "green" if cur_per_day >= needed_per_day else "red"), unsafe_allow_html=True)
+        _sub, _col = _vs(cur_per_day, needed_per_day, ".1f")
+        st.markdown(_goal_kpi("New members / day", f"+{cur_per_day:.1f}", _sub, _col), unsafe_allow_html=True)
     with c2:
-        _w_lbl = "ahead of pace ✓" if cur_per_week >= needed_per_week else "below pace"
-        st.markdown(_goal_kpi("New members / week", f"+{cur_per_week:.0f}", f"vs +{needed_per_week:.0f} needed · {_w_lbl}",
-                              "green" if cur_per_week >= needed_per_week else "red"), unsafe_allow_html=True)
+        _sub, _col = _vs(cur_per_week, needed_per_week, ".0f")
+        st.markdown(_goal_kpi("New members / week", f"+{cur_per_week:.0f}", _sub, _col), unsafe_allow_html=True)
     with c3:
-        _m_lbl = "ahead of pace ✓" if cur_per_month >= needed_per_mo else "below pace"
-        st.markdown(_goal_kpi("New members / month", f"+{cur_per_month:.0f}", f"vs +{needed_per_mo:.0f} needed · {_m_lbl}",
-                              "green" if cur_per_month >= needed_per_mo else "red"), unsafe_allow_html=True)
+        _sub, _col = _vs(cur_per_month, needed_per_mo, ".0f")
+        st.markdown(_goal_kpi("New members / month", f"+{cur_per_month:.0f}", _sub, _col), unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
 
@@ -3946,14 +4105,23 @@ elif page == "Goals":
     proj_label = "On track ✓" if on_track else "Behind pace"
     shortfall  = GOAL - projected_at_goal_date
     with p1:
-        st.markdown(_goal_kpi("Avg net new members / mo (last 3)", f"+{recent_mo_growth:.0f}", "based on recent history"), unsafe_allow_html=True)
+        st.markdown(_goal_kpi("Net growth / mo (signed − lost)", f"{net_per_month:+,.0f}",
+                              f"+{cur_per_month:.0f} signed − {lost_per_month:.0f} lost"), unsafe_allow_html=True)
     with p2:
-        st.markdown(_goal_kpi("Projected members by goal date", f"{projected_at_goal_date:,}", proj_label, proj_color), unsafe_allow_html=True)
+        st.markdown(_goal_kpi("Projected members by goal date", f"{projected_at_goal_date:,}",
+                              proj_label + (" · before Dec 31 renewal drop-off" if _crosses_renewal else ""),
+                              proj_color), unsafe_allow_html=True)
     with p3:
         if shortfall > 0:
-            st.markdown(_goal_kpi("Projected ARR by goal date", f"${projected_arr_at_goal:,.0f}", f"${goal_arr - projected_arr_at_goal:,.0f} short of goal ARR", "red"), unsafe_allow_html=True)
+            st.markdown(_goal_kpi("Projected ARR (once started)", f"${projected_arr_at_goal:,.0f}", f"${goal_arr - projected_arr_at_goal:,.0f} short of goal ARR", "red"), unsafe_allow_html=True)
         else:
-            st.markdown(_goal_kpi("Projected ARR by goal date", f"${projected_arr_at_goal:,.0f}", f"Goal ARR exceeded ✓", "green"), unsafe_allow_html=True)
+            st.markdown(_goal_kpi("Projected ARR (once started)", f"${projected_arr_at_goal:,.0f}", f"Goal ARR exceeded ✓", "green"), unsafe_allow_html=True)
+    st.caption(f"Current pace = members signed in the last {_PACE_DAYS} days (by sign-up date). "
+               f"Projection = today's {current:,} + that pace − expected drop-offs at your "
+               f"{drop_rate*100:.1f}%/mo normal churn."
+               + (" It does not include the Dec 31 renewal drop-off, which hits all at once — expect the "
+                  "real number to land lower (the Renewal Countdown shows who hasn't renewed yet)."
+                  if _crosses_renewal else ""))
 
     st.markdown("<br>", unsafe_allow_html=True)
 
@@ -3965,7 +4133,7 @@ elif page == "Goals":
         hist = hist.rename(columns={"Month": "month", "Total Members": "active"})
         hist["month"] = pd.to_datetime(hist["month"])
         hist = hist.sort_values("month")
-        hist["arr"] = hist["active"] * COMMISSION_PMPM * 12
+        hist["arr"] = hist["active"] * PMPM * 12
 
         start_date  = hist["month"].iloc[0]
         start_count = hist["active"].iloc[0]
@@ -3973,7 +4141,7 @@ elif page == "Goals":
         pace_months = pd.date_range(start=start_date, end=goal_ts, freq="MS")
         total_span  = (goal_ts - start_date).days
         pace_vals   = [start_count + (GOAL - start_count) * (t - start_date).days / total_span for t in pace_months]
-        pace_df     = pd.DataFrame({"month": pace_months, "required": pace_vals, "required_arr": [v * COMMISSION_PMPM * 12 for v in pace_vals]})
+        pace_df     = pd.DataFrame({"month": pace_months, "required": pace_vals, "required_arr": [v * PMPM * 12 for v in pace_vals]})
 
         tab_members, tab_revenue = st.tabs(["Members", "Annual Revenue"])
 
@@ -4008,43 +4176,62 @@ elif page == "Goals":
     st.markdown("<br>", unsafe_allow_html=True)
 
     # ── Weekly callout ────────────────────────────────────────────────────────
-    _week_policies = round(needed_per_week / max(_avg_hh, 1))
-    st.markdown(
-        f'<div style="background:linear-gradient(90deg,rgba(245,158,11,0.13),rgba(245,158,11,0.04));'
-        f'border:1px solid rgba(245,158,11,0.4);border-left:4px solid {GOLD};padding:16px 20px;'
-        f'border-radius:14px;margin-bottom:20px;">'
-        f'<div style="font-size:0.78rem;color:{T["kpi_lbl"]};text-transform:uppercase;letter-spacing:0.08em;font-weight:600;">This week\'s target</div>'
-        f'<div style="font-size:1.9rem;font-weight:800;color:{GOLD};margin-top:4px;">+{needed_per_week:.0f} members</div>'
-        f'<div style="font-size:0.9rem;color:{T["kpi_lbl"]};margin-top:3px;">≈ {_week_policies} policies &nbsp;·&nbsp; {weeks_left:.0f} weeks remaining to reach {GOAL:,} members by {GOAL_DATE.strftime("%b %d, %Y")}</div>'
-        f'</div>',
-        unsafe_allow_html=True,
-    )
+    if days_left > 0:
+        _week_policies = round(needed_per_week / max(_avg_hh, 1))
+        st.markdown(
+            f'<div style="background:linear-gradient(90deg,rgba(245,158,11,0.13),rgba(245,158,11,0.04));'
+            f'border:1px solid rgba(245,158,11,0.4);border-left:4px solid {GOLD};padding:16px 20px;'
+            f'border-radius:14px;margin-bottom:20px;">'
+            f'<div style="font-size:0.78rem;color:{T["kpi_lbl"]};text-transform:uppercase;letter-spacing:0.08em;font-weight:600;">This week\'s target</div>'
+            f'<div style="font-size:1.9rem;font-weight:800;color:{GOLD};margin-top:4px;">+{needed_per_week:.0f} new members</div>'
+            f'<div style="font-size:0.9rem;color:{T["kpi_lbl"]};margin-top:3px;">≈ {_week_policies} policies &nbsp;·&nbsp; {_n_left(weeks_exact, "week")} to reach {GOAL:,} members by {GOAL_DATE.strftime("%b %d, %Y")}</div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
 
     # ── Monthly targets table ─────────────────────────────────────────────────
-    st.markdown(section_header("Monthly targets", "calendar"), unsafe_allow_html=True)
-    breakdown_rows = []
-    ref_date      = TODAY.replace(day=1)
-    running_members = current
-    for i in range(int(months_left) + 2):
-        mo          = ref_date + pd.DateOffset(months=i)
-        mo_label    = mo.strftime("%B %Y")
-        add_target  = round(needed_per_mo)
-        running_members = min(running_members + add_target, GOAL)
-        breakdown_rows.append({
-            "Month":              mo_label,
-            "Members to add":     add_target,
-            "Policies to add":    round(add_target / max(_avg_hh, 1)),
-            "Running members":    running_members,
-            "Running policies":   round(running_members / max(_avg_hh, 1)),
-            "MRR at target":      f"${running_members * COMMISSION_PMPM:,.0f}",
-            "ARR at target":      f"${running_members * COMMISSION_PMPM * 12:,.0f}",
-        })
-        if running_members >= GOAL:
-            break
+    # One row per calendar month between today and the goal date; a partial
+    # month (this one, or the goal month) gets only its share of days. Sign-ups
+    # run at the needed pace, drop-offs at the normal churn rate on the running
+    # (growing) book — the same compounding math as the tiles above, so the
+    # last row lands on the goal.
+    if days_left > 0:
+        st.markdown(section_header("Monthly targets", "calendar"), unsafe_allow_html=True)
+        breakdown_rows = []
+        _seg_start = TODAY
+        _running   = float(current)
+        while _seg_start < GOAL_DATE:
+            _next_m  = (pd.Timestamp(_seg_start).replace(day=1) + pd.DateOffset(months=1)).date()
+            _seg_end = min(_next_m, GOAL_DATE)
+            _d       = (_seg_end - _seg_start).days
+            _sign    = needed_per_day * _d
+            if _cd > 0:
+                _rd  = (1 - _cd) ** _d
+                _end = _running * _rd + needed_per_day * (1 - _rd) / _cd
+            else:
+                _end = _running + _sign
+            _lost    = max(_running + _sign - _end, 0.0)
+            _running = _end
+            breakdown_rows.append({
+                "Month":            _seg_start.strftime("%B %Y"),
+                "Days":             _d,
+                "Members to sign":  round(_sign),
+                "Expected to lose": round(_lost),
+                "Policies to sign": round(_sign / max(_avg_hh, 1)),
+                "Running members":  round(_running),
+                "Running policies": round(_running / max(_avg_hh, 1)),
+                "MRR once started": f"${_running * PMPM:,.0f}",
+                "ARR once started": f"${_running * PMPM * 12:,.0f}",
+            })
+            _seg_start = _seg_end
 
-    breakdown_df = pd.DataFrame(breakdown_rows)
-    with st.container(border=True):
-        st.dataframe(breakdown_df, use_container_width=True, hide_index=True, height=340)
+        breakdown_df = pd.DataFrame(breakdown_rows)
+        with st.container(border=True):
+            st.dataframe(breakdown_df, use_container_width=True, hide_index=True, height=340)
+        st.caption("\"Expected to lose\" uses your normal monthly churn"
+                   + (" and leaves out the Dec 31 renewal drop-off" if _crosses_renewal else "")
+                   + ". MRR/ARR = pay once every member counted has coverage started — most open-enrollment "
+                     "sign-ups start Jan 1 or Feb 1, so actual pay lags.")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
